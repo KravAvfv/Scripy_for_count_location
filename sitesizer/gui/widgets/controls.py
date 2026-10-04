@@ -189,7 +189,8 @@ class InfoTip(QLabel):
         self.setFixedSize(px(16), px(16))
         self.setPixmap(icons.pixmap("info", px(14), "text_faint"))
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        # Not in the Tab chain (fast data entry); the text is exposed on the editor instead.
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setCursor(Qt.CursorShape.WhatsThisCursor)
         self.setAccessibleDescription(text)
         self.setToolTip(f"<div style='max-width:340px'>{text}</div>")
@@ -387,6 +388,7 @@ class ToggleRow(QWidget):
         lay.addLayout(text, 1)
         self.switch = ToggleSwitch()
         self.switch.setAccessibleName(title)
+        self.switch.setAccessibleDescription(info or caption)
         lay.addWidget(self.switch, 0, Qt.AlignmentFlag.AlignTop)
         self.switch.toggled.connect(self.toggled)
         self.title.mousePressEvent = lambda _e: self.switch.toggle()  # type: ignore[method-assign]
@@ -649,6 +651,7 @@ class Chip(QPushButton):
         super().__init__((" " + text) if icon_name else text, parent)
         self.setProperty("variant", "chip")
         self.setCheckable(checkable)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus if checkable else Qt.FocusPolicy.NoFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         if icon_name:
             self.setIcon(icons.icon(icon_name, size=14))
@@ -773,6 +776,8 @@ class FieldRow(QWidget):
         if info:
             self.info = InfoTip(info)
             head.addWidget(self.info)
+            editor.setAccessibleDescription(info)
+            editor.setToolTip(editor.toolTip() or f"<div style='max-width:340px'>{info}</div>")
         head.addStretch(1)
         text.addLayout(head)
         self.caption = label(caption, "caption", wrap=True)

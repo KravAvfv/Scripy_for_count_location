@@ -8,3 +8,4 @@ build/
 dist/
 *.spec.bak
 /out/
+packaging/version_info.txt

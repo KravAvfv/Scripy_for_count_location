@@ -138,9 +138,10 @@ class AppState(QObject):
         self.qsettings = qsettings or QSettings()
         self.settings = AppSettings.load(self.qsettings)
         set_language(self.settings.language)
+        self._dirty_struct = False
         self.undo = QUndoStack(self)
         self.undo.setUndoLimit(200)
-        self.undo.cleanChanged.connect(lambda clean: self.dirtyChanged.emit(not clean or self._dirty_struct))
+        self.undo.cleanChanged.connect(self._on_clean_changed)
         self.catalog_error = ""
         self.catalog = self._load_catalog()
         self.project: Project = new_project(author=self.settings.author)
@@ -154,6 +155,9 @@ class AppState(QObject):
         self._timer.setSingleShot(True)
         self._timer.setInterval(RECOMPUTE_DELAY_MS)
         self._timer.timeout.connect(self.recompute)
+
+    def _on_clean_changed(self, clean: bool) -> None:
+        self.dirtyChanged.emit(not clean or self._dirty_struct)
 
     # ---- catalog --------------------------------------------------------------------------
     def _load_catalog(self) -> Catalog:
