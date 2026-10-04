@@ -588,9 +588,11 @@ class MainWindow(QMainWindow):
 
     def _on_settings(self) -> None:
         s = self.state.settings
-        if s.theme != theme_manager.mode or abs(s.ui_scale - theme_manager.scale) > 1e-3:
+        scale_changed = abs(s.ui_scale - theme_manager.scale) > 1e-3
+        if s.theme != theme_manager.mode or scale_changed:
             theme_manager.apply(s.theme, s.ui_scale)
-        if s.language != self._lang:
+        if s.language != self._lang or scale_changed:
+            # sizes computed with px() at construction time need fresh widgets
             self._lang = s.language
             self.rebuild()
         self._update_titles()
@@ -632,7 +634,6 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, e: QResizeEvent) -> None:
         super().resizeEvent(e)
         self.sidebar.set_compact(self.width() < px(1180))
-        self.summary.cost.setVisible(self.summary.cost.isVisible() and self.width() > px(1280))
 
     def showEvent(self, e) -> None:
         super().showEvent(e)

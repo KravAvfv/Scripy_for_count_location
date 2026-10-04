@@ -355,6 +355,7 @@ class SummaryBar(QFrame):
         for b in (self.errors, self.warnings, self.infos):
             lay.addWidget(b)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._compact = False
         state.resultChanged.connect(self.on_result)
         state.settingsChanged.connect(self._on_settings)
         theme_manager.changed.connect(self._retint)
@@ -362,6 +363,16 @@ class SummaryBar(QFrame):
     def _on_settings(self) -> None:
         if self.state.result is not None:
             self.on_result(self.state.result)
+
+    def resizeEvent(self, e) -> None:
+        super().resizeEvent(e)
+        compact = self.width() < px(1100)
+        if compact != self._compact:
+            self._compact = compact
+            self.rack.setVisible(not compact)
+            self.poe.setVisible(not compact)
+            if self.state.result is not None:
+                self.on_result(self.state.result)
 
     def _counter(self, icon_name: str, color: str) -> QPushButton:
         b = button("0", "ghost")
@@ -391,7 +402,7 @@ class SummaryBar(QFrame):
         summary = summarize_prices(
             r.bom, self.state.catalog.meta.currency, s.discount_pct, s.vat_pct if s.show_vat else 0
         )
-        self.cost.setVisible(summary is not None)
+        self.cost.setVisible(summary is not None and not self._compact)
         if summary:
             self.cost.set(format_money(summary.total, summary.currency))
         counts = r.count_by_severity()

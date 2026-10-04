@@ -148,6 +148,12 @@ def test_theme_and_language_switch(app: QApplication, window) -> None:
     window.state.update_settings(language="uk")
     pump(app)
     assert window.topbar.title.text() == "Локація"
+    window.state.update_settings(ui_scale=1.25)
+    pump(app)
+    assert window.sidebar.width() in (round(236 * 1.25), round(64 * 1.25))
+    window.state.update_settings(ui_scale=1.0)
+    pump(app)
+    assert window.state.result is not None
 
 
 def test_exports_in_background(app: QApplication, window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
