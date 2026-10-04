@@ -132,11 +132,11 @@ used by the golden tests.
 
 | Topic | Decision |
 |---|---|
-| FS-448E / FS-448E-POE (End-of-Order) | The engineer asked for "448F", which doesn't exist in the Fortinet ordering guide. The closest 48-port dual-PSU successors in the current guide are **FS-648F** (access) and **FS-648F-FPOE** (CCTV); these are the new premium models. FS-448E entries stay in the catalog flagged `eoo`. |
+| FS-448E / FS-448E-POE (End-of-Order per third-party sites) | **Kept** as the premium (dual-PSU) access and CCTV models, as on the whiteboard (the earlier "448F" was a typo for 448E). The EOO status is shown as an info note, not a warning. FS-648F / FS-648F-FPOE remain in the catalog as alternatives. FS-448E-POE PoE is only 421 W; the engine adds camera switches when the budget is exceeded. |
 | 802.3bt shortage on FS-124G-FPOE | **Auto-upgrade** to FS-624F-FPOE (rule `bt_auto_upgrade`), explained in the BoM line and tagged "auto". |
 | Currency | UAH, optional VAT and discount; prices empty by default (price columns hidden). |
 | FortiOS version | Per-location input (default 7.6.4); FG-120G's 32/48 limit follows it. |
-| PoE redundancy caveat (new finding) | FS-624F-FPOE and FS-648F-FPOE have only **780 W PoE with one working PSU**. When the load per switch exceeds that, an info check warns that a PSU failure would drop some devices. |
+| PoE redundancy caveat (new finding) | FS-624F-FPOE (and the alternative FS-648F-FPOE) have only **780 W PoE with one working PSU**. When the load per switch exceeds that, an info check warns that a PSU failure would drop some devices. |
 
 ---
 

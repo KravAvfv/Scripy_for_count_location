@@ -54,7 +54,7 @@
       "power_base_w": 300, "power_max_w": 300, "rack_units": 1,
       "verified": "datasheet",
       "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortiswitch-campus-series.pdf",
-      "notes": "Замість FS-448E (End-of-Order 2026-09-13). power_max_w — максимум з datasheet; типове споживання нижче."
+      "notes": "Альтернатива FS-448E (не використовується за замовчуванням). power_max_w — максимум з datasheet."
     },
     "FS-148F-FPOE": {
       "kind": "switch",
@@ -79,12 +79,12 @@
       "power_base_w": 300, "power_max_w": 2100, "rack_units": 1,
       "verified": "datasheet",
       "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortiswitch-campus-series.pdf",
-      "notes": "Замість FS-448E-POE. PoE 1800 Вт з двома БЖ при 200–240 В; з одним БЖ — 780 Вт."
+      "notes": "Альтернатива FS-448E-POE (не використовується за замовчуванням). PoE 1800 Вт з двома БЖ; з одним БЖ — 780 Вт."
     },
     "FS-448E": {
       "kind": "switch",
       "family": "FortiSwitch 400E",
-      "name": {"uk": "48× 1G RJ45, 4× 10G SFP+, 2× БЖ (знято з замовлення)", "en": "48× 1G RJ45, 4× 10G SFP+, dual PSU (end of order)"},
+      "name": {"uk": "48× 1G RJ45, 4× 10G SFP+, 2 резервовані БЖ", "en": "48× 1G RJ45, 4× 10G SFP+, dual redundant PSU"},
       "ports": {"count": 48, "speed_gbps": 1},
       "uplinks": {"count": 4, "speed_gbps": 10, "type": "SFP+"},
       "psu": {"count": 2, "hot_swap": false, "redundant": true},
@@ -92,12 +92,12 @@
       "lifecycle": "eoo",
       "verified": "third_party",
       "source": "https://fortineteol.com/hardware/fortiswitch",
-      "notes": "End-of-Order 2026-09-13 (за даними сторонніх сайтів). Залишено для довідки."
+      "notes": "Преміум-модель доступу (2 БЖ) за рішенням інженера. End-of-Order 2026-09-13 за даними сторонніх сайтів — перевірте доступність. Альтернатива: FS-648F."
     },
     "FS-448E-POE": {
       "kind": "switch",
       "family": "FortiSwitch 400E",
-      "name": {"uk": "48× 1G PoE+ 421 Вт, 4× 10G SFP+, 2× БЖ (знято з замовлення)", "en": "48× 1G PoE+ 421 W, 4× 10G SFP+, dual PSU (end of order)"},
+      "name": {"uk": "48× 1G PoE+ (802.3af/at) 421 Вт, 4× 10G SFP+, 2 резервовані БЖ", "en": "48× 1G PoE+ (802.3af/at) 421 W, 4× 10G SFP+, dual redundant PSU"},
       "ports": {"count": 48, "speed_gbps": 1},
       "uplinks": {"count": 4, "speed_gbps": 10, "type": "SFP+"},
       "poe": {"budget_w": 421, "ports_at": 48, "ports_bt": 0},
@@ -106,7 +106,7 @@
       "lifecycle": "eoo",
       "verified": "third_party",
       "source": "https://fortineteol.com/hardware/fortiswitch",
-      "notes": "End-of-Order 2026-09-13. PoE-бюджет лише 421 Вт."
+      "notes": "Преміум-модель для камер (2 БЖ) за рішенням інженера. PoE-бюджет лише 421 Вт (~28 камер по 15 Вт) — при більшому навантаженні додаються комутатори. End-of-Order 2026-09-13 за даними сторонніх сайтів. Альтернативи: FS-448E-FPOE (772 Вт), FS-648F-FPOE."
     },
     "FS-1024E": {
       "kind": "switch",
@@ -254,13 +254,13 @@
     "access_switch": {
       "label": {"uk": "Користувацькі комутатори", "en": "Access switches"},
       "short": {"uk": "Доступ", "en": "Access"},
-      "base": "FS-148F", "premium": "FS-648F",
+      "base": "FS-148F", "premium": "FS-448E",
       "endpoints_per_switch": 48
     },
     "camera_switch": {
       "label": {"uk": "Комутатори відеоспостереження", "en": "CCTV switches"},
       "short": {"uk": "CCTV", "en": "CCTV"},
-      "base": "FS-148F-FPOE", "premium": "FS-648F-FPOE",
+      "base": "FS-148F-FPOE", "premium": "FS-448E-POE",
       "endpoints_per_switch": 48
     },
     "core_switch": {

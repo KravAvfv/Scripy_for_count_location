@@ -1171,7 +1171,7 @@ def _general_checks(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
         seen.add(line.model)
         if dev.lifecycle != "active":
             line.tags.append("eoo")
-            ctx.check(Severity.WARNING, "EOO", "check.eoo", "check.eoo_hint", line.group, model=line.model)
+            ctx.check(Severity.INFO, "EOO", "check.eoo", "check.eoo_hint", line.group, model=line.model)
         if dev.verified == "third_party" and dev.kind in ("switch", "firewall", "ap"):
             third_party.append(line.model)
             line.tags.append("unverified")

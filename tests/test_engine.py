@@ -67,8 +67,8 @@ def test_wifi_switch_count(catalog: Catalog, aps: int, expected: int) -> None:
 # ---- variant selection ----------------------------------------------------------------------
 def test_dual_psu_variant_when_confirmed(catalog: Catalog) -> None:
     r = size_site(make_site(sockets=10, cameras=5, aps=[("corridor", 2)], redundant_psu=True), catalog)
-    assert r.categories["access_switch"].model == "FS-648F"
-    assert r.categories["camera_switch"].model == "FS-648F-FPOE"
+    assert r.categories["access_switch"].model == "FS-448E"
+    assert r.categories["camera_switch"].model == "FS-448E-POE"
     assert r.categories["wifi_switch"].model == "FS-624F-FPOE"
     assert "PSU_CONFIRM" not in codes(r)
 
@@ -76,7 +76,7 @@ def test_dual_psu_variant_when_confirmed(catalog: Catalog) -> None:
 def test_tier_suggests_dual_psu_and_asks_for_confirmation(catalog: Catalog) -> None:
     r = size_site(make_site(sockets=10, tier=2), catalog)
     assert r.dual_psu and not r.dual_psu_confirmed
-    assert r.categories["access_switch"].model == "FS-648F"
+    assert r.categories["access_switch"].model == "FS-448E"
     confirm = [c for c in r.checks if c.code == "PSU_CONFIRM"]
     assert confirm and confirm[0].action == "confirm_psu"
 
@@ -101,7 +101,7 @@ def test_quantity_threshold_mode(compat_catalog: Catalog, count_sockets: int, mo
 
 def test_variant_threshold_is_editable(catalog: Catalog) -> None:
     cat = catalog_with_overrides(catalog, {"rules": {"variant_mode": "quantity", "variant_quantity_threshold": 2}})
-    assert size_site(make_site(sockets=96), cat).categories["access_switch"].model == "FS-648F"
+    assert size_site(make_site(sockets=96), cat).categories["access_switch"].model == "FS-448E"
     assert size_site(make_site(sockets=48), cat).categories["access_switch"].model == "FS-148F"
 
 
@@ -320,3 +320,13 @@ def test_extended_ip_plan_present(catalog: Catalog) -> None:
     r = size_site(make_site(mode="extended", sockets=50), catalog)
     assert r.ip_plan is not None and r.ip_plan.segments[0].id == "data"
     assert size_site(make_site(sockets=50), catalog).ip_plan is None
+
+
+def test_448e_poe_budget_autoscale(catalog: Catalog) -> None:
+    # FS-448E-POE has only 421 W: 48 cameras × 15 W = 720 W → 2 switches
+    r = size_site(make_site(cameras=48, redundant_psu=True), catalog)
+    cam = r.categories["camera_switch"]
+    assert (cam.model, cam.count) == ("FS-448E-POE", 2)
+    assert "POE_AUTOSCALE" in codes(r)
+    eoo = [c for c in r.checks if c.code == "EOO"]
+    assert eoo and all(c.severity == Severity.INFO for c in eoo)
