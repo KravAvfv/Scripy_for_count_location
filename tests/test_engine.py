@@ -68,7 +68,7 @@ def test_wifi_switch_count(catalog: Catalog, aps: int, expected: int) -> None:
 def test_dual_psu_variant_when_confirmed(catalog: Catalog) -> None:
     r = size_site(make_site(sockets=10, cameras=5, aps=[("corridor", 2)], redundant_psu=True), catalog)
     assert r.categories["access_switch"].model == "FS-448E"
-    assert r.categories["camera_switch"].model == "FS-448E-POE"
+    assert r.categories["camera_switch"].model == "FS-448E-FPOE"
     assert r.categories["wifi_switch"].model == "FS-624F-FPOE"
     assert "PSU_CONFIRM" not in codes(r)
 
@@ -322,11 +322,11 @@ def test_extended_ip_plan_present(catalog: Catalog) -> None:
     assert size_site(make_site(sockets=50), catalog).ip_plan is None
 
 
-def test_448e_poe_budget_autoscale(catalog: Catalog) -> None:
-    # FS-448E-POE has only 421 W: 48 cameras × 15 W = 720 W → 2 switches
+def test_448e_fpoe_camera_switch(catalog: Catalog) -> None:
+    # FS-448E-FPOE: 772 W covers 48 cameras × 15 W = 720 W on one switch (93 % → near-budget warning)
     r = size_site(make_site(cameras=48, redundant_psu=True), catalog)
     cam = r.categories["camera_switch"]
-    assert (cam.model, cam.count) == ("FS-448E-POE", 2)
-    assert "POE_AUTOSCALE" in codes(r)
+    assert (cam.model, cam.count) == ("FS-448E-FPOE", 1)
+    assert "POE_NEAR" in codes(r) and "POE_AUTOSCALE" not in codes(r)
     eoo = [c for c in r.checks if c.code == "EOO"]
     assert eoo and all(c.severity == Severity.INFO for c in eoo)

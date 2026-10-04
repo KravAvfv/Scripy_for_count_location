@@ -392,6 +392,7 @@ PROTOTYPE_COMPAT_OVERRIDES: dict[str, Any] = {
         "poe_autoscale": False,
         "core_port_check": False,
     },
+    "categories": {"camera_switch": {"premium": "FS-448E-POE"}},
     "models": {
         "FG-80F": {"firewall": {"max_switches": 16}},
         "FG-120G": {"firewall": {"max_switches": 32, "max_switches_fortios": []}},

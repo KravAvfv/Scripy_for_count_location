@@ -132,7 +132,7 @@ used by the golden tests.
 
 | Topic | Decision |
 |---|---|
-| FS-448E / FS-448E-POE (End-of-Order per third-party sites) | **Kept** as the premium (dual-PSU) access and CCTV models, as on the whiteboard (the earlier "448F" was a typo for 448E). The EOO status is shown as an info note, not a warning. FS-648F / FS-648F-FPOE remain in the catalog as alternatives. FS-448E-POE PoE is only 421 W; the engine adds camera switches when the budget is exceeded. |
+| FS-448E / FS-448E-POE (End-of-Order per third-party sites) | **Kept** FS-448E as the premium (dual-PSU) access model. For cameras the engineer chose **FS-448E-FPOE** (772 W PoE, dual redundant PSU, 🟡 third-party data) instead of the whiteboard FS-448E-POE (421 W). EOO status is an info note. FS-448E-POE and FS-648F / FS-648F-FPOE remain as catalog alternatives. |
 | 802.3bt shortage on FS-124G-FPOE | **Auto-upgrade** to FS-624F-FPOE (rule `bt_auto_upgrade`), explained in the BoM line and tagged "auto". |
 | Currency | UAH, optional VAT and discount; prices empty by default (price columns hidden). |
 | FortiOS version | Per-location input (default 7.6.4); FG-120G's 32/48 limit follows it. |

@@ -107,7 +107,7 @@ User data (catalog edits, settings, logs) lives in `%APPDATA%\SiteSizer\SiteSize
 | Question | Decision |
 |---|---|
 | Whiteboard "25х / 15х" | **2 PSU / 1 PSU.** Premium (dual hot-swap PSU) models are recommended for tiers 1–2, and the app asks you to confirm. The old quantity threshold is still available (`variant_mode: quantity`). |
-| FS-448E family | **Kept as the dual-PSU models**: FS-448E (access) and FS-448E-POE (CCTV), as on the whiteboard. Third-party sources list them as End-of-Order 2026-09-13, so the app shows an info note to check availability; FS-648F / FS-648F-FPOE are in the catalog as alternatives. FS-448E-POE has only 421 W of PoE (~28 cameras at 15 W), so extra camera switches are added automatically when needed. |
+| FS-448E family | **Kept as the dual-PSU models**: FS-448E (access) and FS-448E-FPOE (CCTV, 772 W PoE). Third-party sources list them as End-of-Order 2026-09-13, so the app shows an info note to check availability; FS-648F / FS-648F-FPOE are in the catalog as alternatives. FS-448E-POE (421 W, the whiteboard model) stays in the catalog as an alternative. |
 | Not enough 802.3bt ports on FS-124G-FPOE | **Automatic upgrade** to FS-624F-FPOE, explained in the BoM line. |
 | Currency | **UAH**; VAT and discount are optional. Prices are empty by default, so the price columns stay hidden. |
 | FortiOS version | **Per-location input** (FG-120G manages 48 switches on FortiOS 7.6.1+, 32 on older versions). |

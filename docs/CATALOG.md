@@ -50,7 +50,7 @@ catalog in the meantime.
   "categories": {                          // which models serve each switch role
     "wifi_switch":   {"base": "FS-124G-FPOE", "premium": "FS-624F-FPOE", "endpoints_per_switch": 24},
     "access_switch": {"base": "FS-148F",      "premium": "FS-448E",      "endpoints_per_switch": 48},
-    "camera_switch": {"base": "FS-148F-FPOE", "premium": "FS-448E-POE",  "endpoints_per_switch": 48},
+    "camera_switch": {"base": "FS-148F-FPOE", "premium": "FS-448E-FPOE", "endpoints_per_switch": 48},
     "core_switch":   {"base": "FS-1024E",     "premium": "FS-1024E",     "endpoints_per_switch": 24}
   },
   "firewall_ladder": ["FG-80F", "FG-120G", "FG-200G", "FG-400G"],

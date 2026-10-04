@@ -106,7 +106,21 @@
       "lifecycle": "eoo",
       "verified": "third_party",
       "source": "https://fortineteol.com/hardware/fortiswitch",
-      "notes": "Преміум-модель для камер (2 БЖ) за рішенням інженера. PoE-бюджет лише 421 Вт (~28 камер по 15 Вт) — при більшому навантаженні додаються комутатори. End-of-Order 2026-09-13 за даними сторонніх сайтів. Альтернативи: FS-448E-FPOE (772 Вт), FS-648F-FPOE."
+      "notes": "Альтернатива FS-448E-FPOE (не використовується за замовчуванням). PoE-бюджет лише 421 Вт. End-of-Order 2026-09-13 за даними сторонніх сайтів."
+    },
+    "FS-448E-FPOE": {
+      "kind": "switch",
+      "family": "FortiSwitch 400E",
+      "name": {"uk": "48× 1G PoE+ (802.3af/at) 772 Вт, 4× 10G SFP+, 2 резервовані БЖ", "en": "48× 1G PoE+ (802.3af/at) 772 W, 4× 10G SFP+, dual redundant PSU"},
+      "ports": {"count": 48, "speed_gbps": 1},
+      "uplinks": {"count": 4, "speed_gbps": 10, "type": "SFP+"},
+      "poe": {"budget_w": 772, "ports_at": 48, "ports_bt": 0},
+      "psu": {"count": 2, "hot_swap": false, "redundant": true},
+      "power_base_w": 152, "power_max_w": 924, "rack_units": 1,
+      "lifecycle": "eoo",
+      "verified": "third_party",
+      "source": "https://netboxlabs.com/ndx/fortinet/fortinet-fs-448e-fpoe/",
+      "notes": "Преміум-модель для камер (2 БЖ) за рішенням інженера. PoE 772 Вт (~51 камера по 15 Вт). End-of-Order 2026-09-13 за даними сторонніх сайтів — перевірте доступність. power_base_w = max − PoE-бюджет."
     },
     "FS-1024E": {
       "kind": "switch",
@@ -260,7 +274,7 @@
     "camera_switch": {
       "label": {"uk": "Комутатори відеоспостереження", "en": "CCTV switches"},
       "short": {"uk": "CCTV", "en": "CCTV"},
-      "base": "FS-148F-FPOE", "premium": "FS-448E-POE",
+      "base": "FS-148F-FPOE", "premium": "FS-448E-FPOE",
       "endpoints_per_switch": 48
     },
     "core_switch": {

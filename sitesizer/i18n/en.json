@@ -280,7 +280,7 @@
   "ui.tier": "Site criticality",
   "ui.tier_sub": "Affects resilience, not the port count.",
   "ui.psu": "Switches with two power supplies",
-  "ui.psu_caption": "Dual-PSU models: FS-624F-FPOE, FS-448E, FS-448E-POE instead of the single-PSU base models.",
+  "ui.psu_caption": "Dual-PSU models: FS-624F-FPOE, FS-448E, FS-448E-FPOE instead of the single-PSU base models.",
   "ui.psu_confirm_text": "Two-PSU switches are recommended for the “{tier}” level. Please confirm:",
   "ui.psu_confirm_yes": "Yes, 2 PSUs",
   "ui.psu_confirm_no": "No, base models",
