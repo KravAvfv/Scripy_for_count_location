@@ -460,7 +460,7 @@ class SegmentedControl(QWidget):
 
     def _move_to(self, i: int, animate: bool) -> None:
         self._index = i
-        if animate:
+        if animate and self.isVisible():
             self._anim.stop()
             self._anim.setStartValue(self._pill)
             self._anim.setEndValue(float(i))
@@ -618,9 +618,13 @@ class Callout(QFrame):
         self.hint.setVisible(bool(hint))
         col.addWidget(self.text)
         col.addWidget(self.hint)
-        self.actions = QHBoxLayout()
+        # Actions live in their own widget: an empty nested layout breaks Qt's width distribution.
+        self.actions_box = QWidget()
+        self.actions = QHBoxLayout(self.actions_box)
+        self.actions.setContentsMargins(0, px(4), 0, 0)
         self.actions.setSpacing(px(8))
-        col.addLayout(self.actions)
+        self.actions_box.hide()
+        col.addWidget(self.actions_box)
         lay.addLayout(col, 1)
         self._retint()
         theme_manager.changed.connect(self._retint)
@@ -633,6 +637,7 @@ class Callout(QFrame):
         b = button(text, variant if variant != "secondary" else None)
         b.setStyleSheet(f"padding: {px(3)}px {px(10)}px; min-height: {px(16)}px;")
         self.actions.addWidget(b)
+        self.actions_box.show()
         return b
 
 

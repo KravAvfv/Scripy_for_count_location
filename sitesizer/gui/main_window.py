@@ -10,6 +10,7 @@ from pathlib import Path
 from PySide6.QtCore import QByteArray, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QIcon, QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QMainWindow,
@@ -562,10 +563,16 @@ class MainWindow(QMainWindow):
 
     def start_tour(self) -> None:
         self.navigate("location")
+        loc = self.location
+
+        def reveal(widget: QWidget) -> None:
+            loc.form_scroll.ensureWidgetVisible(widget, 0, px(24))
+            QApplication.processEvents()
+
         steps = [
-            TourStep(lambda: self.location.preset_box, tr("tour.1.title"), tr("tour.1.text")),
-            TourStep(lambda: self.location.sockets_row, tr("tour.2.title"), tr("tour.2.text")),
-            TourStep(lambda: self.location.tier_card, tr("tour.3.title"), tr("tour.3.text")),
+            TourStep(lambda: loc.preset_box, tr("tour.1.title"), tr("tour.1.text"), lambda: reveal(loc.preset_box)),
+            TourStep(lambda: loc.sockets_row, tr("tour.2.title"), tr("tour.2.text"), lambda: reveal(loc.sockets_row)),
+            TourStep(lambda: loc.tier_card, tr("tour.3.title"), tr("tour.3.text"), lambda: reveal(loc.tier.parentWidget())),
             TourStep(lambda: self.summary, tr("tour.4.title"), tr("tour.4.text")),
             TourStep(lambda: self.export_btn, tr("tour.5.title"), tr("tour.5.text")),
         ]

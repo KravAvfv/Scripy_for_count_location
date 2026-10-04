@@ -233,6 +233,8 @@ class SiteDiagram:
             y += 4
         self.height = y + self.PAD
         self.empty = not self.boxes
+        if self.empty:
+            self.width, self.height = 420.0, 120.0
 
     def _fw_10g(self) -> bool:
         fw = self.r.firewall

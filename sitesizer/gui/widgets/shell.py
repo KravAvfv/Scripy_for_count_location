@@ -186,7 +186,7 @@ class Sidebar(QFrame):
         self.refresh_sites()
 
     def _nav_button(self, key: str, icon_name: str, text: str) -> QPushButton:
-        b = QPushButton(text)
+        b = QPushButton(text.replace("&", "&&"))
         b.setObjectName("NavItem")
         b.setCheckable(True)
         b.setFocusPolicy(Qt.FocusPolicy.TabFocus)
@@ -269,7 +269,7 @@ class Sidebar(QFrame):
         self.setFixedWidth(px(64) if compact else px(236))
         for key, b in self.buttons.items():
             text_key = next(t for k, _i, t in NAV_MAIN + NAV_BOTTOM if k == key)
-            b.setText("" if compact else tr(text_key))
+            b.setText("" if compact else tr(text_key).replace("&", "&&"))
             b.setToolTip(tr(text_key) if compact else "")
         self.app_name.setVisible(not compact)
         self.project_label.setVisible(not compact)

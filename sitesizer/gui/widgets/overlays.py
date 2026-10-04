@@ -327,7 +327,14 @@ class TourOverlay(QWidget):
         if w is None or not w.isVisible():
             return QRect()
         top_left = w.mapTo(self.host, QPoint(0, 0))
-        return QRect(top_left, w.size()).adjusted(-6, -6, 6, 6)
+        rect = QRect(top_left, w.size())
+        # clip to the part that is actually visible inside scroll areas
+        parent = w.parentWidget()
+        while parent is not None and parent is not self.host:
+            vis = QRect(parent.mapTo(self.host, QPoint(0, 0)), parent.size())
+            rect = rect.intersected(vis)
+            parent = parent.parentWidget()
+        return rect.adjusted(-6, -6, 6, 6) if not rect.isEmpty() else QRect()
 
     def _place(self) -> None:
         r = self._target_rect()

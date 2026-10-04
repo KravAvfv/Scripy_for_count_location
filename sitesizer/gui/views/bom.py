@@ -428,6 +428,10 @@ class BomView(QWidget):
         if state.result:
             self.on_result(state.result)
 
+    def resizeEvent(self, e) -> None:  # noqa: ANN001, N802
+        super().resizeEvent(e)
+        self.detail.setMaximumWidth(px(280) if self.width() < px(980) else px(420))
+
     def _on_settings(self) -> None:
         if self.state.result is not None:
             self.on_result(self.state.result)
