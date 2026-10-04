@@ -572,7 +572,9 @@ class MainWindow(QMainWindow):
         steps = [
             TourStep(lambda: loc.preset_box, tr("tour.1.title"), tr("tour.1.text"), lambda: reveal(loc.preset_box)),
             TourStep(lambda: loc.sockets_row, tr("tour.2.title"), tr("tour.2.text"), lambda: reveal(loc.sockets_row)),
-            TourStep(lambda: loc.tier_card, tr("tour.3.title"), tr("tour.3.text"), lambda: reveal(loc.tier.parentWidget())),
+            TourStep(
+                lambda: loc.tier_card, tr("tour.3.title"), tr("tour.3.text"), lambda: reveal(loc.tier.parentWidget())
+            ),
             TourStep(lambda: self.summary, tr("tour.4.title"), tr("tour.4.text")),
             TourStep(lambda: self.export_btn, tr("tour.5.title"), tr("tour.5.text")),
         ]
