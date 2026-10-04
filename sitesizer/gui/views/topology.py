@@ -61,7 +61,7 @@ class TopologyView(QWidget):
         self.zoom_in.clicked.connect(lambda: self.canvas.zoom_by(1.2))
         self.fit_btn.clicked.connect(self.canvas.fit)
         self.canvas.zoomChanged.connect(lambda z: self.zoom_label.setText(f"{round(z * 100)}%"))
-        state.resultChanged.connect(lambda _r: self.refresh())
+        state.resultChanged.connect(self._on_result)
         state.projectChanged.connect(self.refresh)
         theme_manager.changed.connect(self._on_theme)
 
@@ -85,6 +85,9 @@ class TopologyView(QWidget):
         if self.state.result is None:
             return None
         return SiteDiagram(self.state.result, self.state.catalog, lang, title=export, **kwargs)
+
+    def _on_result(self, _result: object) -> None:
+        self.refresh()
 
     def refresh(self) -> None:
         self.canvas.set_diagram(self.build_diagram())

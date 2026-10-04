@@ -58,12 +58,12 @@ class MainWindow(QMainWindow):
         self._build()
         self._shortcuts()
         self._restore_geometry()
-        state.message.connect(lambda sev, text: self.toasts.show(sev, text))
-        state.dirtyChanged.connect(lambda _d: self._update_titles())
+        state.message.connect(self._on_message)
+        state.dirtyChanged.connect(self._on_dirty)
         state.projectChanged.connect(self._update_titles)
         state.siteChanged.connect(self._update_titles)
-        state.undo.canUndoChanged.connect(lambda v: self.undo_btn.setEnabled(v))
-        state.undo.canRedoChanged.connect(lambda v: self.redo_btn.setEnabled(v))
+        state.undo.canUndoChanged.connect(self._on_can_undo)
+        state.undo.canRedoChanged.connect(self._on_can_redo)
         theme_manager.changed.connect(self._on_theme)
         state.settingsChanged.connect(self._on_settings)
         self._lang = state.settings.language
@@ -71,6 +71,19 @@ class MainWindow(QMainWindow):
         self.navigate(self.state.qsettings.value("window/page", "location", type=str) or "location")
         if state.catalog_error:
             QTimer.singleShot(400, lambda: self.toasts.show("error", tr("ui.catalog_fallback"), 8000))
+
+    # ---- state hooks (bound methods: auto-disconnected when the window is deleted) --------
+    def _on_message(self, severity: str, text: str) -> None:
+        self.toasts.show(severity, text)
+
+    def _on_dirty(self, _dirty: bool) -> None:
+        self._update_titles()
+
+    def _on_can_undo(self, value: bool) -> None:
+        self.undo_btn.setEnabled(value)
+
+    def _on_can_redo(self, value: bool) -> None:
+        self.redo_btn.setEnabled(value)
 
     # ---- construction --------------------------------------------------------------------
     def _build(self) -> None:
@@ -189,9 +202,9 @@ class MainWindow(QMainWindow):
             ("Ctrl+Shift+Z", self.state.undo.redo),
             ("Ctrl+K", self.open_palette),
             ("F1", lambda: self.navigate("help")),
-            ("Ctrl+Shift+C", self.bom.copy_to_clipboard),
+            ("Ctrl+Shift+C", lambda: self.bom.copy_to_clipboard()),
             ("Ctrl+Shift+L", self.toggle_theme),
-            ("Ctrl+L", self.location.focus_first),
+            ("Ctrl+L", lambda: self.location.focus_first()),
         ]
         for i, key in enumerate(PAGES[:9], start=1):
             binds.append((f"Ctrl+{i}", lambda k=key: self.navigate(k)))
@@ -586,7 +599,8 @@ class MainWindow(QMainWindow):
         old = self.centralWidget()
         self._build()
         old.deleteLater()
-        self._shortcuts()
+        self.undo_btn.setEnabled(self.state.undo.canUndo())
+        self.redo_btn.setEnabled(self.state.undo.canRedo())
         self.state.recompute()
         self.navigate(page)
 

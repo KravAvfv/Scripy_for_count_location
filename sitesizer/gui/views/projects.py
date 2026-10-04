@@ -169,10 +169,14 @@ class ProjectsView(QWidget):
         right.addStretch(1)
 
         state.projectChanged.connect(self.refresh)
-        state.resultChanged.connect(lambda _r: self.refresh())
+        state.resultChanged.connect(self._on_result)
         state.settingsChanged.connect(self._refresh_recent)
         self.refresh()
         self._refresh_recent()
+
+    def _on_result(self, _result: object) -> None:
+        if self.isVisible():
+            self.refresh()
 
     def refresh(self) -> None:
         if not self.isVisible() and self.grid.count():

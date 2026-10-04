@@ -423,10 +423,14 @@ class BomView(QWidget):
         self._expanded = True
         self._with_prices = False
         state.resultChanged.connect(self.on_result)
-        state.settingsChanged.connect(lambda: self.state.result and self.on_result(self.state.result))
+        state.settingsChanged.connect(self._on_settings)
         theme_manager.changed.connect(self.tree.viewport().update)
         if state.result:
             self.on_result(state.result)
+
+    def _on_settings(self) -> None:
+        if self.state.result is not None:
+            self.on_result(self.state.result)
 
     def _headers(self) -> None:
         labels = [

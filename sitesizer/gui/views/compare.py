@@ -176,7 +176,7 @@ class CompareView(QWidget):
         root.addWidget(label(tr("cmp.legend"), "caption"))
 
         state.projectChanged.connect(self._fill_combos)
-        state.resultChanged.connect(lambda _r: self.refresh())
+        state.resultChanged.connect(self._on_result)
         state.siteChanged.connect(self._fill_combos)
         self._fill_combos()
         self._default_variant()
@@ -237,6 +237,9 @@ class CompareView(QWidget):
             )
         ]
         return " · ".join(parts)
+
+    def _on_result(self, _result: object) -> None:
+        self.refresh()
 
     def refresh(self) -> None:
         a_id = self.a_combo.currentData()

@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from sitesizer.core.catalog import Catalog, load_default_catalog, prototype_compat_catalog
 from sitesizer.core.models import ApGroup, SiteInput
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _qapp() -> object:
+    """One QApplication for the whole run (exporters and GUI tests share it)."""
+    from PySide6.QtWidgets import QApplication
+
+    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture(scope="session")

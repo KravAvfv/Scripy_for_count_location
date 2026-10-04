@@ -356,8 +356,12 @@ class SummaryBar(QFrame):
             lay.addWidget(b)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         state.resultChanged.connect(self.on_result)
-        state.settingsChanged.connect(lambda: state.result and self.on_result(state.result))
+        state.settingsChanged.connect(self._on_settings)
         theme_manager.changed.connect(self._retint)
+
+    def _on_settings(self) -> None:
+        if self.state.result is not None:
+            self.on_result(self.state.result)
 
     def _counter(self, icon_name: str, color: str) -> QPushButton:
         b = button("0", "ghost")
