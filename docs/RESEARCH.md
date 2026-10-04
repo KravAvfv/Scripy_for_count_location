@@ -45,6 +45,8 @@ or catalog site only (verify before quoting to a customer) · ❓ not found.
 | **FS-448E** | 48 × 1G RJ45 | 4 × 10G SFP+ | none | dual redundant AC (QSG ✅) | 46.5 / 47.8 W 🟡 | 1 | QSG ✅ + 🟡 |
 | **FS-448E-POE** | 48 × 1G RJ45 | 4 × 10G SFP+ | 48 × af/at, **421 W** 🟡 | dual redundant AC | 440 / 442 W 🟡 | 1 | 🟡 |
 | FS-448E-FPOE (reference) | 48 × 1G RJ45 | 4 × 10G SFP+ | 48 × af/at, 772 W 🟡 | dual redundant AC | 921 / 924 W 🟡 | 1 | 🟡 |
+| **FS-648F** | 32 × 2.5G + 16 × 5G RJ45 | 8 × 25G SFP28 | none | **2 × 350 W dual hot-swap** | 300 W | 1 | ✅ Campus DS |
+| **FS-648F-FPOE** | 32 × 2.5G + 16 × 5G RJ45 | 8 × 25G SFP28 | 48 × bt type 4, **1800 W with 2 PSU (200–240 V), 780 W with 1 PSU** | **2 × 1200 W dual hot-swap** (PoE load sharing) | 2100 W | 1 | ✅ Campus DS |
 | **FS-1024E** | 24 × 10G SFP+ | 2 × 100G QSFP28 | none | **dual hot-swap redundant** (spare FS-PSU-300) ✅ | 176 W 🟡 | 1 | QSG ✅ + OG ✅ |
 
 Notes
@@ -121,7 +123,20 @@ the catalog/UI:
   (default: tiers 1–2). **Recommended** if the "PSU" reading is right.
 * `always_base` / `always_premium`.
 
-The question is included in the clarification list.
+**Decision (confirmed by the engineer):** the markers mean 2 / 1 power supplies. The default rule is now
+`dual_psu`: tiers 1–2 *recommend* the dual-PSU model, and the app asks the engineer to confirm (the
+`redundant_psu` input is `None` until confirmed). The quantity rule is kept as `variant_mode: quantity` and is
+used by the golden tests.
+
+## 3a. Other decisions after the clarification round (2026-10-04)
+
+| Topic | Decision |
+|---|---|
+| FS-448E / FS-448E-POE (End-of-Order) | The engineer asked for "448F", which doesn't exist in the Fortinet ordering guide. The closest 48-port dual-PSU successors in the current guide are **FS-648F** (access) and **FS-648F-FPOE** (CCTV); these are the new premium models. FS-448E entries stay in the catalog flagged `eoo`. |
+| 802.3bt shortage on FS-124G-FPOE | **Auto-upgrade** to FS-624F-FPOE (rule `bt_auto_upgrade`), explained in the BoM line and tagged "auto". |
+| Currency | UAH, optional VAT and discount; prices empty by default (price columns hidden). |
+| FortiOS version | Per-location input (default 7.6.4); FG-120G's 32/48 limit follows it. |
+| PoE redundancy caveat (new finding) | FS-624F-FPOE and FS-648F-FPOE have only **780 W PoE with one working PSU**. When the load per switch exceeds that, an info check warns that a PSU failure would drop some devices. |
 
 ---
 

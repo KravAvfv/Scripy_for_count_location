@@ -1,5 +1,7 @@
 # Implementation plan
 
+_Status: all milestones (a)–(f) implemented — see README.md and ARCHITECTURE.md for the result._
+
 ## Stack
 Python 3.12+ · **PySide6** (Widgets, QSS, QGraphicsView, QPdfWriter, QSvgGenerator) · `openpyxl` ·
 `pydantic` v2 (catalog/project schema + friendly validation errors) · `pytest` · `ruff` · `mypy` ·
