@@ -38,5 +38,11 @@ warn_unused_ignores = false
 check_untyped_defs = true
 exclude = ["counter_location.py", "build/", "dist/"]
 
+[[tool.mypy.overrides]]
+# PySide6 stubs model many Qt APIs as Optional / overloaded in ways that produce noise
+# (e.g. layout() -> QLayout | None, lambdas in connect()). Core and exporters stay strict.
+module = "sitesizer.gui.*"
+disable_error_code = ["union-attr", "func-returns-value", "misc", "method-assign", "has-type", "arg-type", "assignment", "attr-defined", "call-overload"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

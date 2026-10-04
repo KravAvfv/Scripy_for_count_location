@@ -925,12 +925,13 @@ def _bom_rack(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
                 group="rack",
                 category=t.t("cat.rack"),
                 model=rack.rack_model,
-                qty=1,
+                qty=rack.rack_count,
                 reason=t.t(
-                    "reason.rack",
+                    "reason.rack" if rack.rack_count == 1 else "reason.rack_multi",
                     used=rack.units_total,
                     spare=rack.units_with_spare,
                     size=rack.rack_size_u,
+                    n=rack.rack_count,
                     pct=round(ctx.rules.rack_spare_ratio * 100),
                 ),
                 tags=["addon"],
@@ -1098,6 +1099,8 @@ def compute_rack(
     else:
         if racks:
             rs.rack_model, rs.rack_size_u = racks[-1][0], racks[-1][1].rack_size_u or 0
+    if rs.rack_size_u:
+        rs.rack_count = max(1, math.ceil(rs.units_with_spare / rs.rack_size_u))
     run = ctx.site.max_cable_run_m
     rs.idf_count = max(1, math.ceil(run / r.copper_max_m)) if run else 1
     avg = ctx.site.avg_cable_run_m or r.avg_cable_run_m_default

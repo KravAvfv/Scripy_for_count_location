@@ -193,6 +193,7 @@ class RackSummary:
     units_with_spare: int = 0
     rack_model: str = ""
     rack_size_u: int = 0
+    rack_count: int = 1
     idf_count: int = 1
     patch_panels: int = 0
     copper_endpoints: int = 0

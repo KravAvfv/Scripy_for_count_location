@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import textwrap
 from collections.abc import Callable
 from pathlib import Path
 
@@ -169,10 +170,8 @@ def print_result(result: SiteResult, lang: str = "uk") -> None:
     for line in result.bom:
         qty = "—" if line.qty is None else str(line.qty)
         print(f" {line.category[:34]:34} {line.model[:24]:24} {qty:>5}")
-        reason = line.reason
-        while reason:
-            print(f"     {reason[: width - 6]}")
-            reason = reason[width - 6 :]
+        for chunk in textwrap.wrap(line.reason, width - 6):
+            print(f"     {chunk}")
     if result.checks:
         print("─" * width)
         icon = {"error": "✖", "warning": "!", "info": "i"}
