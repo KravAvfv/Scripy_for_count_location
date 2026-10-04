@@ -1,0 +1,592 @@
+{
+  "generated_from": "counter_location.py (console prototype)",
+  "scenarios": [
+    {
+      "id": "brief_example",
+      "input": {
+        "name": "brief_example",
+        "mode": "quick",
+        "sockets": 10,
+        "cameras": 5,
+        "ap_groups": [
+          {
+            "zone": "low_density",
+            "qty": 1
+          }
+        ],
+        "tier": 1,
+        "aggregation": "y",
+        "reserve": false,
+        "wifi_clients_expected": null
+      },
+      "prototype_bom": [
+        {
+          "group": "ap",
+          "category": "Точки доступу — Мала щільність користувачів (<20 на AP)",
+          "model": "FAP-241K",
+          "qty": 1,
+          "reason": "Тип розміщення: Мала щільність користувачів (<20 на AP)."
+        },
+        {
+          "group": "wifi_switch",
+          "category": "Wi-Fi Комутатори",
+          "model": "FS-124G-FPOE",
+          "qty": 1,
+          "reason": "Фізичні порти: 24 під AP + запас під Uplink на світч."
+        },
+        {
+          "group": "access_switch",
+          "category": "Користувацькі Комутатори",
+          "model": "FS-148F",
+          "qty": 1,
+          "reason": "Фізичні порти: 48 на розетку + 10G SFP+ Uplink. L2-рішення без PoE."
+        },
+        {
+          "group": "camera_switch",
+          "category": "Відеоспостереження",
+          "model": "FS-148F-FPOE",
+          "qty": 1,
+          "reason": "Фізичні порти: 48 камер на світч. PoE-бюджет 740 Вт покриває ~5 камер (оцінка 75 Вт)."
+        },
+        {
+          "group": "core_switch",
+          "category": "Комутатор Агрегації",
+          "model": "FS-1024E",
+          "qty": 2,
+          "reason": "Об'єднання трафіку: 3 комутаторів доступу. 2х FS-1024E у стеку/MC-LAG — N+1 резервування ядра для критичної локації (відмова одного не кладе мережу)."
+        },
+        {
+          "group": "firewall",
+          "category": "Міжмережевий Екран",
+          "model": "FG-120G",
+          "qty": 2,
+          "reason": "Ліміт FortiLink: керує до 32 світчів (потрібно 5). Модель має 10G SFP+ порти для оптичних магістралей. HA-пара (Active-Passive) — для критичної локації один Firewall є неприпустимою точкою відмови."
+        },
+        {
+          "group": "ups",
+          "category": "Безперебійне живлення",
+          "model": "TODO: підібрати за потужністю",
+          "qty": 1,
+          "reason": "Орієнтовне навантаження активного обладнання ≈440 Вт (без PoE-бюджету камер/AP). Підібрати UPS з запасом ≥30% та часом автономності відповідно до вимог локації."
+        },
+        {
+          "group": "oob",
+          "category": "Резервний канал управління (OOB)",
+          "model": "TODO: 4G/5G-роутер",
+          "qty": 1,
+          "reason": "Незалежний канал доступу до Firewall/консолей на випадок відмови основного каналу зв'язку — критично для дистанційного відновлення без виїзду."
+        },
+        {
+          "group": "reference",
+          "category": "Довідково: критичність / SLA",
+          "model": "—",
+          "qty": "—",
+          "reason": "Рівень: Критична (ЦОД / головний майданчик, простій неприпустимий). Рекомендований SLA підтримки: 24x7, відновлення ≤4 год, апаратний резерв на майданчику."
+        }
+      ],
+      "prototype_ip_plan": null
+    },
+    {
+      "id": "regional_reserve_extended",
+      "input": {
+        "name": "regional_reserve_extended",
+        "mode": "extended",
+        "sockets": 100,
+        "cameras": 60,
+        "ap_groups": [
+          {
+            "zone": "high_density",
+            "qty": 30
+          },
+          {
+            "zone": "outdoor",
+            "qty": 4
+          }
+        ],
+        "tier": 2,
+        "aggregation": "",
+        "reserve": true,
+        "wifi_clients_expected": null
+      },
+      "prototype_bom": [
+        {
+          "group": "ap",
+          "category": "Точки доступу — Велика щільність користувачів (>20 на AP)",
+          "model": "FAP-441K",
+          "qty": 36,
+          "reason": "Тип розміщення: Велика щільність користувачів (>20 на AP)."
+        },
+        {
+          "group": "ap",
+          "category": "Точки доступу — Вулиця / зовнішнє розміщення",
+          "model": "FAP-234G",
+          "qty": 5,
+          "reason": "Тип розміщення: Вулиця / зовнішнє розміщення."
+        },
+        {
+          "group": "wifi_switch",
+          "category": "Wi-Fi Комутатори",
+          "model": "FS-124G-FPOE",
+          "qty": 2,
+          "reason": "Фізичні порти: 24 під AP + запас під Uplink на світч."
+        },
+        {
+          "group": "access_switch",
+          "category": "Користувацькі Комутатори",
+          "model": "FS-148F",
+          "qty": 3,
+          "reason": "Фізичні порти: 48 на розетку + 10G SFP+ Uplink. L2-рішення без PoE."
+        },
+        {
+          "group": "camera_switch",
+          "category": "Відеоспостереження",
+          "model": "FS-148F-FPOE",
+          "qty": 2,
+          "reason": "Фізичні порти: 48 камер на світч. PoE-бюджет 740 Вт покриває ~36 камер (оцінка 540 Вт)."
+        },
+        {
+          "group": "core_switch",
+          "category": "Комутатор Агрегації",
+          "model": "FS-1024E",
+          "qty": 1,
+          "reason": "Об'єднання трафіку: на локації 7 комутаторів доступу. Ядро 10G збирає всі магістралі."
+        },
+        {
+          "group": "firewall",
+          "category": "Міжмережевий Екран",
+          "model": "FG-120G",
+          "qty": 1,
+          "reason": "Ліміт FortiLink: керує до 32 світчів (потрібно 8). Модель має 10G SFP+ порти для оптичних магістралей."
+        },
+        {
+          "group": "ups",
+          "category": "Безперебійне живлення",
+          "model": "TODO: підібрати за потужністю",
+          "qty": 1,
+          "reason": "Орієнтовне навантаження активного обладнання ≈645 Вт (без PoE-бюджету камер/AP). Підібрати UPS з запасом ≥30% та часом автономності відповідно до вимог локації."
+        },
+        {
+          "group": "reference",
+          "category": "Довідково: критичність / SLA",
+          "model": "—",
+          "qty": "—",
+          "reason": "Рівень: Висока (важливий регіональний офіс). Рекомендований SLA підтримки: Наступний робочий день (NBD), холодний резерв на складі."
+        }
+      ],
+      "prototype_ip_plan": [
+        {
+          "segment": "VLAN Data (проводові користувачі)",
+          "hosts": 120,
+          "prefix": "/24",
+          "capacity": 254
+        },
+        {
+          "segment": "VLAN Wi-Fi (клієнтські пристрої)",
+          "hosts": 615,
+          "prefix": "/22",
+          "capacity": 1022
+        },
+        {
+          "segment": "VLAN CCTV (камери)",
+          "hosts": 72,
+          "prefix": "/25",
+          "capacity": 126
+        },
+        {
+          "segment": "VLAN Management (світчі, FW, AP)",
+          "hosts": 50,
+          "prefix": "/25",
+          "capacity": 126
+        }
+      ]
+    },
+    {
+      "id": "tiny_no_core",
+      "input": {
+        "name": "tiny_no_core",
+        "mode": "quick",
+        "sockets": 0,
+        "cameras": 0,
+        "ap_groups": [
+          {
+            "zone": "corridor",
+            "qty": 2
+          }
+        ],
+        "tier": 3,
+        "aggregation": "n",
+        "reserve": false,
+        "wifi_clients_expected": null
+      },
+      "prototype_bom": [
+        {
+          "group": "ap",
+          "category": "Точки доступу — Коридори",
+          "model": "FAP-231K",
+          "qty": 2,
+          "reason": "Тип розміщення: Коридори."
+        },
+        {
+          "group": "wifi_switch",
+          "category": "Wi-Fi Комутатори",
+          "model": "FS-124G-FPOE",
+          "qty": 1,
+          "reason": "Фізичні порти: 24 під AP + запас під Uplink на світч."
+        },
+        {
+          "group": "firewall",
+          "category": "Міжмережевий Екран",
+          "model": "FG-80F",
+          "qty": 1,
+          "reason": "Ліміт FortiLink: керує до 16 світчів (потрібно 1)."
+        },
+        {
+          "group": "reference",
+          "category": "Довідково: критичність / SLA",
+          "model": "—",
+          "qty": "—",
+          "reason": "Рівень: Стандартна (типова філія). Рекомендований SLA підтримки: Стандартна гарантія виробника."
+        }
+      ],
+      "prototype_ip_plan": null
+    },
+    {
+      "id": "large_access",
+      "input": {
+        "name": "large_access",
+        "mode": "quick",
+        "sockets": 2000,
+        "cameras": 0,
+        "ap_groups": [],
+        "tier": 3,
+        "aggregation": "",
+        "reserve": false,
+        "wifi_clients_expected": null
+      },
+      "prototype_bom": [
+        {
+          "group": "access_switch",
+          "category": "Користувацькі Комутатори",
+          "model": "FS-448E",
+          "qty": 42,
+          "reason": "Фізичні порти: 48 на розетку + 10G SFP+ Uplink (hot-swap PSU). L2-рішення без PoE."
+        },
+        {
+          "group": "core_switch",
+          "category": "Комутатор Агрегації",
+          "model": "FS-1024E",
+          "qty": 1,
+          "reason": "Об'єднання трафіку: на локації 42 комутаторів доступу. Ядро 10G збирає всі магістралі."
+        },
+        {
+          "group": "firewall",
+          "category": "Міжмережевий Екран",
+          "model": "FG-200G",
+          "qty": 1,
+          "reason": "Ліміт FortiLink: керує до 64 світчів (потрібно 43). Модель має 10G SFP+ порти для оптичних магістралей."
+        },
+        {
+          "group": "reference",
+          "category": "Довідково: критичність / SLA",
+          "model": "—",
+          "qty": "—",
+          "reason": "Рівень: Стандартна (типова філія). Рекомендований SLA підтримки: Стандартна гарантія виробника."
+        }
+      ],
+      "prototype_ip_plan": null
+    },
+    {
+      "id": "empty",
+      "input": {
+        "name": "empty",
+        "mode": "quick",
+        "sockets": 0,
+        "cameras": 0,
+        "ap_groups": [],
+        "tier": 4,
+        "aggregation": "",
+        "reserve": false,
+        "wifi_clients_expected": null
+      },
+      "prototype_bom": [
+        {
+          "group": "reference",
+          "category": "Довідково: критичність / SLA",
+          "model": "—",
+          "qty": "—",
+          "reason": "Рівень: Низька (склад / тимчасовий об'єкт). Рекомендований SLA підтримки: Best-effort, ремонт за фактом звернення."
+        }
+      ],
+      "prototype_ip_plan": null
+    },
+    {
+      "id": "multi_group_reserve",
+      "input": {
+        "name": "multi_group_reserve",
+        "mode": "extended",
+        "sockets": 30,
+        "cameras": 10,
+        "ap_groups": [
+          {
+            "zone": "farm3d",
+            "qty": 1
+          },
+          {
+            "zone": "corridor",
+            "qty": 1
+          }
+        ],
+        "tier": 3,
+        "aggregation": "",
+        "reserve": true,
+        "wifi_clients_expected": null
+      },
+      "prototype_bom": [
+        {
+          "group": "ap",
+          "category": "Точки доступу — 3D-ферма (стелажі)",
+          "model": "FAP-221K",
+          "qty": 2,
+          "reason": "Тип розміщення: 3D-ферма (стелажі)."
+        },
+        {
+          "group": "ap",
+          "category": "Точки доступу — Коридори",
+          "model": "FAP-231K",
+          "qty": 2,
+          "reason": "Тип розміщення: Коридори."
+        },
+        {
+          "group": "wifi_switch",
+          "category": "Wi-Fi Комутатори",
+          "model": "FS-124G-FPOE",
+          "qty": 1,
+          "reason": "Фізичні порти: 24 під AP + запас під Uplink на світч."
+        },
+        {
+          "group": "access_switch",
+          "category": "Користувацькі Комутатори",
+          "model": "FS-148F",
+          "qty": 1,
+          "reason": "Фізичні порти: 48 на розетку + 10G SFP+ Uplink. L2-рішення без PoE."
+        },
+        {
+          "group": "camera_switch",
+          "category": "Відеоспостереження",
+          "model": "FS-148F-FPOE",
+          "qty": 1,
+          "reason": "Фізичні порти: 48 камер на світч. PoE-бюджет 740 Вт покриває ~12 камер (оцінка 180 Вт)."
+        },
+        {
+          "group": "core_switch",
+          "category": "Комутатор Агрегації",
+          "model": "FS-1024E",
+          "qty": 1,
+          "reason": "Об'єднання трафіку: на локації 3 комутаторів доступу. Ядро 10G збирає всі магістралі."
+        },
+        {
+          "group": "firewall",
+          "category": "Міжмережевий Екран",
+          "model": "FG-120G",
+          "qty": 1,
+          "reason": "Ліміт FortiLink: керує до 32 світчів (потрібно 4). Модель має 10G SFP+ порти для оптичних магістралей."
+        },
+        {
+          "group": "reference",
+          "category": "Довідково: критичність / SLA",
+          "model": "—",
+          "qty": "—",
+          "reason": "Рівень: Стандартна (типова філія). Рекомендований SLA підтримки: Стандартна гарантія виробника."
+        }
+      ],
+      "prototype_ip_plan": [
+        {
+          "segment": "VLAN Data (проводові користувачі)",
+          "hosts": 36,
+          "prefix": "/26",
+          "capacity": 62
+        },
+        {
+          "segment": "VLAN Wi-Fi (клієнтські пристрої)",
+          "hosts": 45,
+          "prefix": "/26",
+          "capacity": 62
+        },
+        {
+          "segment": "VLAN CCTV (камери)",
+          "hosts": 12,
+          "prefix": "/27",
+          "capacity": 30
+        },
+        {
+          "segment": "VLAN Management (світчі, FW, AP)",
+          "hosts": 8,
+          "prefix": "/28",
+          "capacity": 14
+        }
+      ]
+    },
+    {
+      "id": "critical_large",
+      "input": {
+        "name": "critical_large",
+        "mode": "extended",
+        "sockets": 500,
+        "cameras": 200,
+        "ap_groups": [
+          {
+            "zone": "high_density",
+            "qty": 50
+          }
+        ],
+        "tier": 1,
+        "aggregation": "",
+        "reserve": false,
+        "wifi_clients_expected": 900
+      },
+      "prototype_bom": [
+        {
+          "group": "ap",
+          "category": "Точки доступу — Велика щільність користувачів (>20 на AP)",
+          "model": "FAP-441K",
+          "qty": 50,
+          "reason": "Тип розміщення: Велика щільність користувачів (>20 на AP)."
+        },
+        {
+          "group": "wifi_switch",
+          "category": "Wi-Fi Комутатори",
+          "model": "FS-124G-FPOE",
+          "qty": 3,
+          "reason": "Фізичні порти: 24 під AP + запас під Uplink на світч."
+        },
+        {
+          "group": "access_switch",
+          "category": "Користувацькі Комутатори",
+          "model": "FS-148F",
+          "qty": 11,
+          "reason": "Фізичні порти: 48 на розетку + 10G SFP+ Uplink. L2-рішення без PoE."
+        },
+        {
+          "group": "camera_switch",
+          "category": "Відеоспостереження",
+          "model": "FS-148F-FPOE",
+          "qty": 5,
+          "reason": "Фізичні порти: 48 камер на світч. PoE-бюджет 740 Вт покриває ~40 камер (оцінка 600 Вт)."
+        },
+        {
+          "group": "core_switch",
+          "category": "Комутатор Агрегації",
+          "model": "FS-1024E",
+          "qty": 2,
+          "reason": "Об'єднання трафіку: 19 комутаторів доступу. 2х FS-1024E у стеку/MC-LAG — N+1 резервування ядра для критичної локації (відмова одного не кладе мережу)."
+        },
+        {
+          "group": "firewall",
+          "category": "Міжмережевий Екран",
+          "model": "FG-120G",
+          "qty": 2,
+          "reason": "Ліміт FortiLink: керує до 32 світчів (потрібно 21). Модель має 10G SFP+ порти для оптичних магістралей. HA-пара (Active-Passive) — для критичної локації один Firewall є неприпустимою точкою відмови."
+        },
+        {
+          "group": "ups",
+          "category": "Безперебійне живлення",
+          "model": "TODO: підібрати за потужністю",
+          "qty": 1,
+          "reason": "Орієнтовне навантаження активного обладнання ≈1640 Вт (без PoE-бюджету камер/AP). Підібрати UPS з запасом ≥30% та часом автономності відповідно до вимог локації."
+        },
+        {
+          "group": "oob",
+          "category": "Резервний канал управління (OOB)",
+          "model": "TODO: 4G/5G-роутер",
+          "qty": 1,
+          "reason": "Незалежний канал доступу до Firewall/консолей на випадок відмови основного каналу зв'язку — критично для дистанційного відновлення без виїзду."
+        },
+        {
+          "group": "reference",
+          "category": "Довідково: критичність / SLA",
+          "model": "—",
+          "qty": "—",
+          "reason": "Рівень: Критична (ЦОД / головний майданчик, простій неприпустимий). Рекомендований SLA підтримки: 24x7, відновлення ≤4 год, апаратний резерв на майданчику."
+        }
+      ],
+      "prototype_ip_plan": [
+        {
+          "segment": "VLAN Data (проводові користувачі)",
+          "hosts": 500,
+          "prefix": "/22",
+          "capacity": 1022
+        },
+        {
+          "segment": "VLAN Wi-Fi (клієнтські пристрої)",
+          "hosts": 900,
+          "prefix": "/21",
+          "capacity": 2046
+        },
+        {
+          "segment": "VLAN CCTV (камери)",
+          "hosts": 200,
+          "prefix": "/23",
+          "capacity": 510
+        },
+        {
+          "segment": "VLAN Management (світчі, FW, AP)",
+          "hosts": 73,
+          "prefix": "/25",
+          "capacity": 126
+        }
+      ]
+    },
+    {
+      "id": "auto_core_threshold",
+      "input": {
+        "name": "auto_core_threshold",
+        "mode": "quick",
+        "sockets": 96,
+        "cameras": 48,
+        "ap_groups": [],
+        "tier": 4,
+        "aggregation": "",
+        "reserve": false,
+        "wifi_clients_expected": null
+      },
+      "prototype_bom": [
+        {
+          "group": "access_switch",
+          "category": "Користувацькі Комутатори",
+          "model": "FS-148F",
+          "qty": 2,
+          "reason": "Фізичні порти: 48 на розетку + 10G SFP+ Uplink. L2-рішення без PoE."
+        },
+        {
+          "group": "camera_switch",
+          "category": "Відеоспостереження",
+          "model": "FS-148F-FPOE",
+          "qty": 1,
+          "reason": "Фізичні порти: 48 камер на світч. PoE-бюджет 740 Вт покриває ~48 камер (оцінка 720 Вт)."
+        },
+        {
+          "group": "core_switch",
+          "category": "Комутатор Агрегації",
+          "model": "FS-1024E",
+          "qty": 1,
+          "reason": "Об'єднання трафіку: на локації 3 комутаторів доступу. Ядро 10G збирає всі магістралі."
+        },
+        {
+          "group": "firewall",
+          "category": "Міжмережевий Екран",
+          "model": "FG-120G",
+          "qty": 1,
+          "reason": "Ліміт FortiLink: керує до 32 світчів (потрібно 4). Модель має 10G SFP+ порти для оптичних магістралей."
+        },
+        {
+          "group": "reference",
+          "category": "Довідково: критичність / SLA",
+          "model": "—",
+          "qty": "—",
+          "reason": "Рівень: Низька (склад / тимчасовий об'єкт). Рекомендований SLA підтримки: Best-effort, ремонт за фактом звернення."
+        }
+      ],
+      "prototype_ip_plan": null
+    }
+  ]
+}

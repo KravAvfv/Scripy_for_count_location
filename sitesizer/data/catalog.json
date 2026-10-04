@@ -1,0 +1,363 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Fortinet — базовий каталог",
+    "updated": "2026-10-04",
+    "currency": "UAH",
+    "notes": "Значення звірені з офіційними datasheet Fortinet (див. docs/RESEARCH.md). Поле 'verified': datasheet = офіційний документ, third_party = сайт реселера, assumption = припущення."
+  },
+  "models": {
+    "FS-124G-FPOE": {
+      "kind": "switch",
+      "family": "FortiSwitch 100G",
+      "name": {"uk": "24× 2.5G PoE (8× 802.3bt + 16× af/at), 6× 10G SFP+", "en": "24× 2.5G PoE (8× 802.3bt + 16× af/at), 6× 10G SFP+"},
+      "ports": {"count": 24, "speed_gbps": 2.5},
+      "uplinks": {"count": 6, "speed_gbps": 10, "type": "SFP+"},
+      "poe": {"budget_w": 780, "ports_at": 16, "ports_bt": 8},
+      "psu": {"count": 1, "hot_swap": false, "redundant": false},
+      "power_base_w": 100, "power_max_w": 880, "rack_units": 1,
+      "verified": "datasheet",
+      "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiswitch-secure-access-series.pdf",
+      "notes": "Лише 8 портів 802.3bt (90 Вт). power_base_w = max − PoE-бюджет."
+    },
+    "FS-624F-FPOE": {
+      "kind": "switch",
+      "family": "FortiSwitch 600F",
+      "name": {"uk": "24× 5G PoE++ (802.3bt), 4× 25G SFP28, 2× hot-swap БЖ", "en": "24× 5G PoE++ (802.3bt), 4× 25G SFP28, 2× hot-swap PSU"},
+      "ports": {"count": 24, "speed_gbps": 5},
+      "uplinks": {"count": 4, "speed_gbps": 25, "type": "SFP28"},
+      "poe": {"budget_w": 1440, "budget_single_psu_w": 780, "ports_at": 0, "ports_bt": 24},
+      "psu": {"count": 2, "hot_swap": true, "redundant": true},
+      "power_base_w": 240, "power_max_w": 1680, "rack_units": 1,
+      "verified": "datasheet",
+      "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortiswitch-campus-series.pdf",
+      "notes": "PoE 1440 Вт лише з двома БЖ (load sharing); з одним БЖ — 780 Вт."
+    },
+    "FS-148F": {
+      "kind": "switch",
+      "family": "FortiSwitch 100F",
+      "name": {"uk": "48× 1G RJ45, 4× 10G SFP+, без PoE", "en": "48× 1G RJ45, 4× 10G SFP+, no PoE"},
+      "ports": {"count": 48, "speed_gbps": 1},
+      "uplinks": {"count": 4, "speed_gbps": 10, "type": "SFP+"},
+      "psu": {"count": 1, "hot_swap": false, "redundant": false},
+      "power_base_w": 57, "power_max_w": 57, "rack_units": 1,
+      "verified": "datasheet",
+      "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiswitch-secure-access-series.pdf"
+    },
+    "FS-648F": {
+      "kind": "switch",
+      "family": "FortiSwitch 600F",
+      "name": {"uk": "48× 2.5G/5G RJ45, 8× 25G SFP28, 2× hot-swap БЖ, без PoE", "en": "48× 2.5G/5G RJ45, 8× 25G SFP28, 2× hot-swap PSU, no PoE"},
+      "ports": {"count": 48, "speed_gbps": 2.5},
+      "uplinks": {"count": 8, "speed_gbps": 25, "type": "SFP28"},
+      "psu": {"count": 2, "hot_swap": true, "redundant": true},
+      "power_base_w": 300, "power_max_w": 300, "rack_units": 1,
+      "verified": "datasheet",
+      "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortiswitch-campus-series.pdf",
+      "notes": "Замість FS-448E (End-of-Order 2026-09-13). power_max_w — максимум з datasheet; типове споживання нижче."
+    },
+    "FS-148F-FPOE": {
+      "kind": "switch",
+      "family": "FortiSwitch 100F",
+      "name": {"uk": "48× 1G PoE+ (802.3af/at), 4× 10G SFP+", "en": "48× 1G PoE+ (802.3af/at), 4× 10G SFP+"},
+      "ports": {"count": 48, "speed_gbps": 1},
+      "uplinks": {"count": 4, "speed_gbps": 10, "type": "SFP+"},
+      "poe": {"budget_w": 740, "ports_at": 48, "ports_bt": 0},
+      "psu": {"count": 1, "hot_swap": false, "redundant": false},
+      "power_base_w": 156, "power_max_w": 896, "rack_units": 1,
+      "verified": "datasheet",
+      "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiswitch-secure-access-series.pdf"
+    },
+    "FS-648F-FPOE": {
+      "kind": "switch",
+      "family": "FortiSwitch 600F",
+      "name": {"uk": "48× 2.5G/5G PoE++ (802.3bt), 8× 25G SFP28, 2× hot-swap БЖ", "en": "48× 2.5G/5G PoE++ (802.3bt), 8× 25G SFP28, 2× hot-swap PSU"},
+      "ports": {"count": 48, "speed_gbps": 2.5},
+      "uplinks": {"count": 8, "speed_gbps": 25, "type": "SFP28"},
+      "poe": {"budget_w": 1800, "budget_single_psu_w": 780, "ports_at": 0, "ports_bt": 48},
+      "psu": {"count": 2, "hot_swap": true, "redundant": true},
+      "power_base_w": 300, "power_max_w": 2100, "rack_units": 1,
+      "verified": "datasheet",
+      "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortiswitch-campus-series.pdf",
+      "notes": "Замість FS-448E-POE. PoE 1800 Вт з двома БЖ при 200–240 В; з одним БЖ — 780 Вт."
+    },
+    "FS-448E": {
+      "kind": "switch",
+      "family": "FortiSwitch 400E",
+      "name": {"uk": "48× 1G RJ45, 4× 10G SFP+, 2× БЖ (знято з замовлення)", "en": "48× 1G RJ45, 4× 10G SFP+, dual PSU (end of order)"},
+      "ports": {"count": 48, "speed_gbps": 1},
+      "uplinks": {"count": 4, "speed_gbps": 10, "type": "SFP+"},
+      "psu": {"count": 2, "hot_swap": false, "redundant": true},
+      "power_base_w": 48, "power_max_w": 48, "rack_units": 1,
+      "lifecycle": "eoo",
+      "verified": "third_party",
+      "source": "https://fortineteol.com/hardware/fortiswitch",
+      "notes": "End-of-Order 2026-09-13 (за даними сторонніх сайтів). Залишено для довідки."
+    },
+    "FS-448E-POE": {
+      "kind": "switch",
+      "family": "FortiSwitch 400E",
+      "name": {"uk": "48× 1G PoE+ 421 Вт, 4× 10G SFP+, 2× БЖ (знято з замовлення)", "en": "48× 1G PoE+ 421 W, 4× 10G SFP+, dual PSU (end of order)"},
+      "ports": {"count": 48, "speed_gbps": 1},
+      "uplinks": {"count": 4, "speed_gbps": 10, "type": "SFP+"},
+      "poe": {"budget_w": 421, "ports_at": 48, "ports_bt": 0},
+      "psu": {"count": 2, "hot_swap": false, "redundant": true},
+      "power_base_w": 50, "power_max_w": 442, "rack_units": 1,
+      "lifecycle": "eoo",
+      "verified": "third_party",
+      "source": "https://fortineteol.com/hardware/fortiswitch",
+      "notes": "End-of-Order 2026-09-13. PoE-бюджет лише 421 Вт."
+    },
+    "FS-1024E": {
+      "kind": "switch",
+      "family": "FortiSwitch 1000E",
+      "name": {"uk": "24× 10G SFP+, 2× 100G QSFP28, 2× hot-swap БЖ", "en": "24× 10G SFP+, 2× 100G QSFP28, 2× hot-swap PSU"},
+      "ports": {"count": 24, "speed_gbps": 10},
+      "uplinks": {"count": 2, "speed_gbps": 100, "type": "QSFP28"},
+      "psu": {"count": 2, "hot_swap": true, "redundant": true},
+      "power_base_w": 176, "power_max_w": 176, "rack_units": 1,
+      "verified": "datasheet",
+      "source": "https://fortinetweb.s3.amazonaws.com/docs.fortinet.com/v2/attachments/002ca2c6-586f-11ec-bdf2-fa163e15d75b/FortiSwitch-1024E-QSG.pdf",
+      "notes": "Порти та БЖ — QSG; споживання 176 Вт — сторонні дані."
+    },
+
+    "FAP-221K": {
+      "kind": "ap", "family": "FortiAP Wi-Fi 7",
+      "name": {"uk": "Wi-Fi 7, 2 радіо 2×2, 2.5G", "en": "Wi-Fi 7, dual-radio 2×2, 2.5G"},
+      "ap": {"poe_class": "at", "power_w": 16.3, "uplink_gbps": 2.5, "outdoor": false, "wifi": "Wi-Fi 7", "radios": 2, "mimo": "2x2"},
+      "verified": "datasheet",
+      "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiap-series.pdf"
+    },
+    "FAP-231K": {
+      "kind": "ap", "family": "FortiAP Wi-Fi 7",
+      "name": {"uk": "Wi-Fi 7, 3 радіо 2×2, 5G", "en": "Wi-Fi 7, tri-radio 2×2, 5G"},
+      "ap": {"poe_class": "at", "power_w": 15.2, "uplink_gbps": 5, "outdoor": false, "wifi": "Wi-Fi 7", "radios": 3, "mimo": "2x2"},
+      "verified": "datasheet",
+      "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiap-series.pdf"
+    },
+    "FAP-241K": {
+      "kind": "ap", "family": "FortiAP Wi-Fi 7",
+      "name": {"uk": "Wi-Fi 7, 4 радіо 2×2, 10G, потребує 802.3bt", "en": "Wi-Fi 7, quad-radio 2×2, 10G, needs 802.3bt"},
+      "ap": {"poe_class": "bt", "power_w": 26.1, "uplink_gbps": 10, "outdoor": false, "wifi": "Wi-Fi 7", "radios": 4, "mimo": "2x2"},
+      "verified": "datasheet",
+      "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiap-series.pdf",
+      "notes": "На 802.3at працює, але радіо 3 обмежене 15 dBm."
+    },
+    "FAP-441K": {
+      "kind": "ap", "family": "FortiAP Wi-Fi 7",
+      "name": {"uk": "Wi-Fi 7, 4 радіо 4×4, 2× 10G, потребує 802.3bt", "en": "Wi-Fi 7, quad-radio 4×4, 2× 10G, needs 802.3bt"},
+      "ap": {"poe_class": "bt", "power_w": 41.7, "uplink_gbps": 10, "outdoor": false, "wifi": "Wi-Fi 7", "radios": 4, "mimo": "4x4"},
+      "verified": "datasheet",
+      "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiap-series.pdf",
+      "notes": "Повна потужність: 802.3bt або 2× 802.3at."
+    },
+    "FAP-234G": {
+      "kind": "ap", "family": "FortiAP Outdoor",
+      "name": {"uk": "Wi-Fi 6E, зовнішня IP67, 3 радіо 2×2, 2.5G + 1G", "en": "Wi-Fi 6E outdoor IP67, tri-radio 2×2, 2.5G + 1G"},
+      "ap": {"poe_class": "at", "power_w": 28, "uplink_gbps": 2.5, "outdoor": true, "wifi": "Wi-Fi 6E", "radios": 3, "mimo": "2x2"},
+      "verified": "datasheet",
+      "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiap-series.pdf"
+    },
+
+    "FG-80F": {
+      "kind": "firewall", "family": "FortiGate 80F",
+      "name": {"uk": "NGFW, 1G, настільний, без SFP+", "en": "NGFW, 1G, desktop, no SFP+"},
+      "firewall": {
+        "max_switches": 24, "max_aps": 96, "max_aps_tunnel": 48, "ports_10g": 0,
+        "throughput_gbps": {"firewall": 10, "ipsec": 6.5, "ips": 1.4, "ngfw": 1.0, "threat": 0.9, "ssl": 0.715},
+        "sessions_m": 1.5, "form_factor": "desktop", "sku_code": "0080F"
+      },
+      "psu": {"count": 1, "hot_swap": false, "redundant": false},
+      "power_base_w": 15.5, "power_max_w": 15.5, "rack_units": 1,
+      "verified": "datasheet",
+      "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortigate-fortiwifi-80f-series.pdf",
+      "notes": "Зовнішній DC-адаптер, другий — опція. У стійку — через полицю (rack tray)."
+    },
+    "FG-120G": {
+      "kind": "firewall", "family": "FortiGate 120G",
+      "name": {"uk": "NGFW, 4× 10G SFP+, 8× 1G SFP, 16× 1G RJ45", "en": "NGFW, 4× 10G SFP+, 8× 1G SFP, 16× 1G RJ45"},
+      "firewall": {
+        "max_switches": 32, "max_switches_fortios": [{"min_version": "7.6.1", "value": 48}],
+        "max_aps": 128, "max_aps_tunnel": 64, "ports_10g": 4,
+        "throughput_gbps": {"firewall": 39, "ipsec": 35, "ips": 5.3, "ngfw": 3.1, "threat": 2.8, "ssl": 3.0},
+        "sessions_m": 3, "form_factor": "rack", "sku_code": "F120G"
+      },
+      "psu": {"count": 2, "hot_swap": false, "redundant": true},
+      "power_base_w": 40, "power_max_w": 40, "rack_units": 1,
+      "verified": "datasheet",
+      "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortigate-120g-series.pdf",
+      "notes": "48 FortiSwitch — з FortiOS 7.6.1+, на старших версіях 32."
+    },
+    "FG-200G": {
+      "kind": "firewall", "family": "FortiGate 200G",
+      "name": {"uk": "NGFW, 8× 10G SFP+, 8× 5G RJ45, 4× 1G SFP", "en": "NGFW, 8× 10G SFP+, 8× 5G RJ45, 4× 1G SFP"},
+      "firewall": {
+        "max_switches": 64, "max_aps": 256, "max_aps_tunnel": 128, "ports_10g": 8,
+        "throughput_gbps": {"firewall": 39, "ipsec": 36, "ips": 9, "ngfw": 7, "threat": 6, "ssl": 7},
+        "sessions_m": 11, "form_factor": "rack", "sku_code": "F200G"
+      },
+      "psu": {"count": 2, "hot_swap": false, "redundant": true},
+      "power_base_w": 175, "power_max_w": 175, "rack_units": 1,
+      "verified": "datasheet",
+      "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortigate-200g-series.pdf"
+    },
+    "FG-400G": {
+      "kind": "firewall", "family": "FortiGate 400G",
+      "name": {"uk": "NGFW, 4× 25G SFP28, 4× 10G SFP+, 16× 1G SFP, 8× 5G RJ45", "en": "NGFW, 4× 25G SFP28, 4× 10G SFP+, 16× 1G SFP, 8× 5G RJ45"},
+      "firewall": {
+        "max_switches": 96, "max_aps": 512, "max_aps_tunnel": 256, "ports_10g": 8,
+        "throughput_gbps": {"firewall": 164, "ipsec": 55, "ips": 25, "ngfw": 14, "threat": 13, "ssl": 11.5},
+        "sessions_m": 28, "form_factor": "rack", "sku_code": "F400G"
+      },
+      "psu": {"count": 2, "hot_swap": false, "redundant": true},
+      "power_base_w": 283, "power_max_w": 283, "rack_units": 1,
+      "verified": "datasheet",
+      "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortigate-400g-series.pdf"
+    },
+
+    "FN-TRAN-SFP+SR": {"kind": "accessory", "family": "Transceiver", "name": {"uk": "Трансивер 10G SFP+ SR (багатомод, до 300 м)", "en": "10G SFP+ SR transceiver (multimode, up to 300 m)"}, "verified": "datasheet"},
+    "FN-TRAN-SFP+LR": {"kind": "accessory", "family": "Transceiver", "name": {"uk": "Трансивер 10G SFP+ LR (одномод, до 10 км)", "en": "10G SFP+ LR transceiver (single-mode, up to 10 km)"}, "verified": "datasheet"},
+    "FN-CABLE-SFP+3": {"kind": "accessory", "family": "DAC", "name": {"uk": "DAC-кабель 10G SFP+, 3 м", "en": "10G SFP+ DAC cable, 3 m"}, "verified": "datasheet"},
+    "FN-TRAN-GC": {"kind": "accessory", "family": "Transceiver", "name": {"uk": "Трансивер 1G SFP RJ45 (мідь)", "en": "1G SFP RJ45 transceiver (copper)"}, "verified": "datasheet"},
+    "FS-PSU-1200": {"kind": "accessory", "family": "PSU", "name": {"uk": "Запасний БЖ 1200 Вт для FS-624F/648F-FPOE", "en": "Spare 1200 W PSU for FS-624F/648F-FPOE"}, "verified": "datasheet"},
+
+    "PP-24-C6A": {"kind": "accessory", "family": "Cabling", "name": {"uk": "Патч-панель 24 порти Cat6A, 1U", "en": "Patch panel 24-port Cat6A, 1U"}, "rack_units": 1, "verified": "assumption"},
+    "PC-C6A-2M": {"kind": "accessory", "family": "Cabling", "name": {"uk": "Патч-корд Cat6A, 2 м", "en": "Patch cord Cat6A, 2 m"}, "verified": "assumption"},
+    "CBL-C6A-305": {"kind": "accessory", "family": "Cabling", "name": {"uk": "Кабель Cat6A U/FTP, бухта 305 м", "en": "Cable Cat6A U/FTP, 305 m box"}, "verified": "assumption"},
+    "CM-1U": {"kind": "accessory", "family": "Cabling", "name": {"uk": "Кабельний органайзер 1U", "en": "Cable manager 1U"}, "rack_units": 1, "verified": "assumption"},
+
+    "RACK-12U": {"kind": "accessory", "family": "Rack", "name": {"uk": "Шафа 19\" 12U (настінна)", "en": "19\" rack 12U (wall-mount)"}, "rack_size_u": 12, "verified": "assumption"},
+    "RACK-22U": {"kind": "accessory", "family": "Rack", "name": {"uk": "Шафа 19\" 22U", "en": "19\" rack 22U"}, "rack_size_u": 22, "verified": "assumption"},
+    "RACK-42U": {"kind": "accessory", "family": "Rack", "name": {"uk": "Шафа 19\" 42U", "en": "19\" rack 42U"}, "rack_size_u": 42, "verified": "assumption"},
+
+    "UPS-1000": {"kind": "accessory", "family": "UPS", "name": {"uk": "ДБЖ on-line 1000 VA, 1U/2U", "en": "On-line UPS 1000 VA"}, "ups_va": 1000, "rack_units": 2, "verified": "assumption"},
+    "UPS-1500": {"kind": "accessory", "family": "UPS", "name": {"uk": "ДБЖ on-line 1500 VA, 2U", "en": "On-line UPS 1500 VA"}, "ups_va": 1500, "rack_units": 2, "verified": "assumption"},
+    "UPS-2200": {"kind": "accessory", "family": "UPS", "name": {"uk": "ДБЖ on-line 2200 VA, 2U", "en": "On-line UPS 2200 VA"}, "ups_va": 2200, "rack_units": 2, "verified": "assumption"},
+    "UPS-3000": {"kind": "accessory", "family": "UPS", "name": {"uk": "ДБЖ on-line 3000 VA, 2U", "en": "On-line UPS 3000 VA"}, "ups_va": 3000, "rack_units": 2, "verified": "assumption"},
+    "UPS-5000": {"kind": "accessory", "family": "UPS", "name": {"uk": "ДБЖ on-line 5000 VA, 3U", "en": "On-line UPS 5000 VA"}, "ups_va": 5000, "rack_units": 3, "verified": "assumption"},
+    "UPS-6000": {"kind": "accessory", "family": "UPS", "name": {"uk": "ДБЖ on-line 6000 VA, 3U", "en": "On-line UPS 6000 VA"}, "ups_va": 6000, "rack_units": 3, "verified": "assumption"},
+    "UPS-10000": {"kind": "accessory", "family": "UPS", "name": {"uk": "ДБЖ on-line 10000 VA, 6U", "en": "On-line UPS 10000 VA"}, "ups_va": 10000, "rack_units": 6, "verified": "assumption"},
+
+    "OOB-LTE": {"kind": "accessory", "family": "OOB", "name": {"uk": "4G/5G-роутер для резервного каналу управління", "en": "4G/5G router for out-of-band management"}, "rack_units": 1, "verified": "assumption"},
+
+    "FG-BUNDLE": {"kind": "license", "family": "FortiGuard", "name": {"uk": "Підписка FortiGuard (bundle) + FortiCare на FortiGate", "en": "FortiGuard bundle + FortiCare subscription for FortiGate"}, "verified": "assumption"},
+    "FC-SUPPORT": {"kind": "license", "family": "FortiCare", "name": {"uk": "FortiCare на комутатори та точки доступу", "en": "FortiCare for switches and access points"}, "verified": "assumption"}
+  },
+
+  "categories": {
+    "wifi_switch": {
+      "label": {"uk": "Wi-Fi комутатори", "en": "Wi-Fi switches"},
+      "short": {"uk": "Wi-Fi", "en": "Wi-Fi"},
+      "base": "FS-124G-FPOE", "premium": "FS-624F-FPOE",
+      "endpoints_per_switch": 24
+    },
+    "access_switch": {
+      "label": {"uk": "Користувацькі комутатори", "en": "Access switches"},
+      "short": {"uk": "Доступ", "en": "Access"},
+      "base": "FS-148F", "premium": "FS-648F",
+      "endpoints_per_switch": 48
+    },
+    "camera_switch": {
+      "label": {"uk": "Комутатори відеоспостереження", "en": "CCTV switches"},
+      "short": {"uk": "CCTV", "en": "CCTV"},
+      "base": "FS-148F-FPOE", "premium": "FS-648F-FPOE",
+      "endpoints_per_switch": 48
+    },
+    "core_switch": {
+      "label": {"uk": "Комутатор агрегації (ядро)", "en": "Aggregation (core) switch"},
+      "short": {"uk": "Ядро", "en": "Core"},
+      "base": "FS-1024E", "premium": "FS-1024E",
+      "endpoints_per_switch": 24
+    }
+  },
+
+  "firewall_ladder": ["FG-80F", "FG-120G", "FG-200G", "FG-400G"],
+  "firewall_fallback": {"uk": "Потрібна старша модель (FG-600G+)", "en": "Larger model required (FG-600G+)"},
+
+  "ap_zones": {
+    "farm3d": {"label": {"uk": "3D-ферма (стелажі)", "en": "3D-printing farm (racks)"}, "model": "FAP-221K", "clients_per_ap": 10},
+    "corridor": {"label": {"uk": "Коридори", "en": "Corridors"}, "model": "FAP-231K", "clients_per_ap": 8},
+    "low_density": {"label": {"uk": "Мала щільність (<20 клієнтів на AP)", "en": "Low density (<20 clients per AP)"}, "model": "FAP-241K", "clients_per_ap": 15},
+    "high_density": {"label": {"uk": "Велика щільність (>20 клієнтів на AP)", "en": "High density (>20 clients per AP)"}, "model": "FAP-441K", "clients_per_ap": 35},
+    "outdoor": {"label": {"uk": "Вулиця / зовнішнє розміщення", "en": "Outdoor"}, "model": "FAP-234G", "clients_per_ap": 10}
+  },
+
+  "tiers": {
+    "1": {
+      "label": {"uk": "Критична", "en": "Critical"},
+      "description": {"uk": "ЦОД / головний майданчик, простій неприпустимий", "en": "Data centre / main site, downtime unacceptable"},
+      "sla": {"uk": "24x7, відновлення ≤4 год, апаратний резерв на майданчику", "en": "24x7, restore ≤4 h, on-site hardware spare"},
+      "fw_ha": true, "core_redundant": true, "dual_psu": true, "ups": true, "oob": true,
+      "dual_uplinks": true, "dual_wan": true, "spare_percent": 10,
+      "forticare": "elite", "fortiguard": "enterprise"
+    },
+    "2": {
+      "label": {"uk": "Висока", "en": "High"},
+      "description": {"uk": "Важливий регіональний офіс", "en": "Important regional office"},
+      "sla": {"uk": "Наступний робочий день (NBD), холодний резерв на складі", "en": "Next business day (NBD), cold spare in warehouse"},
+      "fw_ha": false, "core_redundant": false, "dual_psu": true, "ups": true, "oob": false,
+      "dual_uplinks": false, "dual_wan": true, "spare_percent": 5,
+      "forticare": "premium", "fortiguard": "utp"
+    },
+    "3": {
+      "label": {"uk": "Стандартна", "en": "Standard"},
+      "description": {"uk": "Типова філія", "en": "Typical branch"},
+      "sla": {"uk": "Стандартна гарантія виробника", "en": "Standard vendor warranty"},
+      "fw_ha": false, "core_redundant": false, "dual_psu": false, "ups": false, "oob": false,
+      "dual_uplinks": false, "dual_wan": false, "spare_percent": 0,
+      "forticare": "premium", "fortiguard": "utp"
+    },
+    "4": {
+      "label": {"uk": "Низька", "en": "Low"},
+      "description": {"uk": "Склад / тимчасовий об'єкт", "en": "Warehouse / temporary site"},
+      "sla": {"uk": "Best-effort, ремонт за фактом звернення", "en": "Best effort, repair on request"},
+      "fw_ha": false, "core_redundant": false, "dual_psu": false, "ups": false, "oob": false,
+      "dual_uplinks": false, "dual_wan": false, "spare_percent": 0,
+      "forticare": "premium", "fortiguard": "atp"
+    }
+  },
+
+  "rules": {
+    "variant_mode": "dual_psu",
+    "variant_quantity_threshold": 25,
+    "bt_auto_upgrade": true,
+    "aggregation_auto_threshold": 3,
+    "core_icl_links": 2,
+    "core_port_check": true,
+    "reserve_percent_default": 20,
+    "camera_watts_default": 15,
+    "wifi_clients_per_ap_default": 15,
+    "high_density_clients_per_ap": 20,
+    "poe_warn_ratio": 0.8,
+    "poe_autoscale": true,
+    "oversubscription_warn": 20,
+    "fw_throughput_headroom": 0.3,
+    "power_model": "datasheet",
+    "legacy_power_w": {"switch_base": 50, "switch_poe": 150, "firewall": 45},
+    "poe_psu_efficiency": 0.9,
+    "ups_power_factor": 0.9,
+    "ups_headroom": 0.3,
+    "rack_spare_ratio": 0.3,
+    "patch_panel_ports": 24,
+    "cable_manager_per_panel": 0.5,
+    "copper_max_m": 90,
+    "avg_cable_run_m_default": 40,
+    "cable_box_m": 305,
+    "fortios_default": "7.6.4",
+    "dual_psu_tiers_hint": [1, 2],
+    "ip": {
+      "buffer": 0.3,
+      "smallest_prefix": 30,
+      "static_reserve": 10,
+      "segments": [
+        {"id": "data", "vlan": 10, "label": {"uk": "Data (проводові користувачі)", "en": "Data (wired users)"}, "source": "sockets", "dhcp": true, "default": true},
+        {"id": "voice", "vlan": 20, "label": {"uk": "Voice (IP-телефони)", "en": "Voice (IP phones)"}, "source": "voice", "dhcp": true, "default": false},
+        {"id": "wifi", "vlan": 30, "label": {"uk": "Wi-Fi (корпоративні клієнти)", "en": "Wi-Fi (corporate clients)"}, "source": "wifi", "dhcp": true, "default": true},
+        {"id": "guest", "vlan": 40, "label": {"uk": "Гостьовий Wi-Fi", "en": "Guest Wi-Fi"}, "source": "guest", "dhcp": true, "default": false},
+        {"id": "cctv", "vlan": 50, "label": {"uk": "CCTV (камери)", "en": "CCTV (cameras)"}, "source": "cameras", "dhcp": false, "default": true},
+        {"id": "iot", "vlan": 60, "label": {"uk": "IoT / інженерні системи", "en": "IoT / building systems"}, "source": "iot", "dhcp": true, "default": false},
+        {"id": "mgmt", "vlan": 99, "label": {"uk": "Management (світчі, FW, AP)", "en": "Management (switches, FW, APs)"}, "source": "mgmt", "dhcp": false, "default": true}
+      ]
+    }
+  }
+}

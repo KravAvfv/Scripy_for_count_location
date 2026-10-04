@@ -1,0 +1,42 @@
+[project]
+name = "sitesizer"
+version = "1.0.0"
+description = "Fortinet location sizing: BoM, IP plan and topology (Ukrainian / English)"
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6==6.11.2",
+    "openpyxl==3.1.5",
+    "pydantic==2.13.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1", "ruff==0.16.10", "mypy==2.4.0", "pyinstaller==6.22.3"]
+
+[project.scripts]
+sitesizer-cli = "sitesizer.cli:main"
+
+[project.gui-scripts]
+sitesizer = "sitesizer.__main__:main"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["counter_location.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003", "E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.11"
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true
+warn_unused_ignores = false
+check_untyped_defs = true
+exclude = ["counter_location.py", "build/", "dist/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

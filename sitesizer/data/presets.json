@@ -1,0 +1,60 @@
+{
+  "presets": [
+    {
+      "id": "small_branch",
+      "icon": "branch",
+      "label": {"uk": "Невелика філія", "en": "Small branch"},
+      "description": {"uk": "Офіс до 30 робочих місць, кілька камер, стандартна критичність.", "en": "Office up to 30 desks, a few cameras, standard criticality."},
+      "input": {
+        "sockets": 24, "cameras": 4, "tier": 3, "aggregation": "auto", "reserve": true,
+        "ap_groups": [{"zone": "low_density", "qty": 3}]
+      }
+    },
+    {
+      "id": "warehouse",
+      "icon": "warehouse",
+      "label": {"uk": "Склад / логістика", "en": "Warehouse / logistics"},
+      "description": {"uk": "Багато камер, Wi-Fi для ТЗД у проходах, зовнішні AP на рампі, довгі кабельні траси.", "en": "Many cameras, Wi-Fi for scanners in aisles, outdoor APs at the dock, long cable runs."},
+      "input": {
+        "sockets": 16, "cameras": 40, "tier": 4, "aggregation": "auto", "reserve": true,
+        "camera_watts": 12.95, "max_cable_run_m": 140,
+        "ap_groups": [{"zone": "corridor", "qty": 12, "name": "Проходи між стелажами"}, {"zone": "outdoor", "qty": 4, "name": "Рампа"}]
+      }
+    },
+    {
+      "id": "rnd_office",
+      "icon": "office",
+      "label": {"uk": "R&D-офіс, висока щільність", "en": "R&D office, high density"},
+      "description": {"uk": "Open space з високою щільністю Wi-Fi, IP-телефонія, гостьова мережа, висока критичність.", "en": "High-density open space, IP telephony, guest network, high criticality."},
+      "input": {
+        "mode": "extended", "sockets": 120, "cameras": 8, "tier": 2, "aggregation": "auto", "reserve": true,
+        "voice_phones": 40, "guest_clients": 30,
+        "ap_groups": [{"zone": "high_density", "qty": 14, "name": "Open space"}, {"zone": "corridor", "qty": 4}],
+        "ip": {"base_network": "10.60.0.0/16"}
+      }
+    },
+    {
+      "id": "farm3d",
+      "icon": "printer",
+      "label": {"uk": "3D-ферма", "en": "3D-printing farm"},
+      "description": {"uk": "Стелажі з принтерами на Wi-Fi, кілька робочих місць і камер.", "en": "Racks of Wi-Fi printers, a few desks and cameras."},
+      "input": {
+        "sockets": 12, "cameras": 6, "tier": 3, "aggregation": "auto", "reserve": true,
+        "iot_devices": 120,
+        "ap_groups": [{"zone": "farm3d", "qty": 16, "name": "Стелажі"}, {"zone": "low_density", "qty": 2, "name": "Операторська"}]
+      }
+    },
+    {
+      "id": "hq",
+      "icon": "hq",
+      "label": {"uk": "Головний офіс (HQ)", "en": "Headquarters (HQ)"},
+      "description": {"uk": "Критичний майданчик: HA, резервоване ядро, ДБЖ, OOB, повний IP-план.", "en": "Critical site: HA, redundant core, UPS, OOB, full IP plan."},
+      "input": {
+        "mode": "extended", "sockets": 300, "cameras": 64, "tier": 1, "aggregation": "yes", "reserve": true,
+        "redundant_psu": true, "voice_phones": 120, "guest_clients": 80, "inspected_mbps": 1500,
+        "ap_groups": [{"zone": "high_density", "qty": 30}, {"zone": "low_density", "qty": 10}, {"zone": "corridor", "qty": 8}, {"zone": "outdoor", "qty": 4}],
+        "ip": {"base_network": "10.10.0.0/16"}
+      }
+    }
+  ]
+}
