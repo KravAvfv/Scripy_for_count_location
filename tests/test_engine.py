@@ -253,9 +253,10 @@ def test_tier_effects_configurable(catalog: Catalog) -> None:
 
 
 # ---- add-ons --------------------------------------------------------------------------------
-def test_quick_mode_has_no_addons(catalog: Catalog) -> None:
+def test_quick_mode_has_only_passive_addons(catalog: Catalog) -> None:
     r = size_site(make_site(sockets=100, cameras=20, aps=[("corridor", 6)]), catalog)
-    assert not any("addon" in line.tags for line in r.bom)
+    addon_groups = {line.group for line in r.bom if "addon" in line.tags}
+    assert addon_groups == {"cabling", "rack"}
 
 
 def test_extended_mode_addons(catalog: Catalog) -> None:
@@ -264,8 +265,9 @@ def test_extended_mode_addons(catalog: Catalog) -> None:
     )
     groups = {line.group for line in r.bom}
     assert {"transceiver", "cabling", "rack", "license", "spare"} <= groups
-    panels = next(line for line in r.bom if line.model == "PP-24-C6A")
-    assert panels.qty == math.ceil(126 / 24)
+    panels = next(line for line in r.bom if line.model == catalog.passive.panel)
+    # panels are counted per switch: Wi-Fi 6 APs → 1, access 100 sockets over 3 switches → 2+2+2, CCTV 20 → 1
+    assert panels.qty == 1 + 6 + 1 >= math.ceil(126 / 24)
 
 
 def test_addon_can_be_forced_off(catalog: Catalog) -> None:
@@ -330,3 +332,75 @@ def test_448e_fpoe_camera_switch(catalog: Catalog) -> None:
     assert "POE_NEAR" in codes(r) and "POE_AUTOSCALE" not in codes(r)
     eoo = [c for c in r.checks if c.code == "EOO"]
     assert eoo and all(c.severity == Severity.INFO for c in eoo)
+
+
+# ---- passive infrastructure & racks ---------------------------------------------------------
+def test_copper_quantities(catalog: Catalog) -> None:
+    pr = catalog.passive
+    r = size_site(make_site(sockets=40, cameras=10, aps=[("corridor", 6)], avg_cable_run_m=30), catalog)
+    ps = r.rack.passive
+    assert ps.copper_links == 56
+    assert ps.cable_m == 56 * (30 + pr.cable_slack_m)
+    assert ps.cable_drums == math.ceil(ps.cable_m / pr.cable_drum_m)
+    assert ps.jacks == 112 and ps.jack_packs == math.ceil(112 / pr.jack_pack)
+    assert ps.outlets == 20 + 16
+    assert ps.cords_rack == 56 + 16 and ps.cords_user == 40
+    models = {line.model: line.qty for line in r.lines("cabling")}
+    assert models[pr.cable] == ps.cable_drums and models[pr.outlet] == 36
+
+
+def test_small_site_fits_24u(catalog: Catalog) -> None:
+    r = size_site(make_site(sockets=20), catalog)
+    assert [p.size_u for p in r.rack.plans] == [24]
+    plan = r.rack.plans[0]
+    assert plan.items[0].u == 24  # firewall at the top
+    assert any(it.group == "pdu" and it.u == 1 for it in plan.items)
+    assert any(line.model == "RACK-24U" for line in r.lines("rack"))
+
+
+def test_rack_size_preference_and_split(catalog: Catalog) -> None:
+    big = dict(sockets=600, cameras=100, aps=[("low_density", 40)])
+    auto = size_site(make_site(**big), catalog)
+    assert all(p.size_u == 42 for p in auto.rack.plans)
+    forced = size_site(make_site(rack_size_u=24, **big), catalog)
+    assert all(p.size_u == 24 for p in forced.rack.plans)
+    assert len(forced.rack.plans) > len(auto.rack.plans)
+    for plan in forced.rack.plans:
+        assert plan.used_u <= plan.size_u
+        units = [u for it in plan.items for u in range(it.u, it.u + it.height)]
+        assert len(units) == len(set(units)), "items overlap"
+
+
+def test_switch_stays_with_its_panels(catalog: Catalog) -> None:
+    r = size_site(make_site(sockets=96, rack_size_u=24), catalog)
+    items = r.rack.plans[0].items
+    idx = next(i for i, it in enumerate(items) if it.group == "access_switch")
+    assert [it.group for it in items[idx - 3 : idx]] == ["panel", "panel", "manager"]
+
+
+def test_fibre_backbone_to_idf(catalog: Catalog) -> None:
+    r = size_site(make_site(mode="extended", sockets=300, max_cable_run_m=200), catalog)
+    ps = r.rack.passive
+    assert r.rack.idf_count == 3 and len(ps.backbone_m) == 2
+    assert ps.fiber_type == "om4" and ps.fiber_links > 0
+    roles = [p.role for p in r.rack.plans]
+    assert roles.count("mdf") == 1 and roles.count("idf") == 2
+    fibre = {line.model: line.qty for line in r.lines("fiber")}
+    om4 = catalog.passive.fiber["om4"]
+    assert fibre[om4.cable] == ps.fiber_m and fibre[om4.cord] == ps.fiber_links * 2
+    sr = next(line for line in r.bom if line.model == om4.transceiver)
+    assert sr.qty == ps.fiber_links * 2
+
+
+def test_long_backbone_switches_to_single_mode(catalog: Catalog) -> None:
+    r = size_site(make_site(mode="extended", sockets=200, max_cable_run_m=150, fiber_backbone_m=900), catalog)
+    assert r.rack.passive.fiber_type == "os2"
+    assert any(line.model == "FN-TRAN-SFP+LR" for line in r.bom)
+    r2 = size_site(make_site(mode="extended", sockets=200, max_cable_run_m=150, fiber_type="os2"), catalog)
+    assert r2.rack.passive.fiber_type == "os2" and not r2.rack.passive.fiber_auto
+
+
+def test_dual_psu_gets_ab_pdus(catalog: Catalog) -> None:
+    r = size_site(make_site(sockets=48, tier=2, redundant_psu=True), catalog)
+    pdus = [it for it in r.rack.plans[0].items if it.group == "pdu"]
+    assert len(pdus) == 2 and {it.label.split()[1] for it in pdus} == {"A", "B"}

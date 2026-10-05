@@ -149,7 +149,7 @@ used by the golden tests.
 | Uplink oversubscription | Industry guideline: access → distribution ≤ 20:1, distribution → core ≤ 4:1 (Cisco campus design guide). | Computed per category (downlink Gbps ÷ uplink Gbps); warning > 20:1 |
 | PoE headroom | Keep ≥ 20 % budget headroom; PSE per-port power: af 15.4 W, at 30 W, bt type 3 60 W, bt type 4 90 W. | AP draw from datasheet; camera class selectable (default 12.95 W class 3 / editable); warns at > 80 % of budget and when bt ports are insufficient |
 | Cabling | TIA-568 copper channel 100 m (90 m permanent link + 10 m cords). Beyond ~90 m → additional IDF/telecom room with fibre uplink. | "max cable run" input → IDF count estimate + fibre uplinks, transceivers |
-| Rack & power | 1 RU per switch/FW, patch panel per 24/48 ports, cable managers, ≥ 20–30 % spare RU; UPS sized on real load with ≥ 30 % headroom, PF 0.9 | Power & Rack view: RU total, recommended rack size (12/22/42U), UPS VA |
+| Rack & power | 1 RU per switch/FW, patch panel per 24/48 ports, cable managers, ≥ 20–30 % spare RU; UPS sized on real load with ≥ 30 % headroom, PF 0.9 | Rack planner: 24U/42U cabinets with a drawn front elevation, PDUs, UPS VA (see §4a) |
 | WAN | Dual WAN / SD-WAN, LTE backup (FortiExtender) for critical sites | Tier-driven add-on lines |
 | OOB | Independent 4G/5G management path to FW/console | Tier 1 line (as prototype) |
 | Segmentation | Separate VLANs: Data, Voice, Wi-Fi corporate, Guest, CCTV, IoT, Management (native VLAN unused). | IP planner carves all enabled segments from a base prefix |
@@ -158,6 +158,46 @@ used by the golden tests.
 | Management | FortiManager / FortiAnalyzer (or cloud) for multi-site; FAZ sized by log rate (GB/day). | Project-level note when > 1 site |
 | Spares | Tier 1: on-site spare (1 per model type, or 5–10 %), Tier 2: cold spare in warehouse. | Spare % per tier in catalog |
 | Documentation | As-built diagram, IP plan, port map, config backups, acceptance test | Exported in PDF report "Deliverables" section |
+
+---
+
+## 4a. Passive infrastructure (Corning) — added 2026-10-05
+
+Vendor priority: **Fortinet** for active equipment and transceivers, **Corning** for cabling. Part numbers were
+checked in the Corning EMEA eCatalog and at the Ukrainian Corning distributor CMS (cms.ua), which stocks the
+Everon copper line and LANscape fibre housings.
+
+| Item | Part number | Why this one | Verified |
+|---|---|---|---|
+| Cat.6A jack | **KAXBSM-00104-C001-BP** — Everon KS500S, shielded Keystone, pack of 24 (B6 = pack of 6) | Tool-less, 10GBase-T, 4PPoE (802.3bt) for FAP-241K/441K | eCatalog ✅ |
+| Patch panel | **MAXCSV-02408-C001** — Everon 19" 1U, 24 Keystone/VOL ports, unloaded, black | Takes the KS500S jacks; sold in Ukraine | eCatalog ✅ |
+| Cable | **CCXEDB-DB047-C001-L7** — Everon S/FTP 550/23 Cat.6A, LSZH, CPR B2ca | PIMF shielded, 10G + PoE++; sold per metre (counted in 500 m drums) | cms.ua 🟡 |
+| Patch cords | **CCAAGB-G5002-A010-C0 / -A020-C0** — Everon Class EA S/FTP LSZH 1 m / 2 m | Shielded system end-to-end. A030/A060/A150 confirmed in eCatalog; A010/A020 follow the same scheme | assumption 🟡 |
+| Outlet | **UAXCSE-U0201-C001** — Everon surface box for 2 Keystone/VOL jacks | 2 sockets per box; APs/cameras get one box each | eCatalog ✅ |
+| Cable manager | **XE005315637** — Everon 19" 1U | One per "patch panels + switch" block | cms.ua 🟡 |
+| Fibre cable OM4 | **012TEU-83198A2G** — FREEDM gel-filled central tube, dielectric armour, U-DQ(ZN)BH, 12× OM4, LSZH, Ø 5.6 mm | Indoor/outdoor backbone, 10G SR up to ~400 m | eCatalog ✅ |
+| Fibre cable OS2 | **012EEU-13122A2G** — 12× OS2 indoor/outdoor | Runs > 400 m (10G LR, 10 km) | reseller 🟡 |
+| Fibre housing | **LAN1-12AD/24AD-PGTL-B** (OM3/OM4), **LAN1-12AE/24AE-PGTL-B** (OS2) — LANscape 1U, shuttered LC duplex, pigtails + splice pack | All-in-one: no separate pigtails/cassettes to count | cms.ua 🟡 |
+| Splice protector | **HSP-45S100-1** (S46998-A4-A29), 45 mm | One per fusion splice | cms.ua 🟡 |
+| Fibre patch cords | **050502Q5120002M** (LC-LC OM4 2 m), **040402G5120002M** (LC-LC OS2 2 m) | US part numbers — ask the distributor for the LSZH EU variant | reseller 🟡 |
+| Transceivers | **FN-TRAN-SFP+SR** (OM4) / **FN-TRAN-SFP+LR** (OS2), **FN-CABLE-SFP+3** DAC inside a rack | Fortinet-coded optics for FortiLink | datasheet ✅ |
+| Racks, PDU | **RACK-24U**, **RACK-42U** (generic; e.g. CMS MGSE 24U/42U), **PDU-8-C13** 1U 8× C13 | Corning does not make cabinets; sizes limited to 24U and 42U as used in the company | assumption |
+
+Calculation rules (`sitesizer/core/passive.py`):
+
+* **Copper** — one permanent link per socket, camera and AP; cable = links × (average run + 3 m slack), rounded up to
+  500 m drums; 2 jacks per link (panel + outlet); patch panels counted **per switch** (a 48-port switch with
+  48 endpoints gets 2 panels), one cable manager per switch block; outlets: sockets ÷ 2 + one per AP/camera;
+  1 m cords for every panel port and at every AP/camera, 2 m cords at every socket.
+* **Closets** — `ceil(max run / 90 m)` closets; switches are spread evenly, closet 0 is the MDF with the FortiGate,
+  core, OOB and UPS. The fibre run to IDF *k* is estimated as `k × max run / closets` unless entered.
+* **Fibre** — per IDF: uplinks × 2 fibres × (1 + 100 % spare) → 12-fibre cables; a LANscape housing at both
+  ends (24F where two cables fit), splice protectors per spliced fibre, 2 LC-LC cords and 2 transceivers per link.
+  Auto type: OM4 if the longest run + slack ≤ 400 m, otherwise OS2.
+* **Cabinets** — 24U if everything + PDUs fits with 30 % spare, otherwise 42U (or the size chosen by the user);
+  more cabinets are added and filled evenly when needed. Layout top→bottom: fibre housings, OOB, FortiGate,
+  core, then for each switch its patch panels → cable manager → switch; UPS at the bottom with PDUs above it.
+  Dual-PSU sites get separate A/B PDUs.
 
 ---
 
@@ -211,6 +251,16 @@ Official Fortinet:
 * FortiGate 400G data sheet — https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortigate-400g-series.pdf
 * FortiGuard security bundles — https://www.fortinet.com/support/support-services/fortiguard-security-subscriptions/fortigate-security-bundles
 * FortiLink MCLAG topologies — https://docs.fortinet.com/document/fortiswitch/7.6.4/fortilink-guide/801194/deploying-mclag-topologies
+
+Corning (passive):
+* Everon KS500S jack — https://ecatalog.corning.com/optical-communications/EMEA/en_GB/Copper-Hardware/Copper-Jacks/Copper-Jacks-Shielded/Everon%C2%AE-Copper-Datacom-KS500S-Shielded-Jack/p/everon-copper-datacom-ks500s-shielded-jack
+* Everon patch panel MAXCSV-02408-C001 — https://ecatalog.corning.com/optical-communications/EMEA/en/Copper-Hardware/Everon%C2%AE-Copper-Datacom-Patch-Panels/Everon%C2%AE-Copper-Datacom-VOL-Patch-panel-19-inch/p/MAXCSV-02408-C001
+* Everon S/FTP patch cords — https://ecatalog.corning.com/optical-communications/EMEA/en/Products/Copper-Cable-Assemblies/Everon%C2%AE-Copper-Datacom-Class-EA-Patch-Cord,-2xRJ45,-Cat-6A,-S-FTP-LSZH-AWG-26/p/CCAAGB-G5002-A030-C0
+* Everon outlet UAXCSE-U0201-C001 — https://ecatalog.corning.com/optical-communications/IN/en/Copper-Hardware/Copper-Outlets/Everon%C2%AE-Copper-Datacom-Terminal-Outlet-VOL-and-Keystone/p/UAXCSE-U0201-C001
+* FREEDM U-DQ(ZN)BH 012TEU-83198A2G — https://ecatalog.corning.com/optical-communications/EMEA/en/Fiber-Optic-Cables/Indoor-Outdoor/Indoor-Outdoor-Duct-Cables/FREEDM%C2%AE-Gel-filled-Central-Tube-Dielectric-Armor-Indoor-Outdoor-Cable%2C-U-DQ%28ZN%29BH/p/012TEU-83198A2G
+* CMS (Ukrainian distributor): cable — https://cms.ua/en/catalogue/copper_cable/lan_cable/ccxedb-db047-c001-l7/ ,
+  LANscape housings — https://cms.ua/en/catalogue/fiber_optic_system/lanscape_fiber_housing/ ,
+  organizers — https://cms.ua/en/catalogue/racks/organizers/ , cabinets — https://cms.ua/en/catalogue/racks/flour_racks/
 
 Third-party (🟡):
 * FS-448E lifecycle / replacements — https://fortineteol.com/hardware/fortiswitch , https://datacenter360.ca/faqs/fortinet-faqs/end-of-life-product-life-cycle/

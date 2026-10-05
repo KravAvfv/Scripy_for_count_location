@@ -21,6 +21,7 @@ BOM_GROUP_ORDER = (
     "power",
     "transceiver",
     "cabling",
+    "fiber",
     "rack",
     "license",
     "spare",

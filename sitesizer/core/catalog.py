@@ -229,6 +229,53 @@ class Rules(_Strict):
     ip: IpRules
 
 
+class FiberSpec(_Strict):
+    """One backbone fibre type (e.g. OM4 / OS2) and the parts it is built from."""
+
+    label: LText
+    cable: str
+    """Cable sold per metre (12 fibres)."""
+    cable_fibers: int = Field(default=12, gt=0)
+    housing_12: str
+    housing_24: str
+    cord: str
+    """LC-LC duplex patch cord, housing ↔ transceiver."""
+    transceiver: str
+    max_10g_m: int = Field(default=400, gt=0)
+    """Longest 10G link this fibre supports with ``transceiver``."""
+
+
+class PassiveRules(_Strict):
+    """Passive infrastructure (structured cabling, fibre backbone, rack power).
+
+    Defaults are Corning Everon (copper) and Corning LANscape / FREEDM (fibre) part numbers.
+    """
+
+    jack: str = "KAXBSM-00104-C001-BP"
+    jack_pack: int = Field(default=24, gt=0)
+    panel: str = "MAXCSV-02408-C001"
+    panel_ports: int = Field(default=24, gt=0)
+    cable: str = "CCXEDB-DB047-C001-L7"
+    cable_drum_m: int = Field(default=500, gt=0)
+    cable_slack_m: int = Field(default=3, ge=0)
+    """Service loop per link (both ends together)."""
+    cord_rack: str = "CCAAGB-G5002-A010-C0"
+    """Patch panel ↔ switch, also used at APs and cameras."""
+    cord_user: str = "CCAAGB-G5002-A020-C0"
+    """Work-area cord from a wall outlet to a user device."""
+    outlet: str = "UAXCSE-U0201-C001"
+    outlet_ports: int = Field(default=2, gt=0)
+    manager: str = "XE005315637"
+    fiber_default: Literal["auto", "om4", "os2"] = "auto"
+    fiber: dict[str, FiberSpec] = Field(default_factory=dict)
+    fiber_spare_ratio: float = Field(default=1.0, ge=0, le=10)
+    """Spare fibres on top of the ones in use (1.0 = twice as many)."""
+    fiber_slack_m: int = Field(default=20, ge=0)
+    splice_protector: str = "HSP-45S100-1"
+    pdu: str = "PDU-8-C13"
+    pdu_outlets: int = Field(default=8, gt=0)
+
+
 class Meta(_Strict):
     name: str = ""
     updated: str = ""
@@ -246,6 +293,7 @@ class Catalog(_Strict):
     ap_zones: dict[str, ApZone]
     tiers: dict[str, Tier]
     rules: Rules
+    passive: PassiveRules = Field(default_factory=PassiveRules)
 
     @model_validator(mode="after")
     def _check_references(self) -> Catalog:
@@ -279,6 +327,10 @@ class Catalog(_Strict):
             if seg.vlan in seen_vlans:
                 problems.append(f"rules.ip.segments: duplicate VLAN {seg.vlan}")
             seen_vlans.add(seg.vlan)
+        for key, spec in self.passive.fiber.items():
+            for role in ("cable", "housing_12", "housing_24", "cord", "transceiver"):
+                if getattr(spec, role) not in self.models:
+                    problems.append(f"passive.fiber.{key}.{role}: unknown model '{getattr(spec, role)}'")
         if problems:
             raise ValueError("; ".join(problems))
         return self
@@ -362,6 +414,22 @@ def load_catalog(path: str | Path | None = None) -> Catalog:
 
 def load_default_catalog() -> Catalog:
     return load_catalog(DEFAULT_CATALOG_PATH)
+
+
+def with_missing_defaults(catalog: Catalog, default: Catalog | None = None) -> Catalog:
+    """Add models (and the passive section) that a newer default catalog has and an older
+    user catalog lacks, so new features keep working after an upgrade. User edits win."""
+    base = default or load_default_catalog()
+    data = catalog.model_dump(mode="json")
+    added = False
+    for model, dev in base.models.items():
+        if model not in data["models"]:
+            data["models"][model] = dev.model_dump(mode="json")
+            added = True
+    if not catalog.passive.fiber and base.passive.fiber:
+        data["passive"] = base.passive.model_dump(mode="json")
+        added = True
+    return catalog_from_dict(data) if added else catalog
 
 
 def save_catalog(catalog: Catalog, path: str | Path) -> None:

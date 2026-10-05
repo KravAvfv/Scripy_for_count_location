@@ -30,7 +30,7 @@ def hq_result(catalog: Catalog):
 def test_xlsx_structure(tmp_path: Path, catalog: Catalog, hq_result) -> None:
     path = export_xlsx(hq_result, tmp_path / "out.xlsx", catalog=catalog, options={"author": "A", "project": "P"})
     wb = load_workbook(path)
-    assert wb.sheetnames == ["BoM", "IP-план", "Схема", "Вихідні дані"]
+    assert wb.sheetnames == ["BoM", "IP-план", "Схема", "Шафи", "Вихідні дані"]
     ws = wb["BoM"]
     assert ws["A4"].value == "Категорія" and ws["A4"].fill.start_color.rgb.endswith("1F4E78")
     assert ws.freeze_panes == "A5"
@@ -67,6 +67,20 @@ def test_diagram_exports(tmp_path: Path, catalog: Catalog, hq_result) -> None:
     assert png.read_bytes()[:4] == b"\x89PNG"
     svg = export_svg(ProjectDiagram([("HQ", True, hq_result), ("B", False, hq_result)], catalog), tmp_path / "d.svg")
     assert "<svg" in svg.read_text(encoding="utf-8")
+
+
+def test_rack_exports(tmp_path: Path, catalog: Catalog, hq_result) -> None:
+    from sitesizer.exporters.rack import RackDiagram, rack_table_rows
+
+    d = RackDiagram(hq_result, catalog)
+    assert d.size().height() > hq_result.rack.plans[0].size_u * d.U_H
+    assert export_png(d, tmp_path / "r.png").read_bytes()[:4] == b"\x89PNG"  # type: ignore[arg-type]
+    assert "<svg" in export_svg(d, tmp_path / "r.svg").read_text(encoding="utf-8")  # type: ignore[arg-type]
+    rows = rack_table_rows(hq_result)
+    assert len(rows) == sum(len(p.items) for p in hq_result.rack.plans)
+    wb = load_workbook(export_xlsx(hq_result, tmp_path / "x.xlsx", catalog=catalog))
+    ws = wb["Шафи"]
+    assert ws.cell(row=4, column=1).value == "Шафа" and str(ws.cell(row=5, column=1).value).startswith("MDF")
 
 
 def test_empty_diagram(catalog: Catalog) -> None:

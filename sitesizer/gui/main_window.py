@@ -174,6 +174,8 @@ class MainWindow(QMainWindow):
             (None, None, None, None),
             ("image", tr("ui.export_png"), "", lambda: self.export_diagram("png")),
             ("download", tr("ui.export_svg"), "", lambda: self.export_diagram("svg")),
+            ("server", tr("ui.export_rack_png"), "", lambda: self.export_racks("png")),
+            ("download", tr("ui.export_rack_svg"), "", lambda: self.export_racks("svg")),
             (None, None, None, None),
             ("file-json", tr("ui.export_json"), "", self.export_json),
             ("file-spreadsheet", tr("ui.export_csv"), "", self.export_csv),
@@ -453,6 +455,28 @@ class MainWindow(QMainWindow):
 
         try:
             (export_png if fmt == "png" else export_svg)(diagram, path)
+        except OSError as err:
+            self.toasts.show("error", tr("ui.export_failed", err=err), 9000)
+            return
+        self._after_export(path)
+
+    def export_racks(self, fmt: str) -> None:
+        result = self.state.result
+        if result is None or not result.rack.plans:
+            self.toasts.show("warning", tr("ui.nothing_to_export"))
+            return
+        path = self._ask_path(fmt, f"{fmt.upper()} (*.{fmt})", "Racks")
+        if not path:
+            return
+        from ..exporters.diagram import export_png, export_svg
+        from ..exporters.rack import RackDiagram
+
+        diagram = RackDiagram(result, self.state.catalog, self.state.settings.language)
+        try:
+            if fmt == "png":
+                export_png(diagram, path)  # type: ignore[arg-type]
+            else:
+                export_svg(diagram, path, title=tr("ui.rack_title"))  # type: ignore[arg-type]
         except OSError as err:
             self.toasts.show("error", tr("ui.export_failed", err=err), 9000)
             return

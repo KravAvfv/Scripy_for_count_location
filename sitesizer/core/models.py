@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Aggregation = Literal["auto", "yes", "no"]
 Mode = Literal["quick", "extended"]
+FiberChoice = Literal["auto", "om4", "os2"]
 
 ADDON_KEYS = ("transceivers", "cabling", "rack", "ups", "licensing", "spares", "management")
 """Best-practice add-ons. ``None`` in :attr:`SiteInput.addons` means "use the default"
@@ -65,6 +66,11 @@ class SiteInput(BaseModel):
     """Internet / inspected traffic that must pass the UTM engine (threat protection)."""
     max_cable_run_m: int | None = Field(default=None, ge=0, le=100_000)
     avg_cable_run_m: int | None = Field(default=None, ge=1, le=10_000)
+    rack_size_u: int = Field(default=0, ge=0, le=60)
+    """Preferred cabinet size (24 or 42 U); 0 = pick automatically."""
+    fiber_type: FiberChoice = "auto"
+    fiber_backbone_m: int | None = Field(default=None, ge=1, le=100_000)
+    """Average fibre run from the main rack to each remote closet; ``None`` = estimate."""
     voice_phones: int = Field(default=0, ge=0)
     guest_clients: int = Field(default=0, ge=0)
     iot_devices: int = Field(default=0, ge=0)
@@ -183,6 +189,70 @@ class PowerSummary:
 
 
 @dataclass
+class RackItem:
+    """One device or panel placed in a cabinet. ``u`` is the lowest unit it occupies (1 = bottom)."""
+
+    u: int
+    height: int
+    label: str
+    group: str
+    """Colour key: a BoM group, or ``panel``, ``manager``, ``fiber``, ``pdu``."""
+    model: str = ""
+
+
+@dataclass
+class RackPlan:
+    """Front elevation of one cabinet."""
+
+    name: str
+    role: str
+    """``mdf`` (main) or ``idf`` (remote closet)."""
+    size_u: int
+    model: str
+    items: list[RackItem] = field(default_factory=list)
+
+    @property
+    def used_u(self) -> int:
+        return sum(i.height for i in self.items)
+
+    @property
+    def free_u(self) -> int:
+        return max(0, self.size_u - self.used_u)
+
+
+@dataclass
+class PassiveSummary:
+    """Structured cabling and fibre backbone quantities."""
+
+    copper_links: int = 0
+    sockets: int = 0
+    device_links: int = 0
+    """APs and cameras (one outlet each)."""
+    jacks: int = 0
+    jack_packs: int = 0
+    panels: int = 0
+    outlets: int = 0
+    cords_rack: int = 0
+    cords_user: int = 0
+    cable_m: int = 0
+    cable_drums: int = 0
+    managers: int = 0
+    fiber_type: str = ""
+    fiber_auto: bool = True
+    fiber_links: int = 0
+    fiber_cables: int = 0
+    fiber_m: int = 0
+    fiber_cores: int = 0
+    housings_12: int = 0
+    housings_24: int = 0
+    fiber_cords: int = 0
+    splices: int = 0
+    pdus: int = 0
+    backbone_m: list[int] = field(default_factory=list)
+    """Estimated fibre run per remote closet."""
+
+
+@dataclass
 class RackSummary:
     units_equipment: int = 0
     units_panels: int = 0
@@ -199,6 +269,8 @@ class RackSummary:
     copper_endpoints: int = 0
     cable_m: int = 0
     cable_boxes: int = 0
+    plans: list[RackPlan] = field(default_factory=list)
+    passive: PassiveSummary = field(default_factory=PassiveSummary)
 
 
 @dataclass

@@ -19,7 +19,14 @@ from typing import Any
 from PySide6.QtCore import QObject, QSettings, QStandardPaths, QTimer, Signal
 from PySide6.QtGui import QUndoCommand, QUndoStack
 
-from ..core.catalog import Catalog, CatalogError, load_catalog, load_default_catalog, save_catalog
+from ..core.catalog import (
+    Catalog,
+    CatalogError,
+    load_catalog,
+    load_default_catalog,
+    save_catalog,
+    with_missing_defaults,
+)
 from ..core.models import SiteInput, SiteResult
 from ..core.project import Project, ProjectError, load_project, new_project, save_project
 from ..core.sizing import size_site
@@ -164,7 +171,7 @@ class AppState(QObject):
         path = user_catalog_path()
         if path.exists():
             try:
-                return load_catalog(path)
+                return with_missing_defaults(load_catalog(path))
             except CatalogError as err:
                 self.catalog_error = str(err)
                 log.error("User catalog invalid, falling back to defaults: %s", err)

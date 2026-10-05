@@ -81,9 +81,31 @@ catalog in the meantime.
 | `power_model` | `datasheet` | `legacy` reproduces the prototype's 50/150/45 W estimate |
 | `poe_psu_efficiency`, `ups_power_factor`, `ups_headroom` | 0.9, 0.9, 0.3 | UPS sizing |
 | `rack_spare_ratio`, `patch_panel_ports`, `cable_manager_per_panel` | 0.3, 24, 0.5 | Rack and cabling |
-| `copper_max_m`, `avg_cable_run_m_default`, `cable_box_m` | 90, 40, 305 | Cabling and IDF |
+| `copper_max_m`, `avg_cable_run_m_default` | 90, 40 | Cabling and IDF |
 | `fortios_default` | 7.6.4 | Default FortiOS version for new locations |
 | `ip.buffer`, `ip.smallest_prefix`, `ip.static_reserve`, `ip.segments[]` | 0.3, /30, 10 | IP planner and VLAN defaults |
+
+## Passive section (`passive`)
+
+Part numbers and quantities for structured cabling, the fibre backbone and rack power. Defaults are Corning
+(see [RESEARCH.md §4a](RESEARCH.md)). Every referenced part should exist in `models` so the BoM gets a
+description and price; scalar fields can be edited in the app (Catalog → Rules → *Passive*).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `jack`, `jack_pack` | KAXBSM-00104-C001-BP, 24 | Keystone jack SKU and pack size (2 jacks per link) |
+| `panel`, `panel_ports` | MAXCSV-02408-C001, 24 | Patch panel (counted per switch) |
+| `cable`, `cable_drum_m`, `cable_slack_m` | CCXEDB-DB047-C001-L7, 500, 3 | Cat.6A cable, drum length, slack per link |
+| `cord_rack`, `cord_user` | 1 m / 2 m S/FTP cords | Rack + AP/camera side / work-area side |
+| `outlet`, `outlet_ports` | UAXCSE-U0201-C001, 2 | Outlet box and jacks per box |
+| `manager` | XE005315637 | 1U cable manager, one per switch block |
+| `fiber_default` | auto | `auto` picks the cheapest type whose `max_10g_m` covers the longest run |
+| `fiber.{om4,os2}` | see catalog | cable (12F), 12F/24F housings, LC-LC cord, Fortinet transceiver, 10G reach |
+| `fiber_spare_ratio`, `fiber_slack_m` | 1.0, 20 | Spare fibres (+100 %) and slack per run |
+| `splice_protector` | HSP-45S100-1 | One per fusion splice |
+| `pdu`, `pdu_outlets` | PDU-8-C13, 8 | Rack PDU; A/B pairs for dual-PSU sites |
+
+Cabinet sizes come from models with `rack_size_u` (default RACK-24U and RACK-42U).
 
 ## Common tasks
 

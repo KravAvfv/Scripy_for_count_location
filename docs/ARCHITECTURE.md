@@ -6,6 +6,7 @@ sitesizer/
     catalog.py   schema + validation of data/catalog.json, FortiOS-dependent limits, compat overlay
     models.py    SiteInput (user input), SiteResult, BomLine, Check, Power/Rack/IP summaries
     sizing.py    size_site(): reserve → switch categories → core → firewall ladder → BoM → power/rack → checks
+    passive.py   closets (MDF/IDF), cabinet layout 24U/42U, Corning copper + fibre quantities, PDUs
     ipplan.py    subnet sizing (prototype formula) and aligned, non-overlapping carving
     pricing.py   subtotal / discount / VAT;  compare.py  scenario diff
     project.py   multi-location project files (*.sizing.json, atomic save)
@@ -13,6 +14,7 @@ sitesizer/
     report.py    rows/CSV/TSV/JSON views of a result for exporters, CLI and clipboard
   exporters/   Qt-based rendering without widgets (works in a worker thread and from the CLI)
     diagram.py   SiteDiagram / ProjectDiagram QPainter renderers → screen, PNG, SVG, PDF, Excel
+    rack.py      RackDiagram: front elevation of every cabinet (same renderer for screen and exports)
     xlsx.py      openpyxl workbook (BoM, IP-план, Схема, Вихідні дані)
     pdf.py       QPdfWriter + QTextDocument report, paginated with header/footer
   gui/         PySide6 widgets only — no business rules
@@ -61,7 +63,7 @@ user edit ─► AppState.edit() ─► QUndoCommand (mergeable per field) ─�
    ports when a core exists, and the optional threat-protection throughput with headroom.
 6. **BoM** — equipment lines with reasons, details and tags; tier lines (UPS, OOB); add-ons (transceivers,
    cabling, rack, licences, spares, management); SLA reference row.
-7. **Power, rack, IP plan, general checks** (lifecycle, unverified data, IDF, dual WAN, density hints).
+7. **Power, passive & racks, IP plan, general checks** (`passive.plan_passive` lays out cabinets and counts cabling) (lifecycle, unverified data, IDF, dual WAN, density hints).
 
 ## GUI design system
 

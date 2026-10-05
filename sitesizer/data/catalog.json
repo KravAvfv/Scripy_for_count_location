@@ -2,7 +2,7 @@
   "schema_version": 1,
   "meta": {
     "name": "Fortinet — базовий каталог",
-    "updated": "2026-10-04",
+    "updated": "2026-10-05",
     "currency": "UAH",
     "notes": "Значення звірені з офіційними datasheet Fortinet (див. docs/RESEARCH.md). Поле 'verified': datasheet = офіційний документ, third_party = сайт реселера, assumption = припущення."
   },
@@ -235,14 +235,27 @@
     "FN-TRAN-GC": {"kind": "accessory", "family": "Transceiver", "name": {"uk": "Трансивер 1G SFP RJ45 (мідь)", "en": "1G SFP RJ45 transceiver (copper)"}, "verified": "datasheet"},
     "FS-PSU-1200": {"kind": "accessory", "family": "PSU", "name": {"uk": "Запасний БЖ 1200 Вт для FS-624F/648F-FPOE", "en": "Spare 1200 W PSU for FS-624F/648F-FPOE"}, "verified": "datasheet"},
 
-    "PP-24-C6A": {"kind": "accessory", "family": "Cabling", "name": {"uk": "Патч-панель 24 порти Cat6A, 1U", "en": "Patch panel 24-port Cat6A, 1U"}, "rack_units": 1, "verified": "assumption"},
-    "PC-C6A-2M": {"kind": "accessory", "family": "Cabling", "name": {"uk": "Патч-корд Cat6A, 2 м", "en": "Patch cord Cat6A, 2 m"}, "verified": "assumption"},
-    "CBL-C6A-305": {"kind": "accessory", "family": "Cabling", "name": {"uk": "Кабель Cat6A U/FTP, бухта 305 м", "en": "Cable Cat6A U/FTP, 305 m box"}, "verified": "assumption"},
-    "CM-1U": {"kind": "accessory", "family": "Cabling", "name": {"uk": "Кабельний органайзер 1U", "en": "Cable manager 1U"}, "rack_units": 1, "verified": "assumption"},
+    "KAXBSM-00104-C001-BP": {"kind": "accessory", "family": "Corning Everon · мідь", "name": {"uk": "Модуль Keystone RJ45 Cat.6A екранований Everon KS500S, 10GBase-T, 4PPoE (802.3bt), упаковка 24 шт.", "en": "Everon KS500S shielded Cat.6A Keystone RJ45 jack, 10GBase-T, 4PPoE (802.3bt), pack of 24"}, "verified": "datasheet", "source": "https://ecatalog.corning.com/optical-communications/EMEA/en_GB/Copper-Hardware/Copper-Jacks/Copper-Jacks-Shielded/Everon%C2%AE-Copper-Datacom-KS500S-Shielded-Jack/p/everon-copper-datacom-ks500s-shielded-jack", "notes": "Є також упаковка 6 шт.: KAXBSM-00104-C001-B6."},
+    "MAXCSV-02408-C001": {"kind": "accessory", "family": "Corning Everon · мідь", "name": {"uk": "Патч-панель Everon 19\", 1U, 24 порти під Keystone/VOL, порожня, чорна", "en": "Everon patch panel 19\", 1U, 24 Keystone/VOL ports, unloaded, black"}, "rack_units": 1, "verified": "datasheet", "source": "https://ecatalog.corning.com/optical-communications/EMEA/en/Copper-Hardware/Everon%C2%AE-Copper-Datacom-Patch-Panels/Everon%C2%AE-Copper-Datacom-VOL-Patch-panel-19-inch/p/MAXCSV-02408-C001", "notes": "Модулі замовляються окремо (KAXBSM-00104-C001-BP)."},
+    "CCXEDB-DB047-C001-L7": {"kind": "accessory", "family": "Corning Everon · мідь", "name": {"uk": "Кабель Everon S/FTP 550/23 Cat.6A, LSZH, CPR B2ca, синій — котушка 500 м", "en": "Everon S/FTP 550/23 Cat.6A cable, LSZH, CPR B2ca, blue — 500 m drum"}, "verified": "third_party", "source": "https://cms.ua/en/catalogue/copper_cable/lan_cable/ccxedb-db047-c001-l7/", "notes": "Продається по метрах (мін. 100 м); у специфікації рахується котушками по 500 м. Підтримує PoE++ (802.3bt)."},
+    "CCAAGB-G5002-A010-C0": {"kind": "accessory", "family": "Corning Everon · мідь", "name": {"uk": "Патч-корд Everon Class EA, 2×RJ45, Cat.6A S/FTP, LSZH, сірий, 1 м", "en": "Everon Class EA patch cord, 2×RJ45, Cat.6A S/FTP, LSZH, grey, 1 m"}, "verified": "assumption", "source": "https://ecatalog.corning.com/optical-communications/EMEA/en/Products/Copper-Cable-Assemblies/Everon%C2%AE-Copper-Datacom-Class-EA-Patch-Cord,-2xRJ45,-Cat-6A,-S-FTP-LSZH-AWG-26/p/CCAAGB-G5002-A030-C0", "notes": "Артикул за схемою Corning (A030 = 3 м підтверджено). Неекранований аналог: CCAKGE-G1002-A010-C0."},
+    "CCAAGB-G5002-A020-C0": {"kind": "accessory", "family": "Corning Everon · мідь", "name": {"uk": "Патч-корд Everon Class EA, 2×RJ45, Cat.6A S/FTP, LSZH, сірий, 2 м", "en": "Everon Class EA patch cord, 2×RJ45, Cat.6A S/FTP, LSZH, grey, 2 m"}, "verified": "assumption", "source": "https://ecatalog.corning.com/optical-communications/EMEA/en/Products/Copper-Cable-Assemblies/Everon%C2%AE-Copper-Datacom-Class-EA-Patch-Cord,-2xRJ45,-Cat-6A,-S-FTP-LSZH-AWG-26/p/CCAAGB-G5002-A030-C0", "notes": "Артикул за схемою Corning (A030 = 3 м підтверджено). Неекранований аналог: CCAKGE-G1002-A020-C0."},
+    "UAXCSE-U0201-C001": {"kind": "accessory", "family": "Corning Everon · мідь", "name": {"uk": "Розетка Everon накладна на 2 модулі Keystone/VOL, 78×70 мм, біла (без модулів)", "en": "Everon surface-mount outlet for 2 Keystone/VOL jacks, 78×70 mm, white (no jacks)"}, "verified": "datasheet", "source": "https://ecatalog.corning.com/optical-communications/IN/en/Copper-Hardware/Copper-Outlets/Everon%C2%AE-Copper-Datacom-Terminal-Outlet-VOL-and-Keystone/p/UAXCSE-U0201-C001"},
+    "XE005315637": {"kind": "accessory", "family": "Corning Everon · мідь", "name": {"uk": "Кабельний органайзер Everon 19\", 1U, чорний", "en": "Everon cable management panel 19\", 1U, black"}, "rack_units": 1, "verified": "third_party", "source": "https://cms.ua/en/catalogue/racks/organizers/"},
 
-    "RACK-12U": {"kind": "accessory", "family": "Rack", "name": {"uk": "Шафа 19\" 12U (настінна)", "en": "19\" rack 12U (wall-mount)"}, "rack_size_u": 12, "verified": "assumption"},
-    "RACK-22U": {"kind": "accessory", "family": "Rack", "name": {"uk": "Шафа 19\" 22U", "en": "19\" rack 22U"}, "rack_size_u": 22, "verified": "assumption"},
-    "RACK-42U": {"kind": "accessory", "family": "Rack", "name": {"uk": "Шафа 19\" 42U", "en": "19\" rack 42U"}, "rack_size_u": 42, "verified": "assumption"},
+    "012TEU-83198A2G": {"kind": "accessory", "family": "Corning · оптика", "name": {"uk": "Кабель оптичний FREEDM, 12 волокон OM4 (ClearCurve), indoor/outdoor U-DQ(ZN)BH, LSZH, ціна за метр", "en": "FREEDM fibre cable, 12× OM4 (ClearCurve), indoor/outdoor U-DQ(ZN)BH, LSZH, per metre"}, "verified": "datasheet", "source": "https://ecatalog.corning.com/optical-communications/EMEA/en/Fiber-Optic-Cables/Indoor-Outdoor/Indoor-Outdoor-Duct-Cables/FREEDM%C2%AE-Gel-filled-Central-Tube-Dielectric-Armor-Indoor-Outdoor-Cable%2C-U-DQ%28ZN%29BH/p/012TEU-83198A2G", "notes": "Центральна трубка з гелем, діелектрична броня, Ø 5,6 мм, CPR Dca. Кількість у специфікації — у метрах."},
+    "012EEU-13122A2G": {"kind": "accessory", "family": "Corning · оптика", "name": {"uk": "Кабель оптичний 12 волокон OS2 (SMF-28 Ultra), indoor/outdoor U-DQ(ZN)BH, LSZH, ціна за метр", "en": "Fibre cable, 12× OS2 (SMF-28 Ultra), indoor/outdoor U-DQ(ZN)BH, LSZH, per metre"}, "verified": "third_party", "source": "https://multinetfze.com/product/012eeu-13122a2g/", "notes": "Кількість у специфікації — у метрах. Звірити конструкцію з дистриб'ютором."},
+    "LAN1-12AD-PGTL-B": {"kind": "accessory", "family": "Corning LANscape · оптика", "name": {"uk": "Оптична панель LANscape 1U: 12 волокон OM3/OM4, LC duplex зі шторками, з пігтейлами та сплайс-касетою", "en": "LANscape fibre housing 1U: 12 fibres OM3/OM4, shuttered LC duplex, with pigtails and splice pack"}, "rack_units": 1, "verified": "third_party", "source": "https://cms.ua/en/catalogue/fiber_optic_system/lanscape_fiber_housing/", "notes": "КДЗС (гільзи) замовляються окремо."},
+    "LAN1-24AD-PGTL-B": {"kind": "accessory", "family": "Corning LANscape · оптика", "name": {"uk": "Оптична панель LANscape 1U: 24 волокна OM3/OM4, LC duplex зі шторками, з пігтейлами та сплайс-касетою", "en": "LANscape fibre housing 1U: 24 fibres OM3/OM4, shuttered LC duplex, with pigtails and splice pack"}, "rack_units": 1, "verified": "third_party", "source": "https://cms.ua/en/catalogue/fiber_optic_system/lanscape_fiber_housing/", "notes": "КДЗС (гільзи) замовляються окремо."},
+    "LAN1-12AE-PGTL-B": {"kind": "accessory", "family": "Corning LANscape · оптика", "name": {"uk": "Оптична панель LANscape 1U: 12 волокон OS2, LC/UPC duplex зі шторками, з пігтейлами та сплайс-касетою", "en": "LANscape fibre housing 1U: 12 fibres OS2, shuttered LC/UPC duplex, with pigtails and splice pack"}, "rack_units": 1, "verified": "third_party", "source": "https://cms.ua/en/catalogue/fiber_optic_system/lanscape_fiber_housing/", "notes": "КДЗС (гільзи) замовляються окремо."},
+    "LAN1-24AE-PGTL-B": {"kind": "accessory", "family": "Corning LANscape · оптика", "name": {"uk": "Оптична панель LANscape 1U: 24 волокна OS2, LC/UPC duplex зі шторками, з пігтейлами та сплайс-касетою", "en": "LANscape fibre housing 1U: 24 fibres OS2, shuttered LC/UPC duplex, with pigtails and splice pack"}, "rack_units": 1, "verified": "third_party", "source": "https://cms.ua/en/catalogue/fiber_optic_system/lanscape_fiber_housing/", "notes": "КДЗС (гільзи) замовляються окремо."},
+    "050502Q5120002M": {"kind": "accessory", "family": "Corning · оптика", "name": {"uk": "Оптичний патч-корд LC-LC duplex OM4, 2 м", "en": "Fibre patch cord LC-LC duplex OM4, 2 m"}, "verified": "third_party", "source": "https://www.graybar.com/fiber-patch-cables-lc-to-lc-duplex-multimode-om4-2-fiber-2-m/p/25649845", "notes": "Американський артикул; для ЄС/України уточнити LSZH-варіант у дистриб'ютора."},
+    "040402G5120002M": {"kind": "accessory", "family": "Corning · оптика", "name": {"uk": "Оптичний патч-корд LC/UPC-LC/UPC duplex OS2, 2 мм, 2 м", "en": "Fibre patch cord LC/UPC-LC/UPC duplex OS2, 2 mm, 2 m"}, "verified": "third_party", "source": "https://www.specialized.net/corning-040402g5120002m-lc-u-lc-u-duplex-sm-patch-cord-2mm-2m.html", "notes": "Для ЄС/України уточнити LSZH-варіант у дистриб'ютора."},
+    "HSP-45S100-1": {"kind": "accessory", "family": "Corning · оптика", "name": {"uk": "Гільза термоусаджувальна КДЗС 45 мм (Corning S46998-A4-A29)", "en": "Heat-shrink splice protector 45 mm (Corning S46998-A4-A29)"}, "verified": "third_party", "source": "https://cms.ua/en/catalogue/fiber_optic_system/splays_kaseta/", "notes": "По одній на кожне зварювання."},
+
+    "RACK-24U": {"kind": "accessory", "family": "Rack", "name": {"uk": "Шафа 19\" 24U підлогова, 600×1000 мм", "en": "19\" floor cabinet 24U, 600×1000 mm"}, "rack_size_u": 24, "verified": "assumption", "notes": "Напр. CMS UA-MGSE24610MB (610×1055) або 800 мм завширшки для щільної комутації (UA-MGSE24810MB)."},
+    "RACK-42U": {"kind": "accessory", "family": "Rack", "name": {"uk": "Шафа 19\" 42U підлогова, 800×1000 мм", "en": "19\" floor cabinet 42U, 800×1000 mm"}, "rack_size_u": 42, "verified": "assumption", "notes": "Напр. CMS серії MGSE 42U; 800 мм завширшки — місце для вертикальних органайзерів."},
+    "PDU-8-C13": {"kind": "accessory", "family": "Rack", "name": {"uk": "Блок розеток (PDU) 19\" 1U, 8× C13, 16 А", "en": "PDU 19\" 1U, 8× C13, 16 A"}, "rack_units": 1, "verified": "assumption", "notes": "Напр. KD-IEC1008WKPB19A-C14. Для обладнання з двома БЖ — два PDU (живлення A і B)."},
 
     "UPS-1000": {"kind": "accessory", "family": "UPS", "name": {"uk": "ДБЖ on-line 1000 VA, 1U/2U", "en": "On-line UPS 1000 VA"}, "ups_va": 1000, "rack_units": 2, "verified": "assumption"},
     "UPS-1500": {"kind": "accessory", "family": "UPS", "name": {"uk": "ДБЖ on-line 1500 VA, 2U", "en": "On-line UPS 1500 VA"}, "ups_va": 1500, "rack_units": 2, "verified": "assumption"},
@@ -356,7 +369,7 @@
     "cable_manager_per_panel": 0.5,
     "copper_max_m": 90,
     "avg_cable_run_m_default": 40,
-    "cable_box_m": 305,
+    "cable_box_m": 500,
     "fortios_default": "7.6.4",
     "dual_psu_tiers_hint": [1, 2],
     "ip": {
@@ -373,5 +386,22 @@
         {"id": "mgmt", "vlan": 99, "label": {"uk": "Management (світчі, FW, AP)", "en": "Management (switches, FW, APs)"}, "source": "mgmt", "dhcp": false, "default": true}
       ]
     }
+  },
+
+  "passive": {
+    "jack": "KAXBSM-00104-C001-BP", "jack_pack": 24,
+    "panel": "MAXCSV-02408-C001", "panel_ports": 24,
+    "cable": "CCXEDB-DB047-C001-L7", "cable_drum_m": 500, "cable_slack_m": 3,
+    "cord_rack": "CCAAGB-G5002-A010-C0", "cord_user": "CCAAGB-G5002-A020-C0",
+    "outlet": "UAXCSE-U0201-C001", "outlet_ports": 2,
+    "manager": "XE005315637",
+    "fiber_default": "auto",
+    "fiber": {
+      "om4": {"label": {"uk": "OM4 (багатомод)", "en": "OM4 (multimode)"}, "cable": "012TEU-83198A2G", "cable_fibers": 12, "housing_12": "LAN1-12AD-PGTL-B", "housing_24": "LAN1-24AD-PGTL-B", "cord": "050502Q5120002M", "transceiver": "FN-TRAN-SFP+SR", "max_10g_m": 400},
+      "os2": {"label": {"uk": "OS2 (одномод)", "en": "OS2 (single-mode)"}, "cable": "012EEU-13122A2G", "cable_fibers": 12, "housing_12": "LAN1-12AE-PGTL-B", "housing_24": "LAN1-24AE-PGTL-B", "cord": "040402G5120002M", "transceiver": "FN-TRAN-SFP+LR", "max_10g_m": 10000}
+    },
+    "fiber_spare_ratio": 1.0, "fiber_slack_m": 20,
+    "splice_protector": "HSP-45S100-1",
+    "pdu": "PDU-8-C13", "pdu_outlets": 8
   }
 }

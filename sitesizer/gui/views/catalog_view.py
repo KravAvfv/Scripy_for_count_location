@@ -525,6 +525,36 @@ class CatalogView(QWidget):
             card.add(FieldRow(title, w, caption))
         lay.addWidget(card)
 
+        passive = self.data.get("passive") or {}
+        pcard = Card(tr("cat.passive_title"), tr("cat.passive_sub"))
+        for key, value in passive.items():
+            if isinstance(value, dict | list):
+                continue
+            title = tr(f"passive.{key}") if current().has(f"passive.{key}") else key
+            if key == "fiber_default":
+                pw: QWidget = QComboBox()
+                pw.addItems(["auto", *passive.get("fiber", {}).keys()])  # type: ignore[attr-defined]
+                pw.setCurrentText(str(value))  # type: ignore[attr-defined]
+                pw.currentTextChanged.connect(lambda v, k=key: self._edit(("passive", k), v))  # type: ignore[attr-defined]
+            elif isinstance(value, int):
+                pw = SpinBox()
+                pw.setRange(0, 1_000_000)
+                pw.setValue(value)
+                pw.valueChanged.connect(lambda v, k=key: self._edit(("passive", k), v))
+            elif isinstance(value, float):
+                pw = DoubleSpinBox()
+                pw.setRange(0, 100)
+                pw.setDecimals(2)
+                pw.setSingleStep(0.1)
+                pw.setValue(value)
+                pw.valueChanged.connect(lambda v, k=key: self._edit(("passive", k), v))
+            else:
+                pw = QLineEdit(str(value))
+                pw.editingFinished.connect(lambda k=key, e=pw: self._edit(("passive", k), e.text().strip()))  # type: ignore[attr-defined]
+            pw.setFixedWidth(px(200))
+            pcard.add(FieldRow(title, pw))
+        lay.addWidget(pcard)
+
         ip = Card(tr("cat.ip_title"), tr("cat.ip_sub"))
         grid = QGridLayout()
         grid.setHorizontalSpacing(px(14))

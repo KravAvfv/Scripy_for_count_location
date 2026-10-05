@@ -64,7 +64,12 @@ table.tiles td {{ background: {LIGHT}; padding: 6pt 8pt; vertical-align: top; }}
 
 
 def build_html(
-    result: SiteResult, catalog: Catalog, t: Translator, opts: dict[str, Any], image_width: int = 500
+    result: SiteResult,
+    catalog: Catalog,
+    t: Translator,
+    opts: dict[str, Any],
+    image_width: int = 500,
+    rack_width: int = 0,
 ) -> str:
     tier = catalog.tier(result.tier_id)
     fw = result.firewall
@@ -173,10 +178,15 @@ def build_html(
     parts.append(
         f"<p>{_e(t.t('pdf.power_line', eq=round(pw.equipment_w), poe=round(pw.poe_w), total=round(pw.total_w), va=pw.ups_va, btu=round(pw.heat_btu)))}</p>"
     )
-    if result.input.mode == "extended":
+    if rk.plans:
         parts.append(
-            f"<p>{_e(t.t('ui.rack_summary', used=rk.units_total, spare=rk.units_with_spare, size=rk.rack_size_u, model=f'{rk.rack_model} × {rk.rack_count}', idf=rk.idf_count))}</p>"
+            f"<p>{_e(t.t('ui.rack_summary', used=rk.units_total, size=rk.rack_size_u, model=f'{rk.rack_model} × {rk.rack_count}', idf=rk.idf_count))}</p>"
         )
+
+    # ---- racks ---------------------------------------------------------------------------------
+    if result.rack.plans and rack_width:
+        parts.append(f"<h2>{_e(t.t('pdf.h_racks'))}</h2>")
+        parts.append(f"<p align='center'><img src='diagram://racks' width='{rack_width}'></p>")
 
     # ---- notes & checks ------------------------------------------------------------------------
     notable = [
@@ -259,7 +269,18 @@ def export_pdf(
     doc.setPageSize(QSizeF(pw / scale, body_h / scale))
     doc_w = pw / scale
     img_w = int(min(doc_w - 8, img.width() / img.devicePixelRatio()))
-    doc.setHtml(f"<html><body>{build_html(result, catalog, t, opts, img_w)}</body></html>")
+    rack_w = 0
+    if result.rack.plans:
+        from .rack import RackDiagram
+
+        rack_img = render_image(RackDiagram(result, catalog, lang), scale=2.4)  # type: ignore[arg-type]
+        doc.addResource(QTextDocument.ResourceType.ImageResource, QUrl("diagram://racks"), rack_img)
+        natural_w = rack_img.width() / rack_img.devicePixelRatio()
+        natural_h = rack_img.height() / rack_img.devicePixelRatio()
+        # fit the page width and ~85% of the body height so a cabinet never splits across pages
+        max_h = body_h / scale * 0.85
+        rack_w = int(min(doc_w - 8, natural_w, natural_w * max_h / natural_h))
+    doc.setHtml(f"<html><body>{build_html(result, catalog, t, opts, img_w, rack_w)}</body></html>")
     pages = max(1, doc.pageCount())
 
     logo = QImage(str(opts["logo"])) if opts.get("logo") and Path(str(opts["logo"])).exists() else QImage()

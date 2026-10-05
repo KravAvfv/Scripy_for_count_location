@@ -509,7 +509,7 @@ def paint_brand(p: QPainter, r: QRectF, color: str = "#1F4E78") -> None:
         p.drawRoundedRect(box, w * 0.05, w * 0.05)
 
 
-Diagram = SiteDiagram | ProjectDiagram
+Diagram = SiteDiagram | ProjectDiagram  # RackDiagram (exporters.rack) has the same interface
 
 
 def ensure_gui_app() -> None:

@@ -29,6 +29,12 @@ The UI is Ukrainian by default, with a full English version (Settings → Langua
 - **Smart checks** — PoE budget (auto-adds switches), 802.3bt ports (auto-upgrades to FS-624F-FPOE), core
   port capacity, firewall switch/AP/throughput limits, oversubscription, 90 m copper limit → IDF closets,
   End-of-Order models, unverified data.
+- **Passive infrastructure (Corning)** — Cat.6A Everon cable in 500 m drums, Keystone jacks, patch panels per
+  switch, outlets, patch cords, cable managers; FREEDM/LANscape fibre backbone to remote closets (OM4 or OS2
+  chosen by distance) with matching Fortinet SFP+ SR/LR transceivers; PDUs. Works in quick mode too.
+- **Rack layout drawing** — 24U/42U cabinets (auto, or fixed by the user), MDF + IDF closets, switch kept
+  with its patch panels and cable manager, UPS and PDUs at the bottom. Shown on *Power & rack*, exported as
+  PNG/SVG, a *Racks* sheet in Excel (table + picture) and a section in the PDF.
 - **Extended mode** — VLAN plan carved from a base network (gateway + DHCP pool), transceivers/DAC, cabling,
   rack elevation and size, UPS sizing with the real PoE load, licences, spares, FortiManager/FortiAnalyzer.
 - **Projects** — several locations in one file (HQ + remote sites), hub-and-spoke diagram, duplicate a location,
@@ -76,6 +82,18 @@ A site JSON uses the same fields as the GUI: `sockets`, `cameras`, `ap_groups` (
 `tier`, `aggregation` (`auto`/`yes`/`no`, or the prototype's `y`/`n`/empty), `reserve`, `redundant_psu`,
 `mode` (`quick`/`extended`), `fortios_version`, `inspected_mbps`, `max_cable_run_m`, `ip.base_network`, …
 
+## Windows 11: get the app on another laptop
+
+```powershell
+# 1. Install Python 3.12+ from python.org (tick "Add python.exe to PATH") and Git for Windows.
+git clone https://github.com/KravAvfv/Scripy_for_count_location.git SiteSizer
+cd SiteSizer
+# 2. Build the .exe (creates .venv, installs deps, runs tests, writes dist\SiteSizer.exe):
+powershell -ExecutionPolicy Bypass -File .\build.ps1
+# or just run from source:
+py -3 -m venv .venv; .\.venv\Scripts\pip install -r requirements.txt; .\.venv\Scripts\python -m sitesizer
+```
+
 ## Build the single-file .exe
 
 ```powershell
@@ -90,7 +108,7 @@ unused Qt modules are excluded). On Linux/macOS use `./build.sh`.
 
 ```powershell
 pip install -r requirements-dev.txt
-$env:QT_QPA_PLATFORM="offscreen"; python -m pytest      # 136 tests: engine, golden, IP, exporters, GUI smoke
+$env:QT_QPA_PLATFORM="offscreen"; python -m pytest      # 145 tests: engine, golden, IP, exporters, GUI smoke
 ruff check sitesizer tests; ruff format sitesizer tests
 mypy sitesizer
 python tools\screenshots.py docs\screenshots            # regenerate screenshots (light + dark)

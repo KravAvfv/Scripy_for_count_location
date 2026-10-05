@@ -251,6 +251,35 @@ def export_xlsx(
             scale = min(1.0, 900 / w)
             wsd.add_image(_PngImage(png, int(w * scale), int(h * scale)), "B2")
 
+    # ---- racks ----------------------------------------------------------------------------
+    if catalog is not None and result.rack.plans:
+        from .rack import rack_table_rows
+
+        wsr = wb.create_sheet(t.t("xl.sheet_racks"))
+        cols = [t.t("xl.col_rack"), t.t("xl.col_u"), t.t("xl.col_height"), t.t("xl.col_item"), t.t("col.model")]
+        r = _title(wsr, t.t("xl.racks_title", site=result.input.name), "", len(cols))
+        _header(wsr, r, cols)
+        hdr = r
+        r += 1
+        for rack_row in rack_table_rows(result):
+            name, span, height, item, model = rack_row
+            for c, v in enumerate((name, span, f"{height}U", item, model), start=1):
+                cell = wsr.cell(row=r, column=c, value=v)
+                cell.border = BOX
+                cell.alignment = CENTER if c in (2, 3) else WRAP_TOP
+                cell.font = Font(name=FONT, size=10, bold=c == 1)
+            r += 1
+        for i, w in {1: 12, 2: 9, 3: 9, 4: 40, 5: 24}.items():
+            wsr.column_dimensions[get_column_letter(i)].width = w
+        wsr.freeze_panes = wsr.cell(row=hdr + 1, column=1)
+        try:
+            png, w, h = _rack_png(result, catalog, lang)
+        except Exception:
+            png = None
+        if png:
+            scale = min(1.0, 1100 / w)
+            wsr.add_image(_PngImage(png, int(w * scale), int(h * scale)), "G2")
+
     # ---- inputs / notes -------------------------------------------------------------------
     wsn = wb.create_sheet(t.t("xl.sheet_inputs"))
     r = _title(wsn, t.t("xl.inputs_title"), result.input.name, 2)
@@ -295,6 +324,22 @@ def _diagram_png(result: SiteResult, catalog: Catalog, lang: str) -> tuple[bytes
     return bytes(data.data()), int(img.width() / ratio), int(img.height() / ratio)
 
 
+def _rack_png(result: SiteResult, catalog: Catalog, lang: str) -> tuple[bytes, int, int]:
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+
+    from .diagram import render_image
+    from .rack import RackDiagram
+
+    img = render_image(RackDiagram(result, catalog, lang), scale=1.4)  # type: ignore[arg-type]
+    data = QByteArray()
+    buf = QBuffer(data)
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    img.save(buf, "PNG")  # type: ignore[call-overload]
+    buf.close()
+    ratio = img.devicePixelRatio()
+    return bytes(data.data()), int(img.width() / ratio), int(img.height() / ratio)
+
+
 def _input_rows(result: SiteResult, t: Translator, catalog: Catalog | None) -> list[tuple[str, Any]]:
     s = result.input
     tier_label = t.pick(catalog.tier(s.tier).label) if catalog else str(s.tier)
@@ -314,6 +359,7 @@ def _input_rows(result: SiteResult, t: Translator, catalog: Catalog | None) -> l
         (t.t("ui.agg"), t.t(f"ui.agg_{s.aggregation}")),
         (t.t("ui.reserve"), f"+{round((result.counts.reserve_factor - 1) * 100)}%" if s.reserve else t.t("xl.no")),
         (t.t("ui.fortios"), result.fortios_version),
+        (t.t("ui.rack_size"), f"{s.rack_size_u}U" if s.rack_size_u else t.t("ui.rack_size_auto")),
     ]
     if s.mode == "extended":
         rows += [
@@ -324,6 +370,8 @@ def _input_rows(result: SiteResult, t: Translator, catalog: Catalog | None) -> l
             (t.t("ui.cam_w"), s.camera_watts or (catalog.rules.camera_watts_default if catalog else "")),
             (t.t("ui.inspected"), s.inspected_mbps or "—"),
             (t.t("ui.max_run"), s.max_cable_run_m or "—"),
+            (t.t("ui.fiber_type"), t.t("ui.fiber_auto") if s.fiber_type == "auto" else s.fiber_type.upper()),
+            (t.t("ui.fiber_backbone"), s.fiber_backbone_m or t.t("xl.auto")),
             (t.t("ui.base_net"), s.ip.base_network or "—"),
         ]
     rows += [

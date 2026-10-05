@@ -29,6 +29,7 @@ from .models import (
     SiteInput,
     SiteResult,
 )
+from .passive import plan_passive
 
 log = logging.getLogger(__name__)
 
@@ -423,6 +424,8 @@ def addon_enabled(site: SiteInput, key: str, tier: Tier) -> bool:
     if value is not None:
         return bool(value)
     extended = site.mode == "extended"
+    if key in ("cabling", "rack"):
+        return True
     if key == "spares":
         return extended and tier.spare_percent > 0
     if key == "ups":
@@ -511,7 +514,7 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk") -> SiteResult
         _bom_transceivers(ctx, bom, categories, core, firewall, rack)
     if addons["cabling"]:
         _bom_cabling(ctx, bom, rack)
-    if addons["rack"] and total_switches > 0:
+    if addons["rack"] and rack.plans:
         _bom_rack(ctx, bom, rack)
     if addons["licensing"] and firewall is not None:
         _bom_licensing(ctx, bom, categories, core, firewall)
@@ -807,29 +810,27 @@ def _bom_transceivers(
     fw_count = fw.count if fw else 0
     fw_dev = ctx.catalog.models.get(fw.model) if fw else None
     fw_has_10g = bool(fw_dev and fw_dev.firewall and fw_dev.firewall.ports_10g > 0)
-    remote = rack.idf_count > 1
-    dac = sr = gc = 0
+    ps = rack.passive
+    remote_links = ps.fiber_links
+    fspec = ctx.catalog.passive.fiber.get(ps.fiber_type)
+    dac = gc = 0
     details: list[str] = []
     if core.count:
         links_edge = sum(c.count * core.uplinks_per_switch for c in categories.values())
-        if remote:
-            sr += links_edge * 2
-        else:
-            dac += links_edge
+        dac += links_edge - remote_links
         dac += core.count * max(fw_count, 1) if fw_has_10g else 0
         icl = ctx.rules.core_icl_links * (core.count // 2) if ctx.tier.core_redundant else 0
         dac += icl
         details.append(t.t("detail.links_core", edge=links_edge, fw=core.count * max(fw_count, 1), icl=icl))
     else:
+        local = edge - remote_links
         if fw_has_10g:
-            links = edge
-            if remote:
-                sr += links * 2
-            else:
-                dac += links
+            dac += local
         else:
-            gc += edge
+            gc += local
         details.append(t.t("detail.links_direct", edge=edge))
+    if remote_links:
+        details.append(t.t("detail.links_remote", n=remote_links, idf=rack.idf_count - 1))
     if dac:
         bom.append(
             BomLine(
@@ -842,14 +843,20 @@ def _bom_transceivers(
                 tags=["addon"],
             )
         )
-    if sr:
+    if remote_links:
+        model = fspec.transceiver if fspec else "FN-TRAN-SFP+SR"
         bom.append(
             BomLine(
                 group="transceiver",
                 category=t.t("cat.transceivers"),
-                model="FN-TRAN-SFP+SR",
-                qty=sr,
-                reason=t.t("reason.sr", idf=rack.idf_count),
+                model=model,
+                qty=remote_links * 2,
+                reason=t.t(
+                    "reason.sr",
+                    idf=rack.idf_count - 1,
+                    n=remote_links,
+                    fiber=t.pick(fspec.label) if fspec else "",
+                ),
                 details=details,
                 tags=["addon"],
             )
@@ -869,83 +876,140 @@ def _bom_transceivers(
 
 
 def _bom_cabling(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
-    t = ctx.t
-    if rack.copper_endpoints <= 0:
+    t, pr, ps = ctx.t, ctx.catalog.passive, rack.passive
+    if ps.copper_links <= 0 and ps.fiber_links <= 0:
         return
     avg = ctx.site.avg_cable_run_m or ctx.rules.avg_cable_run_m_default
-    bom.append(
-        BomLine(
-            group="cabling",
-            category=t.t("cat.cabling"),
-            model="PP-24-C6A",
-            qty=rack.patch_panels,
-            reason=t.t("reason.patch_panels", n=rack.copper_endpoints, ports=ctx.rules.patch_panel_ports),
-            tags=["addon"],
-        )
-    )
-    bom.append(
-        BomLine(
-            group="cabling",
-            category=t.t("cat.cabling"),
-            model="PC-C6A-2M",
-            qty=rack.copper_endpoints,
-            reason=t.t("reason.patch_cords"),
-            tags=["addon"],
-        )
-    )
-    bom.append(
-        BomLine(
-            group="cabling",
-            category=t.t("cat.cabling"),
-            model="CBL-C6A-305",
-            qty=rack.cable_boxes,
-            reason=t.t("reason.cable", n=rack.copper_endpoints, avg=avg, m=rack.cable_m, box=ctx.rules.cable_box_m),
-            tags=["addon"],
-        )
-    )
-    managers = rack.units_managers
-    if managers:
-        bom.append(
-            BomLine(
-                group="cabling",
-                category=t.t("cat.cabling"),
-                model="CM-1U",
-                qty=managers,
-                reason=t.t("reason.cable_managers"),
-                tags=["addon"],
+    copper = t.t("cat.copper")
+
+    def add(group: str, category: str, model: str, qty: int, reason: str, details: list[str] | None = None) -> None:
+        if qty > 0:
+            bom.append(
+                BomLine(
+                    group=group,
+                    category=category,
+                    model=model,
+                    qty=qty,
+                    reason=reason,
+                    details=details or [],
+                    tags=["addon"],
+                )
             )
+
+    if ps.copper_links:
+        add(
+            "cabling",
+            copper,
+            pr.cable,
+            ps.cable_drums,
+            t.t(
+                "reason.cable",
+                n=ps.copper_links,
+                avg=avg,
+                slack=pr.cable_slack_m,
+                m=ps.cable_m,
+                box=pr.cable_drum_m,
+            ),
+            [t.t("detail.cable_cat6a")],
         )
+        add(
+            "cabling",
+            copper,
+            pr.jack,
+            ps.jack_packs,
+            t.t("reason.jacks", n=ps.copper_links, jacks=ps.jacks, pack=pr.jack_pack),
+        )
+        add(
+            "cabling",
+            copper,
+            pr.panel,
+            ps.panels,
+            t.t("reason.patch_panels", n=ps.copper_links, ports=pr.panel_ports),
+        )
+        add(
+            "cabling",
+            copper,
+            pr.outlet,
+            ps.outlets,
+            t.t("reason.outlets", sockets=ps.sockets, per=pr.outlet_ports, dev=ps.device_links),
+        )
+        add(
+            "cabling",
+            copper,
+            pr.cord_rack,
+            ps.cords_rack,
+            t.t("reason.cords_rack", links=ps.copper_links, dev=ps.device_links),
+        )
+        add("cabling", copper, pr.cord_user, ps.cords_user, t.t("reason.cords_user", n=ps.sockets))
+        add("cabling", copper, pr.manager, ps.managers, t.t("reason.cable_managers"))
+
+    fspec = ctx.catalog.passive.fiber.get(ps.fiber_type)
+    if ps.fiber_links and fspec is not None:
+        fiber = t.t("cat.fiber")
+        flabel = t.pick(fspec.label)
+        choice = (
+            t.t("detail.fiber_auto", m=max(ps.backbone_m, default=0), limit=fspec.max_10g_m, type=flabel)
+            if ps.fiber_auto
+            else t.t("detail.fiber_manual", type=flabel)
+        )
+        runs = ", ".join(f"{m} м" for m in ps.backbone_m)
+        add(
+            "fiber",
+            fiber,
+            fspec.cable,
+            ps.fiber_m,
+            t.t(
+                "reason.fiber_cable",
+                cables=ps.fiber_cables,
+                f=fspec.cable_fibers,
+                type=flabel,
+                runs=runs,
+                slack=pr.fiber_slack_m,
+                m=ps.fiber_m,
+            ),
+            [choice, t.t("detail.fiber_spare", links=ps.fiber_links, pct=round(pr.fiber_spare_ratio * 100))],
+        )
+        add("fiber", fiber, fspec.housing_24, ps.housings_24, t.t("reason.housing", f=24))
+        add("fiber", fiber, fspec.housing_12, ps.housings_12, t.t("reason.housing", f=12))
+        add("fiber", fiber, pr.splice_protector, ps.splices, t.t("reason.splices", n=ps.splices))
+        add("fiber", fiber, fspec.cord, ps.fiber_cords, t.t("reason.fiber_cords", links=ps.fiber_links))
 
 
 def _bom_rack(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
-    t = ctx.t
-    if rack.rack_model:
+    t, pr = ctx.t, ctx.catalog.passive
+    by_model: dict[str, list[str]] = {}
+    for plan in rack.plans:
+        if plan.model:
+            by_model.setdefault(plan.model, []).append(plan.name)
+    for model, names in by_model.items():
+        plans = [p for p in rack.plans if p.model == model]
+        used = sum(p.used_u for p in plans)
+        size = plans[0].size_u
         bom.append(
             BomLine(
                 group="rack",
                 category=t.t("cat.rack"),
-                model=rack.rack_model,
-                qty=rack.rack_count,
+                model=model,
+                qty=len(names),
                 reason=t.t(
-                    "reason.rack" if rack.rack_count == 1 else "reason.rack_multi",
-                    used=rack.units_total,
-                    spare=rack.units_with_spare,
-                    size=rack.rack_size_u,
-                    n=rack.rack_count,
+                    "reason.rack",
+                    names=", ".join(names),
+                    used=used,
+                    size=size,
                     pct=round(ctx.rules.rack_spare_ratio * 100),
                 ),
+                details=[t.t("detail.rack_plan", name=p.name, used=p.used_u, free=p.free_u) for p in plans],
                 tags=["addon"],
             )
         )
-    if rack.idf_count > 1:
-        small = ctx.catalog.rack_models()[0][0] if ctx.catalog.rack_models() else "RACK-12U"
+    if rack.passive.pdus:
         bom.append(
             BomLine(
                 group="rack",
                 category=t.t("cat.rack"),
-                model=small,
-                qty=rack.idf_count - 1,
-                reason=t.t("reason.rack_idf", n=rack.idf_count - 1),
+                model=pr.pdu,
+                qty=rack.passive.pdus,
+                reason=t.t("reason.pdu", n=pr.pdu_outlets) + (" " + t.t("reason.pdu_ab") if ctx.dual_psu else ""),
                 tags=["addon"],
             )
         )
@@ -1073,40 +1137,7 @@ def compute_rack(
     power: PowerSummary,
     addons: dict[str, bool],
 ) -> RackSummary:
-    r = ctx.rules
-    rs = RackSummary()
-    for res in (*categories.values(), core):
-        if res.count and res.model in ctx.catalog.models:
-            rs.units_equipment += ctx.catalog.device(res.model).rack_units * res.count
-    if fw and fw.fits:
-        rs.units_equipment += ctx.catalog.device(fw.model).rack_units * fw.count
-    rs.copper_endpoints = ctx.counts.sockets + ctx.counts.cameras + ctx.counts.aps
-    rs.patch_panels = ceil_div(rs.copper_endpoints, r.patch_panel_ports)
-    rs.units_panels = rs.patch_panels
-    rs.units_managers = math.ceil(rs.patch_panels * r.cable_manager_per_panel)
-    if ctx.tier.ups or addons.get("ups"):
-        ups = ctx.catalog.models.get(power.ups_model)
-        rs.units_ups = ups.rack_units if ups else 2
-    if ctx.tier.oob:
-        rs.units_other += 1
-    rs.units_total = rs.units_equipment + rs.units_panels + rs.units_managers + rs.units_ups + rs.units_other
-    rs.units_with_spare = math.ceil(rs.units_total * (1 + r.rack_spare_ratio))
-    racks = ctx.catalog.rack_models()
-    for model, dev in racks:
-        if (dev.rack_size_u or 0) >= rs.units_with_spare:
-            rs.rack_model, rs.rack_size_u = model, dev.rack_size_u or 0
-            break
-    else:
-        if racks:
-            rs.rack_model, rs.rack_size_u = racks[-1][0], racks[-1][1].rack_size_u or 0
-    if rs.rack_size_u:
-        rs.rack_count = max(1, math.ceil(rs.units_with_spare / rs.rack_size_u))
-    run = ctx.site.max_cable_run_m
-    rs.idf_count = max(1, math.ceil(run / r.copper_max_m)) if run else 1
-    avg = ctx.site.avg_cable_run_m or r.avg_cable_run_m_default
-    rs.cable_m = rs.copper_endpoints * avg
-    rs.cable_boxes = ceil_div(rs.cable_m, r.cable_box_m)
-    return rs
+    return plan_passive(ctx, categories, core, fw, power, addons)
 
 
 def _uplink_checks(
@@ -1191,6 +1222,18 @@ def _general_checks(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
             limit=ctx.rules.copper_max_m,
             n=t.plural("plural.closets", rack.idf_count),
         )
+    for plan in rack.plans:
+        if plan.used_u > plan.size_u:
+            ctx.check(
+                Severity.ERROR,
+                "RACK_FULL",
+                "check.rack_full",
+                "check.rack_full_hint",
+                "rack",
+                name=plan.name,
+                used=plan.used_u,
+                size=plan.size_u,
+            )
     if ctx.tier.dual_wan and any(line.group == "firewall" for line in bom):
         ctx.check(Severity.INFO, "DUAL_WAN", "check.dual_wan", "", "firewall")
 

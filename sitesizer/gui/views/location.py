@@ -349,6 +349,17 @@ class LocationView(QWidget):
         )
         self.reserve_pct_row = FieldRow(tr("ui.reserve_pct"), self.reserve_pct)
         arch.add(self.reserve_pct_row)
+        arch.add(hline())
+        self.rack_size = SegmentedControl(
+            [("0", tr("ui.rack_size_auto")), ("24", "24U"), ("42", "42U")],
+            [tr("ui.rack_size_tip"), "", ""],
+            expand=False,
+            compact=True,
+        )
+        self.rack_size.valueChanged.connect(
+            lambda v: self.state.set_field("rack_size_u", int(v), tr("ui.rack_size"), merge=False)
+        )
+        arch.add(FieldRow(tr("ui.rack_size"), self.rack_size, "", tr("help.rack_size")))
         f.addWidget(arch)
 
         # --- extended ---------------------------------------------------------------------
@@ -399,6 +410,21 @@ class LocationView(QWidget):
         self.avg_run = Stepper(1, 1000, step=5, suffix=tr("ui.unit_m"), width=140)
         self.avg_run.valueChanged.connect(lambda v: self.state.set_field("avg_cable_run_m", v, tr("ui.avg_run")))
         e.add(FieldRow(tr("ui.avg_run"), self.avg_run, "", tr("help.avg_run")))
+        self.fiber = SegmentedControl(
+            [("auto", tr("ui.fiber_auto")), ("om4", "OM4"), ("os2", "OS2")],
+            ["", "", ""],
+            expand=False,
+            compact=True,
+        )
+        self.fiber.valueChanged.connect(
+            lambda v: self.state.set_field("fiber_type", v, tr("ui.fiber_type"), merge=False)
+        )
+        e.add(FieldRow(tr("ui.fiber_type"), self.fiber, tr("ui.fiber_caption"), tr("help.fiber")))
+        self.backbone = Stepper(0, 100_000, step=10, suffix=tr("ui.unit_m"), width=140)
+        self.backbone.valueChanged.connect(
+            lambda v: self.state.set_field("fiber_backbone_m", v or None, tr("ui.fiber_backbone"))
+        )
+        e.add(FieldRow(tr("ui.fiber_backbone"), self.backbone, tr("ui.fiber_backbone_caption"), tr("help.fiber")))
         e.add(hline())
         self.base_net = QLineEdit()
         self.base_net.setPlaceholderText("10.50.0.0/16")
@@ -534,6 +560,9 @@ class LocationView(QWidget):
             self.fortios.blockSignals(False)
             self.max_run.setValue(s.max_cable_run_m or 0)
             self.avg_run.setValue(s.avg_cable_run_m or cat.rules.avg_cable_run_m_default)
+            self.rack_size.setValue(str(s.rack_size_u if s.rack_size_u in (24, 42) else 0), animate=True)
+            self.fiber.setValue(s.fiber_type, animate=True)
+            self.backbone.setValue(s.fiber_backbone_m or 0)
             if not self.base_net.hasFocus():
                 self.base_net.setText(s.ip.base_network)
                 self._validate_net(s.ip.base_network)
