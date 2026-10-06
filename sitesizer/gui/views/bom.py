@@ -3,27 +3,48 @@
 from __future__ import annotations
 
 import html
+import uuid
+from collections.abc import Callable
+from typing import Any
 
 from PySide6.QtCore import (
     QMimeData,
     QModelIndex,
     QPersistentModelIndex,
+    QPoint,
     QRect,
     QRectF,
     QSize,
     QSortFilterProxyModel,
     Qt,
+    QUrl,
     Signal,
 )
-from PySide6.QtGui import QFont, QFontMetrics, QPainter, QStandardItem, QStandardItemModel, QTextOption
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QDesktopServices,
+    QFont,
+    QFontMetrics,
+    QPainter,
+    QPen,
+    QStandardItem,
+    QStandardItemModel,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QScrollArea,
+    QSpinBox,
     QSplitter,
     QStyle,
     QStyledItemDelegate,
@@ -40,16 +61,19 @@ from ...i18n import current, tr
 from .. import icons
 from ..state import AppState
 from ..theme import theme_manager, tokens
-from ..widgets.controls import Card, Pill, button, clear_layout, hline, label, paint_pill, px
+from ..widgets.controls import Card, FieldRow, Pill, button, clear_layout, hline, label, paint_pill, px
+from ..widgets.overlays import confirm
 
 LINE_ROLE = Qt.ItemDataRole.UserRole + 1
 SORT_ROLE = Qt.ItemDataRole.UserRole + 2
 GROUP_ROLE = Qt.ItemDataRole.UserRole + 3
 KIND_ROLE = Qt.ItemDataRole.UserRole + 4  # "group" | "line"
 
-COL_MODEL, COL_QTY, COL_PRICE, COL_TOTAL, COL_REASON = range(5)
+COL_MODEL, COL_CODE, COL_QTY, COL_PRICE_MIN, COL_PRICE, COL_TOTAL = range(6)
+NCOLS = 6
+EDITABLE = (COL_QTY, COL_PRICE_MIN, COL_PRICE)
 
-TAG_KEYS = ("ha", "n+1", "tier", "psu", "auto", "addon", "spare", "license", "eoo", "unverified")
+TAG_KEYS = ("manual", "ha", "n+1", "tier", "psu", "auto", "addon", "spare", "license", "eoo", "unverified")
 
 
 def tag_color(tag: str) -> str:
@@ -65,35 +89,67 @@ def tag_color(tag: str) -> str:
         "license": t.categories["license"],
         "eoo": t.error,
         "unverified": t.warning,
+        "manual": t.warning,
     }.get(tag, t.text_muted)
 
 
 class BomDelegate(QStyledItemDelegate):
-    """Paints group headers, model+description, qty badges, tags and wrapped reasons."""
+    """Paints group headers, model+description, qty badges and tags; edits quantity and prices."""
 
-    def __init__(self, view: QTreeView) -> None:
+    def __init__(self, view: QTreeView, commit: Callable[[BomLine, int, float], None]) -> None:
         super().__init__(view)
         self.view = view
+        self.commit = commit
+
+    # -- editing ---------------------------------------------------------------------------
+    def createEditor(
+        self, parent: QWidget, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
+    ) -> QWidget:
+        line: BomLine | None = index.data(LINE_ROLE)
+        col = index.column()
+        if col == COL_QTY:
+            ed: QWidget = QSpinBox(parent)
+            ed.setRange(0, 1_000_000)  # type: ignore[attr-defined]
+        else:
+            ed = QDoubleSpinBox(parent)
+            ed.setRange(0, 1_000_000_000)  # type: ignore[attr-defined]
+            ed.setDecimals(2)  # type: ignore[attr-defined]
+            ed.setGroupSeparatorShown(True)  # type: ignore[attr-defined]
+        ed.setFrame(False)  # type: ignore[attr-defined]
+        ed.setAlignment(Qt.AlignmentFlag.AlignRight)  # type: ignore[attr-defined]
+        del line
+        return ed
+
+    def setEditorData(self, editor: QWidget, index: QModelIndex | QPersistentModelIndex) -> None:
+        line: BomLine | None = index.data(LINE_ROLE)
+        if line is None:
+            return
+        value = {COL_QTY: line.qty, COL_PRICE_MIN: line.price_min, COL_PRICE: line.unit_price}.get(index.column())
+        editor.setValue(value or 0)  # type: ignore[attr-defined]
+        editor.selectAll()  # type: ignore[attr-defined]
+
+    def setModelData(self, editor: QWidget, _model: Any, index: QModelIndex | QPersistentModelIndex) -> None:
+        line: BomLine | None = index.data(LINE_ROLE)
+        if line is not None:
+            editor.interpretText()  # type: ignore[attr-defined]
+            self.commit(line, index.column(), float(editor.value()))  # type: ignore[attr-defined]
+
+    def updateEditorGeometry(
+        self, editor: QWidget, option: QStyleOptionViewItem, _index: QModelIndex | QPersistentModelIndex
+    ) -> None:
+        r = QRect(option.rect)
+        editor.setGeometry(r.adjusted(px(4), px(6), -px(4), -(r.height() - px(34))))
 
     # -- metrics ---------------------------------------------------------------------------
     def _fonts(self) -> tuple[QFont, QFont, QFont]:
         tm = theme_manager
         return (tm.font(None, QFont.Weight.DemiBold), tm.font(tm.type.caption), tm.font())
 
-    def _reason_height(self, text: str, width: int) -> int:
-        fm = QFontMetrics(self._fonts()[2])
-        rect = fm.boundingRect(QRect(0, 0, max(width - px(16), 50), 10_000), int(Qt.TextFlag.TextWordWrap), text)
-        return rect.height() + px(18)
-
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
         kind = index.data(KIND_ROLE)
         if kind == "group":
             return QSize(option.rect.width(), px(38))
-        base = px(52)
-        reason_idx = index.siblingAtColumn(COL_REASON)
-        width = self.view.header().sectionSize(COL_REASON)
-        text = str(reason_idx.data(Qt.ItemDataRole.DisplayRole) or "")
-        return QSize(option.rect.width(), max(base, self._reason_height(text, width)))
+        return QSize(option.rect.width(), px(54))
 
     # -- painting --------------------------------------------------------------------------
     def paint(self, p: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
@@ -167,31 +223,40 @@ class BomDelegate(QStyledItemDelegate):
                 desc,
             )
         elif col == COL_QTY and line is not None:
-            text = "—" if line.qty is None else str(line.qty)
+            text = "—" if line.qty is None else f"{line.qty} {line.unit}".strip()
             p.setFont(bold)
             fm = QFontMetrics(bold)
             w = max(fm.horizontalAdvance(text) + px(16), px(30))
             badge = QRectF(r.center().x() - w / 2, inner.top() - 1, w, px(22))
+            changed = line.qty is not None and line.calc_qty is not None and line.qty != line.calc_qty
             if line.qty is not None:
-                p.setPen(Qt.PenStyle.NoPen)
+                p.setPen(QPen(QColor(t.warning), 1.2) if changed else Qt.PenStyle.NoPen)
                 p.setBrush(t.q("surface_alt"))
                 p.drawRoundedRect(badge, px(11), px(11))
             p.setPen(t.q("text" if line.qty is not None else "text_faint"))
             p.drawText(badge, Qt.AlignmentFlag.AlignCenter, text)
-        elif col in (COL_PRICE, COL_TOTAL):
-            p.setFont(normal)
-            p.setPen(t.q("text"))
-            p.drawText(
-                inner,
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
-                str(index.data(Qt.ItemDataRole.DisplayRole) or ""),
-            )
-        elif col == COL_REASON:
-            p.setFont(normal)
-            p.setPen(t.q("text_muted" if muted_ref else "text"))
-            opt = QTextOption()
-            opt.setWrapMode(QTextOption.WrapMode.WordWrap)
-            p.drawText(QRectF(inner), str(index.data(Qt.ItemDataRole.DisplayRole) or ""), opt)
+            if changed:
+                p.setFont(small)
+                p.setPen(t.q("text_muted"))
+                p.drawText(
+                    QRectF(r.left(), badge.bottom() + px(2), r.width(), px(16)),
+                    Qt.AlignmentFlag.AlignCenter,
+                    tr("ui.bom_calc", n=line.calc_qty),
+                )
+        elif col == COL_CODE and line is not None:
+            p.setFont(small)
+            p.setPen(t.q("text_muted"))
+            p.drawText(inner, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, line.code)
+        elif col in (COL_PRICE_MIN, COL_PRICE, COL_TOTAL):
+            p.setFont(bold if col == COL_TOTAL else normal)
+            text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+            editable = line is not None and line.qty is not None and col != COL_TOTAL
+            if not text and editable and (hovered or selected):
+                p.setPen(t.q("text_faint"))
+                text = tr("ui.bom_set_price")
+            else:
+                p.setPen(t.q("text"))
+            p.drawText(inner, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop, text)
         p.setPen(t.q("border"))
         p.drawLine(r.bottomLeft(), r.bottomRight())
         p.restore()
@@ -213,7 +278,7 @@ class BomProxy(QSortFilterProxyModel):
         line: BomLine | None = idx.data(LINE_ROLE)
         if line is None:
             return False
-        hay = " ".join([line.model, line.category, line.description, line.reason, *line.details]).lower()
+        hay = " ".join([line.model, line.code, line.category, line.description]).lower()
         return needle.lower() in hay
 
     def lessThan(self, a: QModelIndex | QPersistentModelIndex, b: QModelIndex | QPersistentModelIndex) -> bool:
@@ -279,6 +344,12 @@ class LineDetail(QScrollArea):
             card.add(label(line.description, "muted", wrap=True))
         qty = tr("ui.why_qty_ref") if line.qty is None else tr("ui.why_qty", n=line.qty)
         card.add(label(qty, "subtitle"))
+        if line.code:
+            card.add(label(tr("ui.why_code", code=line.code), "muted", selectable=True))
+        if line.manual:
+            card.add(
+                label(tr("ui.why_manual", n=line.calc_qty if line.calc_qty is not None else "—"), "caption", wrap=True)
+            )
         tags = [tg for tg in line.tags if tg in TAG_KEYS]
         if tags:
             card.add(hline())
@@ -305,10 +376,11 @@ class LineDetail(QScrollArea):
                 card.add(label(s, "muted", wrap=True))
             verified = tr(f"verified.{dev.verified}")
             card.add(label(verified, "caption", wrap=True))
-            if dev.source:
-                link = label(f"<a href='{html.escape(dev.source)}'>{tr('ui.datasheet')}</a>", "caption")
-                link.setOpenExternalLinks(True)
-                card.add(link)
+            url = dev.datasheet or (dev.source if dev.source.startswith("http") else "")
+            if url:
+                ds = button(tr("ui.datasheet"), None, "external-link", url)
+                ds.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(url)))
+                card.add(ds)
             if dev.notes:
                 card.add(label(dev.notes, "caption", wrap=True))
             go = button(tr("ui.open_in_catalog"), "ghost", "database")
@@ -346,6 +418,93 @@ def spec_lines(model: str, state: AppState) -> list[str]:
     return out
 
 
+class AddLineDialog(QDialog):
+    """Add a BoM line: pick a catalog item (prices, code and unit are filled in) or type one."""
+
+    def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.state = state
+        self.setWindowTitle(tr("ui.bom_add"))
+        self.setMinimumWidth(px(520))
+        lay = QVBoxLayout(self)
+        lay.setSpacing(px(10))
+        t = current()
+        self.model = QComboBox()
+        self.model.setEditable(True)
+        self.model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.model.addItem(tr("ui.bom_add_free"), "")
+        for key, dev in state.catalog.template_models():
+            self.model.addItem(f"{key} — {dev.spec_name or t.pick(dev.name)}"[:90], key)
+        comp = self.model.completer()
+        if comp is not None:
+            comp.setFilterMode(Qt.MatchFlag.MatchContains)
+            comp.setCompletionMode(comp.CompletionMode.PopupCompletion)
+        self.model.currentIndexChanged.connect(self._prefill)
+        lay.addWidget(FieldRow(tr("ui.bom_add_item"), self.model))
+        self.name = QLineEdit()
+        lay.addWidget(FieldRow(tr("col.description"), self.name))
+        self.code = QLineEdit()
+        self.code.setFixedWidth(px(160))
+        lay.addWidget(FieldRow(tr("col.code"), self.code))
+        self.unit = QComboBox()
+        self.unit.setEditable(True)
+        self.unit.addItems(["шт.", "м", "компл.", "посл."])
+        self.unit.setFixedWidth(px(160))
+        lay.addWidget(FieldRow(tr("col.unit"), self.unit))
+        self.section = QComboBox()
+        for key in ("sks", "network", "works"):
+            self.section.addItem(tr(f"section.{key}"), key)
+        self.section.setFixedWidth(px(160))
+        lay.addWidget(FieldRow(tr("ui.bom_section"), self.section))
+        self.qty = QSpinBox()
+        self.qty.setRange(0, 1_000_000)
+        self.qty.setValue(1)
+        self.qty.setFixedWidth(px(160))
+        lay.addWidget(FieldRow(tr("ui.col_qty_short"), self.qty))
+        self.price = QDoubleSpinBox()
+        self.price_min = QDoubleSpinBox()
+        for w in (self.price, self.price_min):
+            w.setRange(0, 1_000_000_000)
+            w.setDecimals(2)
+            w.setGroupSeparatorShown(True)
+            w.setFixedWidth(px(160))
+        lay.addWidget(FieldRow(tr("col.unit_price"), self.price))
+        lay.addWidget(FieldRow(tr("xl.col_price_min"), self.price_min))
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        lay.addWidget(buttons)
+
+    def _prefill(self) -> None:
+        key = self.model.currentData()
+        dev = self.state.catalog.models.get(key or "")
+        if dev is None:
+            return
+        from ...core.catalog import section_of
+
+        self.name.setText(dev.spec_name or current().pick(dev.name))
+        self.code.setText(dev.code)
+        self.unit.setCurrentText(dev.unit)
+        idx = self.section.findData(section_of(key, dev))
+        self.section.setCurrentIndex(max(0, idx))
+        self.price.setValue(dev.price or 0)
+        self.price_min.setValue(dev.price_min or 0)
+
+    def line(self) -> dict[str, Any]:
+        key = self.model.currentData() or ""
+        return {
+            "id": uuid.uuid4().hex[:8],
+            "model": key,
+            "name": self.name.text().strip() or (self.model.currentText() if not key else ""),
+            "code": self.code.text().strip(),
+            "unit": self.unit.currentText().strip() or "шт.",
+            "qty": self.qty.value(),
+            "price": self.price.value() or None,
+            "price_min": self.price_min.value() or None,
+            "section": self.section.currentData(),
+        }
+
+
 class BomView(QWidget):
     open_catalog = Signal(str)
 
@@ -362,8 +521,8 @@ class BomView(QWidget):
         self.search.setObjectName("SearchEdit")
         self.search.setPlaceholderText(tr("ui.bom_search"))
         self.search.setClearButtonEnabled(True)
-        self.search.setMinimumWidth(px(300))
-        self.search.setMaximumWidth(px(380))
+        self.search.setMinimumWidth(px(240))
+        self.search.setMaximumWidth(px(340))
         self.search.addAction(icons.icon("search", size=14), QLineEdit.ActionPosition.LeadingPosition)
         self.search.setStyleSheet("")
         self.search.textChanged.connect(self._on_search)
@@ -371,6 +530,12 @@ class BomView(QWidget):
         self.count_label = label("", "caption")
         bar.addWidget(self.count_label)
         bar.addStretch(1)
+        self.add_btn = button(tr("ui.bom_add"), "primary", "plus", tr("ui.bom_add_tip"))
+        self.add_btn.clicked.connect(self.add_line)
+        bar.addWidget(self.add_btn)
+        self.reset_btn = button(tr("ui.bom_reset"), "ghost", "refresh-ccw", tr("ui.bom_reset_tip"))
+        self.reset_btn.clicked.connect(self.reset_manual)
+        bar.addWidget(self.reset_btn)
         self.expand_btn = button(tr("ui.collapse_all"), "ghost", "chevron-down")
         self.expand_btn.clicked.connect(self._toggle_expand)
         bar.addWidget(self.expand_btn)
@@ -378,15 +543,16 @@ class BomView(QWidget):
         self.copy_btn.clicked.connect(self.copy_to_clipboard)
         bar.addWidget(self.copy_btn)
         root.addLayout(bar)
+        root.addWidget(label(tr("ui.bom_edit_hint"), "caption", wrap=True))
 
         split = QSplitter(Qt.Orientation.Horizontal)
         split.setChildrenCollapsible(False)
-        self.model = QStandardItemModel(0, 5)
+        self.model = QStandardItemModel(0, NCOLS)
         self.proxy = BomProxy()
         self.proxy.setSourceModel(self.model)
         self.tree = QTreeView()
         self.tree.setModel(self.proxy)
-        self.tree.setItemDelegate(BomDelegate(self.tree))
+        self.tree.setItemDelegate(BomDelegate(self.tree, self.commit))
         self.tree.setRootIsDecorated(False)
         self.tree.setIndentation(0)
         self.tree.setUniformRowHeights(False)
@@ -394,16 +560,21 @@ class BomView(QWidget):
         self.tree.setMouseTracking(True)
         self.tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tree.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+            | QAbstractItemView.EditTrigger.SelectedClicked
+        )
         self.tree.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.tree.setExpandsOnDoubleClick(False)
         self.tree.setAllColumnsShowFocus(True)
         self.tree.setAccessibleName(tr("nav.bom"))
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._context)
         header = self.tree.header()
-        header.setStretchLastSection(True)
+        header.setStretchLastSection(False)
         header.setSectionsMovable(False)
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        header.sectionResized.connect(lambda *_: self.tree.doItemsLayout())
         self.tree.selectionModel().currentRowChanged.connect(self._on_current)
         split.addWidget(self.tree)
         self.detail = LineDetail(state)
@@ -421,7 +592,6 @@ class BomView(QWidget):
         root.addWidget(self.totals)
 
         self._expanded = True
-        self._with_prices = False
         state.resultChanged.connect(self.on_result)
         state.settingsChanged.connect(self._on_settings)
         theme_manager.changed.connect(self.tree.viewport().update)
@@ -430,7 +600,7 @@ class BomView(QWidget):
 
     def resizeEvent(self, e) -> None:
         super().resizeEvent(e)
-        self.detail.setMaximumWidth(px(280) if self.width() < px(980) else px(420))
+        self.detail.setMaximumWidth(px(280) if self.width() < px(980) else px(380))
 
     def _on_settings(self) -> None:
         if self.state.result is not None:
@@ -439,29 +609,25 @@ class BomView(QWidget):
     def _headers(self) -> None:
         labels = [
             tr("col.model"),
+            tr("col.code"),
             tr("ui.col_qty_short"),
+            tr("xl.col_price_min"),
             tr("col.unit_price"),
             tr("col.total_price"),
-            tr("col.reason"),
         ]
         self.model.setHorizontalHeaderLabels(labels)
         header = self.tree.header()
-        header.setSectionResizeMode(COL_MODEL, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(COL_QTY, QHeaderView.ResizeMode.Fixed)
-        header.resizeSection(COL_MODEL, px(300))
-        header.resizeSection(COL_QTY, px(78))
-        header.resizeSection(COL_PRICE, px(110))
-        header.resizeSection(COL_TOTAL, px(120))
-        self.tree.setColumnHidden(COL_PRICE, not self._with_prices)
-        self.tree.setColumnHidden(COL_TOTAL, not self._with_prices)
+        header.setSectionResizeMode(COL_MODEL, QHeaderView.ResizeMode.Stretch)
+        for col, width in ((COL_CODE, 100), (COL_QTY, 100), (COL_PRICE_MIN, 120), (COL_PRICE, 120), (COL_TOTAL, 130)):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
+            header.resizeSection(col, px(width))
 
     def on_result(self, result: SiteResult) -> None:
         cur = self.tree.currentIndex()
         cur_key = None
         if cur.isValid():
             line: BomLine | None = cur.siblingAtColumn(0).data(LINE_ROLE)
-            cur_key = (line.group, line.model) if line else None
-        self._with_prices = any(line.unit_price is not None for line in result.bom)
+            cur_key = line.key if line else None
         self.model.clear()
         self._headers()
         currency = self.state.catalog.meta.currency
@@ -474,7 +640,7 @@ class BomView(QWidget):
         for g in sorted(groups, key=lambda g: order.get(g, 99)):
             lines = groups[g]
             title = tr(f"group.{g}")
-            gi = [QStandardItem(title)] + [QStandardItem("") for _ in range(4)]
+            gi = [QStandardItem(title)] + [QStandardItem("") for _ in range(NCOLS - 1)]
             for it in gi:
                 it.setData("group", KIND_ROLE)
                 it.setData(g, GROUP_ROLE)
@@ -485,25 +651,28 @@ class BomView(QWidget):
             for i, line in lines:
                 cells = [
                     QStandardItem(line.model),
+                    QStandardItem(line.code),
                     QStandardItem("" if line.qty is None else str(line.qty)),
+                    QStandardItem(format_money(line.price_min, currency) if line.price_min is not None else ""),
                     QStandardItem(format_money(line.unit_price, currency) if line.unit_price is not None else ""),
                     QStandardItem(format_money(line.total_price, currency) if line.total_price is not None else ""),
-                    QStandardItem(line.reason),
                 ]
                 sort_vals: list[object] = [
                     i,
+                    line.code,
                     line.qty if line.qty is not None else -1,
+                    line.price_min or 0,
                     line.unit_price or 0,
                     line.total_price or 0,
-                    line.reason,
                 ]
                 for c, it in enumerate(cells):
                     it.setData(line, LINE_ROLE)
                     it.setData("line", KIND_ROLE)
                     it.setData(line.group, GROUP_ROLE)
                     it.setData(sort_vals[c], SORT_ROLE)
-                    it.setEditable(False)
-                    it.setToolTip(line.reason if c == COL_REASON else "")
+                    it.setEditable(c in EDITABLE and line.qty is not None)
+                    if c in EDITABLE and line.qty is not None:
+                        it.setToolTip(tr("ui.bom_edit_tip"))
                 gi[0].appendRow(cells)
             self.model.appendRow(gi)
         self.proxy.sort(-1)
@@ -515,7 +684,7 @@ class BomView(QWidget):
                 for c in range(self.proxy.rowCount(idx)):
                     child = self.proxy.index(c, 0, idx)
                     ln: BomLine | None = child.data(LINE_ROLE)
-                    if ln and (ln.group, ln.model) == cur_key:
+                    if ln and ln.key == cur_key:
                         restore = child
         if restore is not None:
             self.tree.setCurrentIndex(restore)
@@ -523,7 +692,91 @@ class BomView(QWidget):
             self.detail.show_line(None)
         purch = [line for line in result.bom if line.qty]
         self.count_label.setText(tr("ui.bom_count", lines=len(purch), pcs=sum(line.qty or 0 for line in purch)))
+        edits = result.input.bom
+        self.reset_btn.setEnabled(bool(edits.overrides or edits.custom))
         self._update_totals(result)
+
+    # ---- manual edits --------------------------------------------------------------------
+    def commit(self, line: BomLine, col: int, value: float) -> None:
+        """Store a manual quantity / price for ``line`` (an undoable edit of the location)."""
+        field = {COL_QTY: "qty", COL_PRICE: "price", COL_PRICE_MIN: "price_min"}[col]
+        new: int | float | None = int(value) if field == "qty" else round(value, 2)
+        if line.group == "custom":
+            cid = line.key.split(":", 1)[1]
+
+            def mutate_custom(d: dict[str, Any]) -> None:
+                for c in d.setdefault("bom", {}).setdefault("custom", []):
+                    if c["id"] == cid:
+                        c[field] = new if (field == "qty" or new) else None
+
+            self.state.edit(tr("ui.bom_edit"), mutate_custom)
+            return
+        if field == "qty" and new == line.calc_qty:
+            new = None
+
+        def mutate(d: dict[str, Any]) -> None:
+            overrides = d.setdefault("bom", {}).setdefault("overrides", {})
+            ov = overrides.setdefault(line.key, {})
+            ov[field] = new
+            if all(v is None for v in ov.values()):
+                overrides.pop(line.key, None)
+
+        self.state.edit(tr("ui.bom_edit"), mutate)
+
+    def revert(self, line: BomLine) -> None:
+        if line.group == "custom":
+            return
+        self.state.edit(
+            tr("ui.bom_revert"), lambda d: d.setdefault("bom", {}).setdefault("overrides", {}).pop(line.key, None)
+        )
+
+    def remove_custom(self, line: BomLine) -> None:
+        cid = line.key.split(":", 1)[1]
+
+        def mutate(d: dict[str, Any]) -> None:
+            bom = d.setdefault("bom", {})
+            bom["custom"] = [c for c in bom.get("custom", []) if c["id"] != cid]
+
+        self.state.edit(tr("ui.bom_remove"), mutate)
+
+    def add_line(self) -> None:
+        dlg = AddLineDialog(self.state, self)
+        if dlg.exec():
+            line = dlg.line()
+            self.state.edit(tr("ui.bom_add"), lambda d: d.setdefault("bom", {}).setdefault("custom", []).append(line))
+
+    def reset_manual(self) -> None:
+        if confirm(self, tr("ui.bom_reset"), tr("ui.bom_reset_text"), tr("ui.bom_reset"), danger=True):
+            self.state.edit(tr("ui.bom_reset"), lambda d: d.update(bom={}))
+
+    def _context(self, pos: QPoint) -> None:
+        idx = self.tree.indexAt(pos)
+        line: BomLine | None = idx.siblingAtColumn(0).data(LINE_ROLE) if idx.isValid() else None
+        menu = QMenu(self)
+        if line is not None and line.qty is not None:
+            for col, key in ((COL_QTY, "ui.bom_edit_qty"), (COL_PRICE, "ui.bom_edit_price")):
+                a = QAction(icons.icon("pencil", size=16), tr(key), menu)
+                a.triggered.connect(lambda _=False, c=col: self.tree.edit(idx.siblingAtColumn(c)))
+                menu.addAction(a)
+            if line.manual and line.group != "custom":
+                a = QAction(icons.icon("refresh-ccw", size=16), tr("ui.bom_revert"), menu)
+                a.triggered.connect(lambda: self.revert(line))
+                menu.addAction(a)
+            if line.group == "custom":
+                a = QAction(icons.icon("trash-2", "error", 16), tr("ui.bom_remove"), menu)
+                a.triggered.connect(lambda: self.remove_custom(line))
+                menu.addAction(a)
+            dev = self.state.catalog.models.get(line.model)
+            if dev is not None and dev.datasheet:
+                url = dev.datasheet
+                a = QAction(icons.icon("external-link", size=16), tr("ui.datasheet"), menu)
+                a.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(url)))
+                menu.addAction(a)
+            menu.addSeparator()
+        a = QAction(icons.icon("plus", size=16), tr("ui.bom_add"), menu)
+        a.triggered.connect(self.add_line)
+        menu.addAction(a)
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
 
     def _update_totals(self, result: SiteResult) -> None:
         clear_layout(self.totals_lay)
@@ -579,7 +832,7 @@ class BomView(QWidget):
         if result is None:
             return
         t = current()
-        tsv = bom_tsv(result, t, self._with_prices)
+        tsv = bom_tsv(result, t, any(line.unit_price is not None for line in result.bom))
         rows = [r.split("\t") for r in tsv.strip("\n").split("\n")]
         head = "".join(
             f"<th style='background:#1F4E78;color:#fff;padding:4px 8px;text-align:left'>{html.escape(c)}</th>"

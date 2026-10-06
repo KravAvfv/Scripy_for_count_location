@@ -130,6 +130,8 @@ class Device(_Strict):
     code: str = ""
     """Internal (1C) article number, column A of the Excel template."""
     unit: str = "шт."
+    spec_name: str = ""
+    """Item name as written in the Excel template (used in the exported specification)."""
     section: Section = ""
     """Excel template section; empty = derived from the kind (see :func:`section_of`)."""
     datasheet: str = ""

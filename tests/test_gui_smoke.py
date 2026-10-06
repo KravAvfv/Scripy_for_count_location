@@ -196,16 +196,150 @@ def test_palette_and_tour(app: QApplication, window) -> None:
 
 
 def test_catalog_edit_applies(app: QApplication, window) -> None:
+    from sitesizer.gui.views.bom import COL_TOTAL, LINE_ROLE
+    from sitesizer.gui.views.catalog_view import MODEL_COLUMNS
+
+    def column(key: str) -> int:
+        return next(i for i, c in enumerate(MODEL_COLUMNS) if c[0] == key)
+
     cv = window.catalog
     keys = cv.models.keys
     row = keys.index("FS-148F")
-    col = 3  # price
-    idx = cv.models.index(row, col)
-    assert cv.models.setData(idx, "12345")
+    assert cv.models.setData(cv.models.index(row, column("cat.col.price")), "12345")
+    assert cv.models.setData(cv.models.index(row, column("cat.col.code")), "000084545")
     assert window.state.catalog.device("FS-148F").price == 12345.0
     window.state.set_field("sockets", 48, merge=False)
     pump(app)
-    assert window.bom.tree.isColumnHidden(2) is False  # price columns appear
-    bad = cv.models.setData(cv.models.index(keys.index("FS-148F-FPOE"), 10), "-5")
+    line = window.state.result.lines("access_switch")[0]
+    assert line.unit_price == 12345.0 and line.code == "000084545"
+    group = window.bom.proxy.index(0, 0)
+    assert window.bom.proxy.index(0, COL_TOTAL, group).data(LINE_ROLE) is not None
+    bad = cv.models.setData(cv.models.index(keys.index("FS-148F-FPOE"), column("cat.col.ports")), "-5")
     assert not bad and not cv.error.isHidden()
     window.state.reset_catalog()
+
+
+def _mouse(widget, kind, pos) -> None:
+    from PySide6.QtCore import QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+
+    types = {
+        "press": QEvent.Type.MouseButtonPress,
+        "move": QEvent.Type.MouseMove,
+        "release": QEvent.Type.MouseButtonRelease,
+    }
+    buttons = Qt.MouseButton.NoButton if kind == "release" else Qt.MouseButton.LeftButton
+    p = QPointF(pos)
+    ev = QMouseEvent(
+        types[kind], p, widget.mapToGlobal(p), Qt.MouseButton.LeftButton, buttons, Qt.KeyboardModifier.NoModifier
+    )
+    QApplication.sendEvent(widget, ev)
+
+
+def test_rack_editor_drag_and_drop(app: QApplication, window) -> None:
+    st = window.state
+    st.edit("t", lambda d: d.update(sockets=96, aggregation="yes", mode="extended"))
+    st.recompute()
+    window.navigate("racks")
+    pump(app)
+    editor = window.racks.editor
+    plan = st.result.rack.plans[0]
+    dac = {line.model: line.qty for line in st.result.bom if line.model.startswith("FN-CABLE")}
+    assert dac == {"FN-CABLE-SFP+1": 3}
+    rect = editor.item_rect_in_widget("access_switch:2")
+    target = editor.unit_point(plan.key, 3)
+    assert rect is not None and target is not None
+    _mouse(editor, "press", rect.center())
+    _mouse(editor, "move", rect.center() + (target - rect.center()) / 2)
+    _mouse(editor, "move", target)
+    _mouse(editor, "release", target)
+    pump(app)
+    pos = st.site.layout.positions["access_switch:2"]
+    assert (pos.rack, pos.u) == (plan.key, 3)
+    dac = {line.model: line.qty for line in st.result.bom if line.model.startswith("FN-CABLE")}
+    assert dac == {"FN-CABLE-SFP+1": 2, "FN-CABLE-SFP+3": 1}
+    # keyboard nudge, extra organizer, new cabinet
+    editor.setFocus()
+    QTest.keyClick(editor, Qt.Key.Key_Up)
+    pump(app)
+    assert st.site.layout.positions["access_switch:2"].u == 4
+    window.racks.add_extra("manager")
+    window.racks.add_rack(24)
+    pump(app)
+    assert len(st.site.layout.extras) == 1 and st.site.layout.added == ["user-1"]
+    assert [p.size_u for p in st.result.rack.plans][-1] == 24
+    st.undo.undo()
+    st.undo.undo()
+    pump(app)
+    assert st.site.layout.added == [] and not st.site.layout.extras
+
+
+def test_bom_inline_edit_and_custom_line(app: QApplication, window) -> None:
+    from PySide6.QtWidgets import QSpinBox
+
+    from sitesizer.gui.views.bom import COL_QTY, LINE_ROLE
+
+    st = window.state
+    st.edit("t", lambda d: d.update(sockets=96))
+    st.recompute()
+    window.navigate("bom")
+    pump(app)
+    bom = window.bom
+    idx = None
+    for r in range(bom.proxy.rowCount()):
+        g = bom.proxy.index(r, 0)
+        for c in range(bom.proxy.rowCount(g)):
+            child = bom.proxy.index(c, 0, g)
+            if child.data(LINE_ROLE).group == "access_switch":
+                idx = child.siblingAtColumn(COL_QTY)
+    assert idx is not None
+    bom.tree.setCurrentIndex(idx)
+    bom.tree.edit(idx)
+    pump(app)
+    editor = bom.tree.findChild(QSpinBox)
+    assert editor is not None
+    editor.setValue(4)
+    QTest.keyClick(editor, Qt.Key.Key_Return)
+    pump(app)
+    assert st.site.bom.overrides["access_switch:FS-148F"].qty == 4
+    assert st.result.categories["access_switch"].count == 4
+    line = st.result.lines("access_switch")[0]
+    assert line.manual and line.calc_qty == 2
+    bom.commit(line, COL_QTY, 2)  # back to the calculated value → override dropped
+    pump(app)
+    assert "access_switch:FS-148F" not in st.site.bom.overrides
+    st.edit(
+        "t",
+        lambda d: d["bom"]["custom"].append({"id": "w1", "name": "Монтаж", "qty": 3, "price": 100, "section": "works"}),
+    )
+    st.recompute()
+    pump(app)
+    assert st.result.lines("custom")[0].total_price == 300
+
+
+def test_export_dialog_choices(app: QApplication, window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from openpyxl import load_workbook
+
+    from sitesizer.gui.widgets import export_dialog
+
+    st = window.state
+    st.edit("t", lambda d: d.update(sockets=60, location_code="BO7", location_id=7))
+    st.recompute()
+
+    def fake_exec(self) -> int:
+        self.sheets["prices"].setChecked(False)
+        self.sheets["inputs"].setChecked(False)
+        self.only_used.setChecked(True)
+        self.pdf.setChecked(True)
+        self.folder.setText(str(tmp_path))
+        self.name.setText("out")
+        return 1
+
+    monkeypatch.setattr(export_dialog.ExportDialog, "exec", fake_exec)
+    window.export_all()
+    QThreadPool.globalInstance().waitForDone(20_000)
+    pump(app, 10)
+    wb = load_workbook(tmp_path / "out.xlsx")
+    assert wb.sheetnames == ["Слаботрумка", "BO7 - Схема+шафи", "BO7 - IP"]
+    assert (tmp_path / "out.pdf").read_bytes().startswith(b"%PDF")
+    assert st.settings.export_choices["only_used"] is True

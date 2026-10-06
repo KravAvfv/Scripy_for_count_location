@@ -99,7 +99,7 @@ def spec_sections(
             continue
         pmin, pmain = price.get(model, (dev.price_min, dev.price))
         sections[section_of(model, dev)].append(
-            SpecRow(dev.code, display_name(model, t.pick(dev.name)), dev.unit, n, pmin, pmain, model)
+            SpecRow(dev.code, dev.spec_name or display_name(model, t.pick(dev.name)), dev.unit, n, pmin, pmain, model)
         )
         listed.add(model)
     for model, n in qty.items():
@@ -108,7 +108,7 @@ def spec_sections(
         dev = catalog.models[model]
         pmin, pmain = price.get(model, (dev.price_min, dev.price))
         sections[section_of(model, dev)].append(
-            SpecRow(dev.code, display_name(model, t.pick(dev.name)), dev.unit, n, pmin, pmain, model)
+            SpecRow(dev.code, dev.spec_name or display_name(model, t.pick(dev.name)), dev.unit, n, pmin, pmain, model)
         )
     for key in SECTION_ORDER:
         sections[key].extend(extras[key])

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from datetime import date
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QSize, Qt, QTimer, QUrl
@@ -20,7 +21,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core.models import SiteResult
 from ..core.presets import load_presets
+from ..core.pricing import summarize_prices
 from ..core.project import PROJECT_SUFFIX, ProjectError
 from ..core.report import bom_csv, default_export_name, result_to_dict, safe_filename
 from ..i18n import current, tr
@@ -35,6 +38,7 @@ from .views.ipplan import IpPlanView
 from .views.location import LocationView
 from .views.power import PowerView
 from .views.projects import ProjectsView
+from .views.racks import RacksView
 from .views.settings_view import SettingsView
 from .views.topology import TopologyView
 from .widgets.controls import button, icon_button, px, refresh_icons
@@ -67,6 +71,7 @@ class MainWindow(QMainWindow):
         state.undo.canRedoChanged.connect(self._on_can_redo)
         theme_manager.changed.connect(self._on_theme)
         state.settingsChanged.connect(self._on_settings)
+        state.resultChanged.connect(self._on_progress)
         self._lang = state.settings.language
         state.recompute()
         self.navigate(self.state.qsettings.value("window/page", "location", type=str) or "location")
@@ -79,6 +84,21 @@ class MainWindow(QMainWindow):
 
     def _on_dirty(self, _dirty: bool) -> None:
         self._update_titles()
+
+    def _on_progress(self, r: SiteResult) -> None:
+        s = r.input
+        done: set[str] = set()
+        codes = {c.code for c in r.checks}
+        if r.has_equipment and s.location_code and s.location_id is not None:
+            done.add("location")
+        if r.rack.plans and not codes & {"RACK_LAYOUT", "RACK_FULL"}:
+            done.add("racks")
+        if r.ip_plan is not None and r.ip_plan.has_addresses and not codes & {"IP_PLAN", "VLAN_DUP"}:
+            done.add("ipplan")
+        summary = summarize_prices(r.bom, self.state.catalog.meta.currency)
+        if summary is not None and summary.complete:
+            done.add("bom")
+        self.sidebar.set_progress(done)
 
     def _on_can_undo(self, value: bool) -> None:
         self.undo_btn.setEnabled(value)
@@ -130,6 +150,7 @@ class MainWindow(QMainWindow):
         self.topology.export_requested.connect(self.export_diagram)
         self.ipplan = IpPlanView(self.state)
         self.power = PowerView(self.state)
+        self.racks = RacksView(self.state)
         self.compare = CompareView(self.state)
         self.projects = ProjectsView(self.state)
         self.projects.request.connect(self.project_request)
@@ -140,6 +161,7 @@ class MainWindow(QMainWindow):
         self.settings_view.start_tour.connect(self.start_tour)
         page_widgets: tuple[tuple[str, QWidget], ...] = (
             ("location", self.location),
+            ("racks", self.racks),
             ("bom", self.bom),
             ("topology", self.topology),
             ("ipplan", self.ipplan),
@@ -169,7 +191,9 @@ class MainWindow(QMainWindow):
     def _export_menu(self) -> QMenu:
         m = QMenu(self)
         items = [
-            ("file-spreadsheet", tr("ui.export_xlsx"), "Ctrl+E", self.export_xlsx),
+            ("download", tr("ex.menu"), "Ctrl+E", self.export_all),
+            (None, None, None, None),
+            ("file-spreadsheet", tr("ui.export_xlsx"), "", self.export_xlsx),
             ("file-text", tr("ui.export_pdf"), "Ctrl+P", self.export_pdf),
             (None, None, None, None),
             ("image", tr("ui.export_png"), "", lambda: self.export_diagram("png")),
@@ -198,7 +222,7 @@ class MainWindow(QMainWindow):
             ("Ctrl+N", lambda: self.site_action("add", "")),
             ("Ctrl+Shift+N", self.new_project),
             ("Ctrl+D", lambda: self.site_action("duplicate", self.state.current_id)),
-            ("Ctrl+E", self.export_xlsx),
+            ("Ctrl+E", self.export_all),
             ("Ctrl+P", self.export_pdf),
             ("Ctrl+Z", self.state.undo.undo),
             ("Ctrl+Y", self.state.undo.redo),
@@ -405,6 +429,54 @@ class MainWindow(QMainWindow):
 
         self._jobs.append(run_in_background(fn, done, failed))
 
+    def export_all(self) -> None:
+        """The export dialog: the user picks Excel sheets, PDF sections and pictures."""
+        from ..exporters.diagram import export_png
+        from ..exporters.pdf import export_pdf
+        from ..exporters.rack import RackDiagram
+        from ..exporters.xlsx import export_xlsx
+        from .widgets.export_dialog import ExportDialog
+
+        result = self.state.result
+        if result is None or not result.has_equipment:
+            self.toasts.show("warning", tr("ui.nothing_to_export"))
+            return
+        site = result.input
+        name = safe_filename(f"{site.location_code} {site.name}".strip() if site.location_code else site.name)
+        name = f"{name}_{date.today().isoformat()}"
+        folder = self.state.settings.export_dir or str(Path.home())
+        dlg = ExportDialog(self, self.state.settings.export_choices, folder, name)
+        if not dlg.exec():
+            return
+        choices = dlg.choices()
+        out_dir, base = dlg.target()
+        self.state.update_settings(export_choices=choices, export_dir=str(out_dir))
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as err:
+            self.toasts.show("error", tr("ui.export_failed", err=err), 9000)
+            return
+        catalog, lang, opts = self.state.catalog, self.state.settings.language, self._report_options()
+        if choices["xlsx"]:
+            xopts = {**opts, "sheets": choices["sheets"], "only_used": choices["only_used"]}
+            xpath = out_dir / f"{base}.xlsx"
+            self._run_export(lambda: export_xlsx(result, xpath, catalog=catalog, lang=lang, options=xopts), xpath)
+        if choices["pdf"]:
+            popts = {**opts, "sections": choices["pdf_sections"]}
+            ppath = out_dir / f"{base}.pdf"
+            self._run_export(lambda: export_pdf(result, ppath, catalog=catalog, lang=lang, options=popts), ppath)
+        try:
+            if choices["png_topology"]:
+                diagram = self.topology.build_diagram(export=True)
+                if diagram is not None:
+                    self._after_export(export_png(diagram, out_dir / f"{base}_topology.png"))
+            if choices["png_racks"] and result.rack.plans:
+                path = out_dir / f"{base}_racks.png"
+                export_png(RackDiagram(result, catalog, lang), path)  # type: ignore[arg-type]
+                self._after_export(path)
+        except OSError as err:
+            self.toasts.show("error", tr("ui.export_failed", err=err), 9000)
+
     def export_xlsx(self) -> None:
         result = self.state.result
         if result is None or not result.has_equipment:
@@ -515,7 +587,8 @@ class MainWindow(QMainWindow):
             for i, (key, icon_name, text_key) in enumerate(NAV_MAIN + NAV_BOTTOM)
         ]
         cmds += [
-            Command(tr("ui.export_xlsx"), self.export_xlsx, "file-spreadsheet", "Ctrl+E", tr("ui.export")),
+            Command(tr("ex.menu"), self.export_all, "download", "Ctrl+E", tr("ui.export")),
+            Command(tr("ui.export_xlsx"), self.export_xlsx, "file-spreadsheet", "", tr("ui.export")),
             Command(tr("ui.export_pdf"), self.export_pdf, "file-text", "Ctrl+P", tr("ui.export")),
             Command(tr("ui.export_png"), lambda: self.export_diagram("png"), "image", "", tr("ui.export")),
             Command(tr("ui.export_svg"), lambda: self.export_diagram("svg"), "download", "", tr("ui.export")),

@@ -1,17 +1,18 @@
-"""IP plan view: base network, segment toggles and the carved VLAN table (editable VLAN IDs)."""
+"""IP plan view: location ID (second octet) → VLAN table with editable IDs, names and masks."""
 
 from __future__ import annotations
 
 import ipaddress
+import uuid
 from typing import Any
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, Qt
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, QPoint, Qt
+from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QHBoxLayout,
     QHeaderView,
     QLineEdit,
-    QStackedWidget,
+    QMenu,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -19,34 +20,30 @@ from PySide6.QtWidgets import (
 
 from ...core.models import IpSegmentResult, SiteResult
 from ...i18n import current, tr
+from .. import icons
 from ..state import AppState
-from ..widgets.controls import Callout, Card, Chip, FieldRow, FlowLayout, button, label, px
+from ..theme import tokens
+from ..widgets.controls import Callout, Card, Chip, FieldRow, FlowLayout, SpinBox, button, label, px
 
-HOST_SOURCE_KEYS = {
-    "sockets": "ui.sockets",
-    "wifi": "ui.clients",
-    "guest": "ui.guest",
-    "cameras": "ui.cameras",
-    "iot": "ui.iot",
-    "mgmt": "ui.mgmt_devices",
-}
+COL_VLAN, COL_NAME, COL_HOSTS, COL_PREFIX, COL_NET, COL_MASK, COL_GW, COL_DHCP, COL_NOTE = range(9)
 
 
 class IpModel(QAbstractTableModel):
     COLS = (
-        "col.segment",
         "col.vlan",
+        "col.segment",
         "col.hosts",
         "col.prefix",
-        "col.capacity",
         "col.network",
+        "col.mask",
         "col.gateway",
         "col.dhcp",
+        "col.note",
     )
 
-    def __init__(self, state: AppState) -> None:
+    def __init__(self, view: IpPlanView) -> None:
         super().__init__()
-        self.state = state
+        self.view = view
         self.rows: list[IpSegmentResult] = []
 
     def set_rows(self, rows: list[IpSegmentResult]) -> None:
@@ -70,46 +67,60 @@ class IpModel(QAbstractTableModel):
             return None
         s = self.rows[index.row()]
         col = index.column()
-        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
+        if role == Qt.ItemDataRole.EditRole:
+            return {COL_VLAN: s.vlan, COL_NAME: s.name, COL_HOSTS: s.hosts, COL_PREFIX: s.prefix}.get(col)
+        if role == Qt.ItemDataRole.DisplayRole:
             return [
-                s.name,
                 s.vlan,
+                s.name,
                 s.hosts,
-                f"/{s.prefix}",
-                s.capacity,
+                f"/{s.prefix}  ({s.capacity})",
                 s.network or "—",
+                s.mask or "—",
                 s.gateway or "—",
                 s.dhcp_range or "—",
+                s.note,
             ][col]
-        if role == Qt.ItemDataRole.ToolTipRole and col == 1:
-            return tr("ui.vlan_edit_tip")
-        if role == Qt.ItemDataRole.TextAlignmentRole and col in (1, 2, 3, 4):
+        if role == Qt.ItemDataRole.ToolTipRole:
+            if col in (COL_VLAN, COL_NAME, COL_PREFIX) or (col == COL_HOSTS and s.custom):
+                return tr("ui.ip_edit_tip")
+            if col == COL_NOTE:
+                return s.note
+        if role == Qt.ItemDataRole.ForegroundRole and col == COL_NOTE and s.too_small:
+            return QColor(tokens().warning)
+        if role == Qt.ItemDataRole.TextAlignmentRole and col in (COL_VLAN, COL_HOSTS, COL_PREFIX):
             return int(Qt.AlignmentFlag.AlignCenter)
         return None
 
     def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
         f = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-        if index.column() == 1:
+        s = self.rows[index.row()]
+        if index.column() in (COL_VLAN, COL_NAME, COL_PREFIX) or (index.column() == COL_HOSTS and s.custom):
             f |= Qt.ItemFlag.ItemIsEditable
         return f
 
     def setData(
         self, index: QModelIndex | QPersistentModelIndex, value: Any, role: int = Qt.ItemDataRole.EditRole
     ) -> bool:
-        if index.column() != 1:
-            return False
+        seg = self.rows[index.row()]
+        col = index.column()
+        text = str(value).strip()
         try:
-            vlan = int(value)
-        except (TypeError, ValueError):
+            if col == COL_VLAN:
+                new: Any = int(text)
+                if not 1 <= new <= 4094:
+                    return False
+            elif col == COL_HOSTS:
+                new = max(0, int(text))
+            elif col == COL_PREFIX:
+                new = int(text.lstrip("/"))
+                if not 8 <= new <= 30:
+                    return False
+            else:
+                new = text
+        except ValueError:
             return False
-        if not 1 <= vlan <= 4094:
-            return False
-        seg_id = self.rows[index.row()].id
-
-        def mutate(d: dict[str, Any]) -> None:
-            d.setdefault("ip", {}).setdefault("vlan_overrides", {})[seg_id] = vlan
-
-        self.state.edit(tr("col.vlan"), mutate)
+        self.view.edit_segment(seg, col, new)
         return True
 
 
@@ -117,56 +128,53 @@ class IpPlanView(QWidget):
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.state = state
+        self._loading = False
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        self.stack = QStackedWidget()
-        root.addWidget(self.stack)
+        root.setSpacing(px(12))
 
-        # empty state (quick mode)
-        empty = QWidget()
-        el = QVBoxLayout(empty)
-        el.addStretch(1)
-        card = Card(tr("ui.ip_empty_title"), tr("ui.ip_empty_text"), margins=24)
-        card.setMaximumWidth(px(520))
-        go = button(tr("ui.switch_extended"), "primary", "sliders-horizontal")
-        go.clicked.connect(lambda: state.set_field("mode", "extended", tr("ui.mode"), merge=False))
-        card.add(go)
-        row = QHBoxLayout()
-        row.addStretch(1)
-        row.addWidget(card)
-        row.addStretch(1)
-        el.addLayout(row)
-        el.addStretch(2)
-        self.stack.addWidget(empty)
-
-        # plan
-        page = QWidget()
-        pl = QVBoxLayout(page)
-        pl.setContentsMargins(0, 0, 0, 0)
-        pl.setSpacing(px(12))
         top = Card(tr("ui.ip_settings"), tr("ui.ip_settings_sub"))
+        self.loc_id = SpinBox()
+        self.loc_id.setRange(-1, 255)
+        self.loc_id.setSpecialValueText(tr("ui.ip_id_none"))
+        self.loc_id.setFixedWidth(px(130))
+        self.loc_id.valueChanged.connect(self._on_id)
+        self.template_caption = label("", "caption", wrap=True)
+        top.add(FieldRow(tr("ui.location_id"), self.loc_id, tr("ui.ip_id_caption"), tr("help.location_id")))
+        top.add(self.template_caption)
         self.base = QLineEdit()
         self.base.setPlaceholderText("10.50.0.0/16")
         self.base.setFixedWidth(px(200))
         self.base.textEdited.connect(self._on_base)
-        top.add(FieldRow(tr("ui.base_net"), self.base, tr("ui.base_net_caption"), tr("help.base_net")))
-        top.add(label(tr("ui.ip_segments").upper(), "section"))
+        self.base_row = FieldRow(tr("ui.base_net"), self.base, tr("ui.ip_base_caption"), tr("help.base_net"))
+        top.add(self.base_row)
+        root.addWidget(top)
+
+        seg_card = Card(tr("ui.ip_segments"), tr("ui.ip_segments_caption"))
+        assert seg_card.header is not None
+        add = button(tr("ui.ip_add"), None, "plus")
+        add.clicked.connect(self.add_vlan)
+        seg_card.header.addWidget(add, 0, Qt.AlignmentFlag.AlignTop)
+        self.reset_btn = button(tr("ui.ip_reset"), "ghost", "refresh-ccw", tr("ui.ip_reset_tip"))
+        self.reset_btn.clicked.connect(self.reset_edits)
+        seg_card.header.addWidget(self.reset_btn, 0, Qt.AlignmentFlag.AlignTop)
         chips_box = QWidget()
         self.chips_flow = FlowLayout(chips_box, spacing=6)
         self.chips: dict[str, Chip] = {}
         t = current()
         for seg in state.catalog.rules.ip.segments:
-            chip = Chip(f"VLAN {seg.vlan} · {t.pick(seg.label)}", checkable=True)
+            if seg.source == "voice":
+                continue
+            chip = Chip(t.pick(seg.label), checkable=True)
             chip.toggled.connect(lambda on, sid=seg.id: self._toggle_segment(sid, on))
             self.chips_flow.addWidget(chip)
             self.chips[seg.id] = chip
-        top.add(chips_box)
-        self.chips_caption = label(tr("ui.ip_segments_caption"), "caption", wrap=True)
-        top.add(self.chips_caption)
-        pl.addWidget(top)
+        seg_card.add(chips_box)
+        root.addWidget(seg_card)
+
         self.error = Callout("error")
-        pl.addWidget(self.error)
-        self.model = IpModel(state)
+        root.addWidget(self.error)
+        self.model = IpModel(self)
         self.table = QTableView()
         self.table.setModel(self.model)
         self.table.verticalHeader().hide()
@@ -178,25 +186,45 @@ class IpPlanView(QWidget):
             | QAbstractItemView.EditTrigger.EditKeyPressed
             | QAbstractItemView.EditTrigger.AnyKeyPressed
         )
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._context)
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Interactive)
+        hh.resizeSection(COL_NAME, px(260))
+        hh.setSectionResizeMode(COL_NOTE, QHeaderView.ResizeMode.Stretch)
+        self.table.setWordWrap(False)
         self.table.verticalHeader().setDefaultSectionSize(px(36))
-        pl.addWidget(self.table, 1)
+        root.addWidget(self.table, 1)
         self.footer = label("", "caption", wrap=True)
-        pl.addWidget(self.footer)
-        self.stack.addWidget(page)
+        root.addWidget(self.footer)
 
         state.resultChanged.connect(self.on_result)
         state.siteChanged.connect(self._load_inputs)
+        state.catalogChanged.connect(self._load_inputs)
         self._load_inputs()
         if state.result:
             self.on_result(state.result)
 
+    # ---- inputs --------------------------------------------------------------------------
     def _load_inputs(self) -> None:
         s = self.state.site
-        if not self.base.hasFocus():
-            self.base.setText(s.ip.base_network)
+        self._loading = True
+        try:
+            self.loc_id.setValue(-1 if s.location_id is None else s.location_id)
+            if not self.base.hasFocus():
+                self.base.setText(s.ip.base_network)
+            self.base_row.setVisible(s.location_id is None)
+            template = self.state.catalog.rules.ip.id_template
+            example = template.format(id=s.location_id if s.location_id is not None else "ID", vlan="VLAN")
+            self.template_caption.setText(tr("ui.ip_template", template=template, example=example))
+        finally:
+            self._loading = False
+
+    def _on_id(self, value: int) -> None:
+        if self._loading:
+            return
+        self.state.set_field("location_id", None if value < 0 else value, tr("ui.location_id"))
 
     def _on_base(self, text: str) -> None:
         ok = True
@@ -221,12 +249,86 @@ class IpPlanView(QWidget):
 
         self.state.edit(tr("ui.ip_segments"), mutate)
 
-    def on_result(self, result: SiteResult) -> None:
-        if result.ip_plan is None:
-            self.stack.setCurrentIndex(0)
+    # ---- table edits ---------------------------------------------------------------------
+    def edit_segment(self, seg: IpSegmentResult, col: int, value: Any) -> None:
+        def mutate(d: dict[str, Any]) -> None:
+            ip = d.setdefault("ip", {})
+            if col == COL_PREFIX:
+                ip.setdefault("prefix_overrides", {})[seg.id] = value
+                return
+            if seg.custom:
+                field = {COL_VLAN: "vlan", COL_NAME: "name", COL_HOSTS: "hosts"}[col]
+                for c in ip.setdefault("custom", []):
+                    if c["id"] == seg.id:
+                        c[field] = value
+                return
+            if col == COL_VLAN:
+                ip.setdefault("vlan_overrides", {})[seg.id] = value
+            elif col == COL_NAME:
+                names = ip.setdefault("name_overrides", {})
+                if value:
+                    names[seg.id] = value
+                else:
+                    names.pop(seg.id, None)
+
+        self.state.edit(tr(IpModel.COLS[col]), mutate)
+
+    def add_vlan(self) -> None:
+        used = {
+            s.vlan
+            for s in (self.state.result.ip_plan.segments if self.state.result and self.state.result.ip_plan else [])
+        }
+        vlan = next(v for v in range(100, 4095) if v not in used)
+        new = {
+            "id": f"vlan-{uuid.uuid4().hex[:6]}",
+            "name": tr("ui.ip_new_vlan"),
+            "vlan": vlan,
+            "hosts": 20,
+            "dhcp": True,
+        }
+        self.state.edit(tr("ui.ip_add"), lambda d: d.setdefault("ip", {}).setdefault("custom", []).append(new))
+
+    def remove_vlan(self, seg: IpSegmentResult) -> None:
+        def mutate(d: dict[str, Any]) -> None:
+            ip = d.setdefault("ip", {})
+            if seg.custom:
+                ip["custom"] = [c for c in ip.get("custom", []) if c["id"] != seg.id]
+            else:
+                ip.setdefault("segments", {})[seg.id] = False
+            ip.get("prefix_overrides", {}).pop(seg.id, None)
+
+        self.state.edit(tr("ui.ip_remove"), mutate)
+
+    def reset_edits(self) -> None:
+        def mutate(d: dict[str, Any]) -> None:
+            ip = d.setdefault("ip", {})
+            for key in ("vlan_overrides", "name_overrides", "prefix_overrides"):
+                ip[key] = {}
+
+        self.state.edit(tr("ui.ip_reset"), mutate)
+
+    def _context(self, pos: QPoint) -> None:
+        idx = self.table.indexAt(pos)
+        if not idx.isValid():
             return
-        self.stack.setCurrentIndex(1)
+        seg = self.model.rows[idx.row()]
+        menu = QMenu(self)
+        for col, key in ((COL_VLAN, "ui.ip_edit_vlan"), (COL_NAME, "ui.ip_edit_name"), (COL_PREFIX, "ui.ip_edit_mask")):
+            a = QAction(icons.icon("pencil", size=16), tr(key), menu)
+            a.triggered.connect(lambda _=False, c=col: self.table.edit(idx.siblingAtColumn(c)))
+            menu.addAction(a)
+        menu.addSeparator()
+        a = QAction(icons.icon("trash-2", "error", 16), tr("ui.ip_remove"), menu)
+        a.triggered.connect(lambda: self.remove_vlan(seg))
+        menu.addAction(a)
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    # ---- result --------------------------------------------------------------------------
+    def on_result(self, result: SiteResult) -> None:
         plan = result.ip_plan
+        if plan is None:
+            self.model.set_rows([])
+            return
         active = {s.id for s in plan.segments}
         explicit = result.input.ip.segments
         for sid, chip in self.chips.items():
@@ -237,9 +339,11 @@ class IpPlanView(QWidget):
         self.model.set_rows(plan.segments)
         self.error.setVisible(bool(plan.error))
         self.error.text.setText(plan.error)
-        has_addr = bool(plan.base_network) and not plan.error
-        for c in (5, 6, 7):
+        has_addr = plan.has_addresses
+        for c in (COL_NET, COL_MASK, COL_GW, COL_DHCP):
             self.table.setColumnHidden(c, not has_addr)
+        ip = result.input.ip
+        self.reset_btn.setEnabled(bool(ip.vlan_overrides or ip.name_overrides or ip.prefix_overrides))
         if has_addr:
             self.footer.setText(
                 tr(

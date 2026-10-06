@@ -23,8 +23,24 @@ EQUIPMENT_COLORS = {
     "firewall": "#94505B",
     "power": "#857637",
 }
-PASSIVE_LIGHT = {"panel": "#D9E0E8", "manager": "#EEF1F4", "fiber": "#CFE6E3", "pdu": "#E6E1CF"}
-PASSIVE_DARK = {"panel": "#35404C", "manager": "#29313A", "fiber": "#2D4A48", "pdu": "#45402F"}
+PASSIVE_LIGHT = {
+    "panel": "#D9E0E8",
+    "manager": "#B9C1C9",
+    "fiber": "#CFE6E3",
+    "pdu": "#E6E1CF",
+    "shelf": "#E2E2E2",
+    "blank": "#F1F1F1",
+    "custom": "#E9DFF0",
+}
+PASSIVE_DARK = {
+    "panel": "#35404C",
+    "manager": "#4A535C",
+    "fiber": "#2D4A48",
+    "pdu": "#45402F",
+    "shelf": "#3A3A3A",
+    "blank": "#2C2C2C",
+    "custom": "#3E3546",
+}
 
 
 def _text_on(fill: QColor) -> QColor:
@@ -59,6 +75,8 @@ class RackDiagram:
         self.s = style
         self.colors = {**EQUIPMENT_COLORS, **(colors or {}), **(PASSIVE_DARK if dark else PASSIVE_LIGHT)}
         self.plans: list[RackPlan] = list(result.rack.plans)
+        self.mark_manual = False
+        """Draw a small marker on items placed by hand (editor only)."""
         self.f_title = _font(14, QFont.Weight.DemiBold)
         self.f_sub = _font(11)
         self.f_item = _font(11, QFont.Weight.Medium)
@@ -80,6 +98,42 @@ class RackDiagram:
         h = 2 * self.PAD + sum(self._row_h(r) for r in rows) + (len(rows) - 1) * self.GAP
         return QSizeF(w, h)
 
+    def origins(self) -> list[tuple[RackPlan, float, float]]:
+        """Top-left corner of every cabinet (including its unit-number rail)."""
+        out = []
+        y = self.PAD
+        for row in self._rows():
+            x = self.PAD
+            for plan in row:
+                out.append((plan, x, y))
+                x += self.RAIL_W + self.COL_W + self.GAP
+            y += self._row_h(row) + self.GAP
+        return out
+
+    def header_rect(self, x: float, y: float) -> QRectF:
+        return QRectF(x + self.RAIL_W, y, self.COL_W, self.HEAD_H)
+
+    def inner_rect(self, plan: RackPlan, x: float, y: float) -> QRectF:
+        top = y + self.HEAD_H
+        return QRectF(x + self.RAIL_W + 12, top + 12, self.COL_W - 24, plan.size_u * self.U_H)
+
+    def unit_rect(self, plan: RackPlan, x: float, y: float, u: int, height: int) -> QRectF:
+        return self._unit_rect(plan, self.inner_rect(plan, x, y), u, height)
+
+    def hit(self, pos: QPointF) -> tuple[RackPlan | None, RackItem | None, int, bool]:
+        """(cabinet, item, unit under the point, point is on the cabinet header)."""
+        for plan, x, y in self.origins():
+            if self.header_rect(x, y).contains(pos):
+                return plan, None, 0, True
+            inner = self.inner_rect(plan, x, y)
+            body = inner.adjusted(-12 - self.RAIL_W, 0, 12, 0)
+            if body.contains(pos):
+                u = plan.size_u - int((pos.y() - inner.top()) // self.U_H)
+                u = max(1, min(plan.size_u, u))
+                item = next((it for it in plan.items if it.u <= u <= it.top), None)
+                return plan, item, u, False
+        return None, None, 0, False
+
     # ---- painting ------------------------------------------------------------------------
     def paint(self, p: QPainter, background: bool = True) -> None:
         p.save()
@@ -88,13 +142,8 @@ class RackDiagram:
         if background:
             size = self.size()
             p.fillRect(QRectF(0, 0, size.width(), size.height()), QColor(self.s.bg))
-        y = self.PAD
-        for row in self._rows():
-            x = self.PAD
-            for plan in row:
-                self._paint_rack(p, plan, x, y)
-                x += self.RAIL_W + self.COL_W + self.GAP
-            y += self._row_h(row) + self.GAP
+        for plan, x, y in self.origins():
+            self._paint_rack(p, plan, x, y)
         p.restore()
 
     def _paint_rack(self, p: QPainter, plan: RackPlan, x: float, y: float) -> None:
@@ -195,6 +244,11 @@ class RackDiagram:
             it.label, Qt.TextElideMode.ElideRight, text_rect.width() - right_w - 4
         )
         p.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+        if it.manual and self.mark_manual:
+            pin = QRectF(rect.right() - 7, rect.top() + 3, 4, 4)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#E0A030"))
+            p.drawEllipse(pin)
         if right and it.group != "panel":
             c = QColor(fg)
             c.setAlphaF(0.75)

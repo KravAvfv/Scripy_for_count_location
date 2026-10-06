@@ -249,18 +249,29 @@ class LocationView(QWidget):
         head.addWidget(self.preset_box)
         f.addLayout(head)
 
-        # --- mode -----------------------------------------------------------------------
-        mode_card = Card(tr("ui.mode"), tr("ui.mode_sub"))
-        self.mode = SegmentedControl(
-            [("quick", tr("ui.mode_quick")), ("extended", tr("ui.mode_extended"))],
-            [tr("ui.mode_quick_tip"), tr("ui.mode_extended_tip")],
+        # --- site identity ----------------------------------------------------------------
+        ident = Card(tr("ui.identity"), tr("ui.identity_sub"))
+        self.code_edit = QLineEdit()
+        self.code_edit.setPlaceholderText("BO123")
+        self.code_edit.setMaxLength(32)
+        self.code_edit.setFixedWidth(px(140))
+        self.code_edit.textEdited.connect(
+            lambda v: self.state.set_field("location_code", v.strip(), tr("ui.location_code"))
         )
-        self.mode.setAccessibleName(tr("ui.mode"))
-        self.mode.valueChanged.connect(lambda v: self.state.set_field("mode", v, tr("ui.mode"), merge=False))
-        self.mode_caption = label("", "caption", wrap=True)
-        mode_card.add(self.mode)
-        mode_card.add(self.mode_caption)
-        f.addWidget(mode_card)
+        ident.add(
+            FieldRow(tr("ui.location_code"), self.code_edit, tr("ui.location_code_caption"), tr("help.location_code"))
+        )
+        self.loc_id = SpinBox()
+        self.loc_id.setRange(-1, 255)
+        self.loc_id.setSpecialValueText(tr("ui.ip_id_none"))
+        self.loc_id.setFixedWidth(px(140))
+        self.loc_id.valueChanged.connect(self._on_loc_id)
+        ident.add(FieldRow(tr("ui.location_id"), self.loc_id, tr("ui.ip_id_caption"), tr("help.location_id")))
+        self.floors = Stepper(1, 300, width=140)
+        self.floors.valueChanged.connect(lambda v: self.state.set_field("floors", v, tr("ui.floors")))
+        ident.add(FieldRow(tr("ui.floors"), self.floors, tr("ui.floors_caption"), tr("help.floors")))
+        f.addWidget(ident)
+        self.ident_card = ident
 
         # --- endpoints ------------------------------------------------------------------
         ep = Card(tr("ui.endpoints"), tr("ui.endpoints_sub"))
@@ -361,6 +372,19 @@ class LocationView(QWidget):
         )
         arch.add(FieldRow(tr("ui.rack_size"), self.rack_size, "", tr("help.rack_size")))
         f.addWidget(arch)
+
+        # --- mode -----------------------------------------------------------------------
+        mode_card = Card(tr("ui.mode"), tr("ui.mode_sub"))
+        self.mode = SegmentedControl(
+            [("quick", tr("ui.mode_quick")), ("extended", tr("ui.mode_extended"))],
+            [tr("ui.mode_quick_tip"), tr("ui.mode_extended_tip")],
+        )
+        self.mode.setAccessibleName(tr("ui.mode"))
+        self.mode.valueChanged.connect(lambda v: self.state.set_field("mode", v, tr("ui.mode"), merge=False))
+        self.mode_caption = label("", "caption", wrap=True)
+        mode_card.add(self.mode)
+        mode_card.add(self.mode_caption)
+        f.addWidget(mode_card)
 
         # --- extended ---------------------------------------------------------------------
         self.ext_card = Card(tr("ui.extended"), tr("ui.extended_sub"))
@@ -513,6 +537,12 @@ class LocationView(QWidget):
         try:
             if not self.name_edit.hasFocus():
                 self.name_edit.setText(s.name)
+            if not self.code_edit.hasFocus():
+                self.code_edit.setText(s.location_code)
+            self.loc_id.blockSignals(True)
+            self.loc_id.setValue(-1 if s.location_id is None else s.location_id)
+            self.loc_id.blockSignals(False)
+            self.floors.setValue(s.floors)
             self.mode.setValue(s.mode, animate=True)
             self.mode_caption.setText(tr("ui.mode_quick_tip") if s.mode == "quick" else tr("ui.mode_extended_tip"))
             self.sockets.setValue(s.sockets)
@@ -692,6 +722,10 @@ class LocationView(QWidget):
                 d.setdefault("ip", {})["base_network"] = text.strip()
 
             self.state.edit(tr("ui.base_net"), mutate, merge_key="base_net")
+
+    def _on_loc_id(self, value: int) -> None:
+        if not self._loading:
+            self.state.set_field("location_id", None if value < 0 else value, tr("ui.location_id"))
 
     def _on_notes(self) -> None:
         if not self._loading:

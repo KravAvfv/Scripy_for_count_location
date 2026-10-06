@@ -7,13 +7,10 @@ from PySide6.QtGui import QColor, QPainter, QPaintEvent
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QScrollArea, QVBoxLayout, QWidget
 
 from ...core.models import SiteResult
-from ...exporters.diagram import style_from_tokens
-from ...exporters.rack import RackDiagram
 from ...i18n import current, tr
 from ..state import AppState
 from ..theme import theme_manager, tokens
 from ..widgets.controls import Card, clear_layout, hline, label, px
-from ..widgets.diagram_view import DiagramPreview
 
 
 class Meter(QWidget):
@@ -102,17 +99,7 @@ class PowerView(QWidget):
         right.addWidget(self.passive_card)
         right.addStretch(1)
 
-        self.rack_card = Card(tr("ui.rack_title"), tr("ui.rack_sub"))
-        self.rack_summary = label("", "muted", wrap=True)
-        self.rack_card.add(self.rack_summary)
-        self.rack = DiagramPreview(max_height=4000)
-        self.rack.setCursor(Qt.CursorShape.ArrowCursor)
-        self.rack_card.add(self.rack)
-        self.rack_legend = label("", "caption", wrap=True)
-        self.rack_card.add(self.rack_legend)
-        page.addWidget(self.rack_card)
         page.addStretch(1)
-        theme_manager.changed.connect(self._redraw_rack)
 
         state.resultChanged.connect(self.on_result)
         if state.result:
@@ -215,15 +202,6 @@ class PowerView(QWidget):
         )
 
         rk = r.rack
-        self.rack_summary.setText(
-            tr(
-                "ui.rack_summary",
-                used=rk.units_total,
-                size=rk.rack_size_u,
-                model=f"{rk.rack_model or '—'} × {rk.rack_count}",
-                idf=rk.idf_count,
-            )
-        )
         ps = rk.passive
         lines = []
         if ps.copper_links:
@@ -250,25 +228,13 @@ class PowerView(QWidget):
                     h=ps.housings_12 + ps.housings_24,
                 )
             )
-        self.passive_text.setText("\n".join(lines))
-        self._redraw_rack()
-        self.rack_legend.setText(tr("ui.rack_legend"))
-
-    def _redraw_rack(self) -> None:
-        r = self.state.result
-        if r is None or not r.rack.plans:
-            self.rack.set_diagram(None)
-            self.rack_card.setVisible(False)
-            return
-        self.rack_card.setVisible(True)
-        tk = tokens()
-        self.rack.set_diagram(
-            RackDiagram(
-                r,
-                self.state.catalog,
-                self.state.settings.language,
-                style=style_from_tokens(tk),
-                colors=dict(tk.categories),
-                dark=tk.dark,
+        lines.append(
+            tr(
+                "ui.rack_summary",
+                used=rk.units_total,
+                size=rk.rack_size_u,
+                model=f"{rk.rack_model or '—'} × {rk.rack_count}",
+                idf=rk.idf_count,
             )
         )
+        self.passive_text.setText("\n".join(lines))

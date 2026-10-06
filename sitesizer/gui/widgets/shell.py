@@ -28,12 +28,15 @@ from .controls import button, icon_button, label, px
 
 NAV_MAIN = [
     ("location", "map-pin", "nav.location"),
+    ("racks", "server", "nav.racks"),
+    ("ipplan", "binary", "nav.ipplan"),
     ("bom", "clipboard-list", "nav.bom"),
     ("topology", "network", "nav.topology"),
-    ("ipplan", "binary", "nav.ipplan"),
     ("power", "zap", "nav.power"),
     ("compare", "git-compare", "nav.compare"),
 ]
+STEPS = ("location", "racks", "ipplan", "bom")
+"""The main workflow, numbered in the sidebar and ticked off when complete."""
 NAV_BOTTOM = [
     ("projects", "folder-open", "nav.projects"),
     ("catalog", "database", "nav.catalog"),
@@ -151,8 +154,15 @@ class Sidebar(QFrame):
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
         self.buttons: dict[str, QPushButton] = {}
+        self.done: set[str] = set()
+        root.addWidget(label(tr("ui.steps").upper(), "section"))
         for key, icon_name, text_key in NAV_MAIN:
-            root.addWidget(self._nav_button(key, icon_name, tr(text_key)))
+            if key == STEPS[-1]:
+                root.addWidget(self._nav_button(key, icon_name, self._nav_text(key, text_key)))
+                root.addSpacing(px(10))
+                root.addWidget(label(tr("ui.views").upper(), "section"))
+                continue
+            root.addWidget(self._nav_button(key, icon_name, self._nav_text(key, text_key)))
 
         root.addSpacing(px(16))
         head = QHBoxLayout()
@@ -200,10 +210,33 @@ class Sidebar(QFrame):
         self.buttons[key] = b
         return b
 
+    @staticmethod
+    def _nav_text(key: str, text_key: str) -> str:
+        return f"{STEPS.index(key) + 1}. {tr(text_key)}" if key in STEPS else tr(text_key)
+
     def _retint(self) -> None:
-        for b in self.buttons.values():
-            b.setIcon(icons.icon(str(b.property("nav_icon")), "text_muted", 17, active_color="primary_soft_text"))
+        for key, b in self.buttons.items():
+            if key in self.done:
+                b.setIcon(icons.icon("circle-check", "success", 17))
+            else:
+                b.setIcon(icons.icon(str(b.property("nav_icon")), "text_muted", 17, active_color="primary_soft_text"))
         self.refresh_sites()
+
+    def set_progress(self, done: set[str]) -> None:
+        """Tick off the workflow steps that are complete."""
+        if done == self.done:
+            return
+        self.done = done
+        for key in STEPS:
+            b = self.buttons.get(key)
+            if b is None:
+                continue
+            if key in done:
+                b.setIcon(icons.icon("circle-check", "success", 17))
+                b.setToolTip(tr("ui.step_done"))
+            else:
+                b.setIcon(icons.icon(str(b.property("nav_icon")), "text_muted", 17, active_color="primary_soft_text"))
+                b.setToolTip(tr(f"ui.step_todo.{key}"))
 
     def set_current(self, key: str) -> None:
         b = self.buttons.get(key)
@@ -269,8 +302,9 @@ class Sidebar(QFrame):
         self.setFixedWidth(px(64) if compact else px(236))
         for key, b in self.buttons.items():
             text_key = next(t for k, _i, t in NAV_MAIN + NAV_BOTTOM if k == key)
-            b.setText("" if compact else tr(text_key).replace("&", "&&"))
-            b.setToolTip(tr(text_key) if compact else "")
+            b.setText("" if compact else self._nav_text(key, text_key).replace("&", "&&"))
+            if compact:
+                b.setToolTip(tr(text_key))
         self.app_name.setVisible(not compact)
         self.project_label.setVisible(not compact)
         self.sites_scroll.setVisible(not compact)

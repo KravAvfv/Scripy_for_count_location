@@ -57,6 +57,8 @@ class AppSettings:
     recent_projects: list[str] = field(default_factory=list)
     last_project: str = ""
     sidebar_collapsed: bool = False
+    export_choices: dict[str, Any] = field(default_factory=dict)
+    """Last choices of the export dialog (sheets, PDF sections, pictures)."""
 
     @classmethod
     def load(cls, qs: QSettings) -> AppSettings:

@@ -25,8 +25,10 @@ def demo_project():
     project = Project(name="Демо: мережа компанії", customer="ТОВ «Приклад»", author="Мережевий інженер")
     hq = preset("hq").build(name="Київ — головний офіс")  # type: ignore[union-attr]
     hq.redundant_psu = True
+    hq.location_code, hq.location_id, hq.floors = "KV001", 10, 5
     project.add_site(hq, is_hub=True)
     wh = preset("warehouse").build(name="Склад Бровари")  # type: ignore[union-attr]
+    wh.location_code, wh.location_id = "BR014", 14
     project.add_site(wh)
     rd = preset("rnd_office").build(name="Львів R&D")  # type: ignore[union-attr]
     project.add_site(rd)
@@ -39,7 +41,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("out", nargs="?", default=str(ROOT / "docs" / "screenshots"))
     ap.add_argument("--size", default="1440x900")
-    ap.add_argument("--pages", default="location,bom,topology,ipplan,power,compare,projects,catalog,help,settings")
+    ap.add_argument(
+        "--pages", default="location,racks,ipplan,bom,topology,power,compare,projects,catalog,help,settings"
+    )
     ap.add_argument("--themes", default="light,dark")
     ap.add_argument("--site", type=int, default=0, help="index of the site to show")
     ap.add_argument("--lang", default="uk")

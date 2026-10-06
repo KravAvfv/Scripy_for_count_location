@@ -49,7 +49,11 @@ MODEL_COLUMNS: list[tuple[str, tuple[str, ...], str, tuple[str, ...] | None]] = 
     ("cat.col.model", ("__key__",), "key", None),
     ("cat.col.kind", ("kind",), "kind", None),
     ("cat.col.family", ("family",), "str", None),
+    ("cat.col.code", ("code",), "str", None),
     ("cat.col.price", ("price",), "float?", None),
+    ("cat.col.price_min", ("price_min",), "float?", None),
+    ("cat.col.unit", ("unit",), "str", None),
+    ("cat.col.section", ("section",), "section", None),
     ("cat.col.lifecycle", ("lifecycle",), "lifecycle", None),
     ("cat.col.verified", ("verified",), "verified", None),
     ("cat.col.ports", ("ports", "count"), "int", ("switch",)),
@@ -72,10 +76,17 @@ MODEL_COLUMNS: list[tuple[str, tuple[str, ...], str, tuple[str, ...] | None]] = 
     ("cat.col.fw_threat", ("firewall", "throughput_gbps", "threat"), "float", ("firewall",)),
     ("cat.col.ap_power", ("ap", "power_w"), "float", ("ap",)),
     ("cat.col.ap_poe", ("ap", "poe_class"), "poe", ("ap",)),
+    ("cat.col.datasheet", ("datasheet",), "str", None),
     ("cat.col.notes", ("notes",), "str", None),
 ]
+SEARCH_COLUMNS = tuple(
+    i
+    for i, (h, _p, _t, _k) in enumerate(MODEL_COLUMNS)
+    if h in ("cat.col.model", "cat.col.family", "cat.col.code", "cat.col.notes")
+)
 ENUMS = {
-    "kind": ["switch", "firewall", "ap", "accessory", "license"],
+    "kind": ["switch", "firewall", "ap", "accessory", "license", "work"],
+    "section": ["", "sks", "network", "works"],
     "lifecycle": ["active", "eoo", "eol"],
     "verified": ["datasheet", "third_party", "assumption"],
     "poe": ["af", "at", "bt"],
@@ -212,7 +223,7 @@ class KindFilter(QSortFilterProxyModel):
         if self.kind and src.data(idx, Qt.ItemDataRole.UserRole) != self.kind:
             return False
         if self.text:
-            hay = " ".join(str(src.data(src.index(row, c, parent)) or "") for c in (0, 2, 26)).lower()
+            hay = " ".join(str(src.data(src.index(row, c, parent)) or "") for c in SEARCH_COLUMNS).lower()
             return self.text.lower() in hay
         return True
 
@@ -231,6 +242,7 @@ class CatalogView(QWidget):
         self.status = label("", "caption", wrap=True)
         bar.addWidget(self.status, 1)
         for text, icon_name, fn in (
+            (tr("cat.import_template"), "file-spreadsheet", self.import_template),
             (tr("cat.import"), "upload", self.import_catalog),
             (tr("cat.export"), "download", self.export_catalog),
             (tr("cat.open_folder"), "folder-open", self.open_folder),
@@ -283,6 +295,7 @@ class CatalogView(QWidget):
                 ("ap", tr("cat.kind_ap")),
                 ("accessory", tr("cat.kind_accessory")),
                 ("license", tr("cat.kind_license")),
+                ("work", tr("cat.kind_work")),
             ],
             compact=True,
             expand=False,
@@ -296,6 +309,9 @@ class CatalogView(QWidget):
         self.search.textChanged.connect(self._on_filter)
         row.addWidget(self.search)
         row.addStretch(1)
+        sheet = button(tr("ui.datasheet"), None, "external-link")
+        sheet.clicked.connect(self.open_datasheet)
+        row.addWidget(sheet)
         dup = button(tr("cat.duplicate"), None, "copy")
         dup.clicked.connect(self.duplicate_model)
         delete = button(tr("cat.delete"), "danger", "trash-2")
@@ -351,6 +367,50 @@ class CatalogView(QWidget):
             return None
         src = self.proxy.mapToSource(idx)
         return self.models.keys[src.row()]
+
+    def open_datasheet(self) -> None:
+        key = self._selected_key()
+        if not key:
+            self.show_error(tr("cat.select_first"))
+            return
+        model = self.data["models"][key]
+        url = model.get("datasheet") or (model.get("source") if str(model.get("source", "")).startswith("http") else "")
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
+        else:
+            self.state.message.emit("info", tr("cat.no_datasheet", model=key))
+
+    def import_template(self) -> None:
+        """Import codes, names, units and prices from the company's Excel template."""
+        from ...core.template_import import apply_template, read_template
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, tr("cat.import_template"), str(Path.home()), "Excel (*.xlsx *.xlsm)"
+        )
+        if not path:
+            return
+        try:
+            rows = read_template(path)
+        except Exception as err:  # openpyxl raises many different errors for broken files
+            self.show_error(tr("cat.template_bad", err=err))
+            return
+        if not rows:
+            self.show_error(tr("cat.template_empty"))
+            return
+        data, report = apply_template(self.data, rows)
+        if self.apply(data):
+            self.models.reload()
+            self._build_forms()
+            self.state.message.emit(
+                "success",
+                tr(
+                    "cat.template_done",
+                    rows=report.rows,
+                    matched=len(report.matched),
+                    added=len(report.added),
+                    priced=report.priced,
+                ),
+            )
 
     def duplicate_model(self) -> None:
         key = self._selected_key()
@@ -486,7 +546,7 @@ class CatalogView(QWidget):
             "power_model": ["datasheet", "legacy"],
         }
         for key, value in rules.items():
-            if key in ("ip", "legacy_power_w"):
+            if key in ("ip", "legacy_power_w", "aggregation_auto_threshold"):
                 continue
             title = tr(f"rule.{key}") if current().has(f"rule.{key}") else key
             caption = tr(f"rule.{key}.help") if current().has(f"rule.{key}.help") else ""
@@ -573,6 +633,10 @@ class CatalogView(QWidget):
             cb.toggled.connect(lambda v, i=r - 1: self._edit_segment(i, "dhcp", v))
             grid.addWidget(cb, r, 2)
         ip.add(grid)
+        tmpl = QLineEdit(str(rules["ip"].get("id_template", "10.{id}.{vlan}.0/24")))
+        tmpl.setFixedWidth(px(200))
+        tmpl.editingFinished.connect(lambda e=tmpl: self._edit(("rules", "ip", "id_template"), e.text().strip()))
+        ip.add(FieldRow(tr("rule.ip.id_template"), tmpl, tr("ui.ip_id_caption")))
         for key in ("buffer", "smallest_prefix", "static_reserve"):
             value = rules["ip"][key]
             if isinstance(value, float):
