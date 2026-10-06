@@ -30,20 +30,48 @@ def hq_result(catalog: Catalog):
 def test_xlsx_structure(tmp_path: Path, catalog: Catalog, hq_result) -> None:
     path = export_xlsx(hq_result, tmp_path / "out.xlsx", catalog=catalog, options={"author": "A", "project": "P"})
     wb = load_workbook(path)
-    assert wb.sheetnames == ["BoM", "IP-план", "Схема", "Шафи", "Вихідні дані"]
-    ws = wb["BoM"]
-    assert ws["A4"].value == "Категорія" and ws["A4"].fill.start_color.rgb.endswith("1F4E78")
-    assert ws.freeze_panes == "A5"
-    models = [ws.cell(row=r, column=2).value for r in range(5, ws.max_row + 1)]
-    assert "FG-120G" in models
+    name = hq_result.input.name
+    assert wb.sheetnames == [
+        "Слаботрумка",
+        f"{name} - Схема+шафи"[:31],
+        f"{name} - IP",
+        "Ціни та кількість",
+        "Вихідні дані",
+    ]
     with zipfile.ZipFile(path) as z:
         assert any(n.startswith("xl/media/") for n in z.namelist())
 
 
-def test_xlsx_quick_mode_has_no_ip_sheet(tmp_path: Path, catalog: Catalog) -> None:
-    r = size_site(make_site(sockets=10), catalog)
-    wb = load_workbook(export_xlsx(r, tmp_path / "q.xlsx", catalog=catalog))
-    assert "IP-план" not in wb.sheetnames
+def test_xlsx_spec_matches_template(tmp_path: Path, catalog: Catalog) -> None:
+    r = size_site(make_site(sockets=96, cameras=10), catalog)
+    wb = load_workbook(export_xlsx(r, tmp_path / "s.xlsx", catalog=catalog, options={"sheets": ["spec"]}))
+    assert wb.sheetnames == ["Слаботрумка"]
+    ws = wb["Слаботрумка"]
+    assert [ws.cell(row=4, column=c).value for c in range(1, 9)] == [
+        "Код", "Найменування", "Од.", "К-сть", "Ціна (E)", "Сума (E)", "Ціна", "Сума"
+    ]  # fmt: skip
+    sections = [
+        ws.cell(row=r, column=1).value
+        for r in range(5, ws.max_row + 1)
+        if ws.cell(row=r, column=1).fill.start_color.rgb.endswith("BFBFBF")
+    ]
+    assert sections == ["СКС", "Network"]
+    rows = {ws.cell(row=r, column=2).value: r for r in range(5, ws.max_row + 1)}
+    row = next(r for name, r in rows.items() if name and name.startswith("FS-148F —"))
+    assert ws.cell(row=row, column=1).value == "000084545" and ws.cell(row=row, column=4).value == 2
+    assert (
+        ws.cell(row=row, column=6).value == f"=D{row}*E{row}" and ws.cell(row=row, column=8).value == f"=D{row}*G{row}"
+    )
+    unused = next(r for name, r in rows.items() if name and name.startswith("FS-648F —"))
+    assert ws.cell(row=unused, column=4).value == 0  # every template item is listed, 0 when unused
+    only = load_workbook(
+        export_xlsx(r, tmp_path / "o.xlsx", catalog=catalog, options={"sheets": ["spec"], "only_used": True})
+    )["Слаботрумка"]
+    assert all(
+        (only.cell(row=i, column=4).value or 0) > 0
+        for i in range(5, only.max_row + 1)
+        if only.cell(row=i, column=6).value and str(only.cell(row=i, column=6).value).startswith("=D")
+    )
 
 
 def test_xlsx_prices(tmp_path: Path, catalog: Catalog) -> None:
@@ -52,8 +80,9 @@ def test_xlsx_prices(tmp_path: Path, catalog: Catalog) -> None:
         if line.qty:
             line.unit_price = 100.0
     wb = load_workbook(export_xlsx(r, tmp_path / "p.xlsx", catalog=catalog, options={"vat_pct": 20}))
-    ws = wb["BoM"]
-    assert ws.cell(row=4, column=7).value == "Сума"
+    ws = wb["Ціни та кількість"]
+    assert ws.cell(row=4, column=8).value == "Сума"
+    assert all("Обґрунтування" not in str(c.value) for row in ws.iter_rows() for c in row)
 
 
 def test_pdf(tmp_path: Path, catalog: Catalog, hq_result) -> None:
@@ -78,9 +107,13 @@ def test_rack_exports(tmp_path: Path, catalog: Catalog, hq_result) -> None:
     assert "<svg" in export_svg(d, tmp_path / "r.svg").read_text(encoding="utf-8")  # type: ignore[arg-type]
     rows = rack_table_rows(hq_result)
     assert len(rows) == sum(len(p.items) for p in hq_result.rack.plans)
-    wb = load_workbook(export_xlsx(hq_result, tmp_path / "x.xlsx", catalog=catalog))
-    ws = wb["Шафи"]
-    assert ws.cell(row=4, column=1).value == "Шафа" and str(ws.cell(row=5, column=1).value).startswith("MDF")
+    wb = load_workbook(export_xlsx(hq_result, tmp_path / "x.xlsx", catalog=catalog, options={"sheets": ["racks"]}))
+    ws = wb.worksheets[0]
+    plan = hq_result.rack.plans[0]
+    assert str(ws.cell(row=3, column=2).value).startswith(plan.name)
+    assert ws.cell(row=5, column=2).value == plan.size_u and ws.cell(row=5, column=4).value == plan.size_u
+    labels = [ws.cell(row=r, column=3).value for r in range(5, 5 + plan.size_u)]
+    assert "Органайзер" in labels
 
 
 def test_empty_diagram(catalog: Catalog) -> None:

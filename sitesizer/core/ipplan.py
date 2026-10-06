@@ -39,6 +39,87 @@ class SegmentRequest:
     vlan: int
     hosts: int
     dhcp: bool
+    custom: bool = False
+
+
+def _sized(req: SegmentRequest, rules: IpRules, note: str, prefix: int | None = None) -> IpSegmentResult:
+    size = suggest_subnet(req.hosts, rules.buffer, rules.smallest_prefix)
+    pfx = prefix if prefix and 0 < prefix <= 32 else size.prefix
+    return IpSegmentResult(
+        id=req.id,
+        name=req.name,
+        vlan=req.vlan,
+        hosts=req.hosts,
+        prefix=pfx,
+        capacity=_capacity(pfx),
+        note=note,
+        custom=req.custom,
+        dhcp=req.dhcp,
+    )
+
+
+def _capacity(prefix: int) -> int:
+    if prefix >= 31:
+        return 2 ** (32 - prefix)
+    return 2 ** (32 - prefix) - 2
+
+
+def _fill_addresses(seg: IpSegmentResult, net: ipaddress.IPv4Network, rules: IpRules, t: dict[str, str]) -> None:
+    seg.network = str(net)
+    seg.mask = str(net.netmask)
+    seg.prefix = net.prefixlen
+    seg.capacity = _capacity(net.prefixlen)
+    first, last = _usable_bounds(net)
+    if first is None or last is None:
+        return
+    seg.gateway = str(first)
+    if seg.dhcp:
+        usable = int(last) - int(first) + 1
+        offset = 1 + rules.static_reserve if usable > rules.static_reserve + 2 else 1
+        dhcp_first = first + min(offset, usable - 1)
+        seg.dhcp_range = f"{dhcp_first} – {last}" if usable > 1 else str(first)
+    else:
+        seg.dhcp_range = t.get("no_dhcp", "static")
+
+
+def plan_by_template(
+    requests: list[SegmentRequest],
+    rules: IpRules,
+    location_id: int,
+    prefixes: dict[str, int] | None = None,
+    texts: dict[str, str] | None = None,
+) -> IpPlan:
+    """One subnet per VLAN from ``rules.id_template`` (default ``10.{id}.{vlan}.0/24``).
+
+    ``location_id`` is the site's second octet. ``prefixes`` overrides the mask per segment
+    (e.g. a /23 for a large Wi-Fi VLAN). Segments that are too small or overlap are reported.
+    """
+    t = texts or {}
+    prefixes = prefixes or {}
+    plan = IpPlan(location_id=location_id, template=rules.id_template)
+    nets: list[tuple[ipaddress.IPv4Network, IpSegmentResult]] = []
+    for req in requests:
+        seg = _sized(req, rules, t.get("note", ""))
+        plan.segments.append(seg)
+        try:
+            net = ipaddress.IPv4Network(rules.id_template.format(id=location_id, vlan=req.vlan), strict=False)
+            if prefixes.get(req.id):
+                net = ipaddress.IPv4Network((net.network_address, prefixes[req.id]), strict=False)
+        except (ValueError, KeyError, IndexError):
+            seg.note = t.get("bad_template", "VLAN does not fit the address template")
+            continue
+        _fill_addresses(seg, net, rules, t)
+        need = math.ceil(max(req.hosts, 0) * (1 + rules.buffer))
+        if need > seg.capacity:
+            seg.note = t.get("too_small", "too small").format(need=need, cap=seg.capacity)
+            seg.too_small = True
+        for other_net, other in nets:
+            if net.overlaps(other_net):
+                plan.error = t.get("overlap", "overlap").format(a=other.name, b=seg.name)
+        nets.append((net, seg))
+        plan.used_addresses += net.num_addresses
+    plan.base_network = rules.id_template.replace("{id}", str(location_id)).replace("{vlan}", "VLAN")
+    return plan
 
 
 def plan_segments(
@@ -46,6 +127,7 @@ def plan_segments(
     rules: IpRules,
     base_network: str = "",
     texts: dict[str, str] | None = None,
+    prefixes: dict[str, int] | None = None,
 ) -> IpPlan:
     """Size each segment and, if ``base_network`` is given, carve aligned, non-overlapping
     subnets out of it (largest first so alignment wastes nothing). Output keeps request order.
@@ -56,16 +138,7 @@ def plan_segments(
     plan = IpPlan(base_network=base_network.strip())
     results: dict[str, IpSegmentResult] = {}
     for req in requests:
-        size = suggest_subnet(req.hosts, rules.buffer, rules.smallest_prefix)
-        results[req.id] = IpSegmentResult(
-            id=req.id,
-            name=req.name,
-            vlan=req.vlan,
-            hosts=req.hosts,
-            prefix=size.prefix,
-            capacity=size.capacity,
-            note=t.get("note", ""),
-        )
+        results[req.id] = _sized(req, rules, t.get("note", ""), (prefixes or {}).get(req.id))
 
     if not plan.base_network or not results:
         plan.segments = [results[r.id] for r in requests]
@@ -90,17 +163,7 @@ def plan_segments(
             plan.error = t.get("overflow", "base network too small")
             break
         net = ipaddress.IPv4Network((start, seg.prefix))
-        seg.network = str(net)
-        first, last = _usable_bounds(net)
-        if first is not None and last is not None:
-            seg.gateway = str(first)
-            if req.dhcp:
-                usable = int(last) - int(first) + 1
-                offset = 1 + rules.static_reserve if usable > rules.static_reserve + 2 else 1
-                dhcp_first = first + min(offset, usable - 1)
-                seg.dhcp_range = f"{dhcp_first} – {last}" if usable > 1 else str(first)
-            else:
-                seg.dhcp_range = t.get("no_dhcp", "static")
+        _fill_addresses(seg, net, rules, t)
         cursor = start + block
         plan.used_addresses += block
     plan.segments = [results[r.id] for r in requests]

@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..i18n import Translator
 from .catalog import EDGE_CATEGORIES, Catalog, Category, Device, Tier, parse_version
-from .ipplan import SegmentRequest, plan_segments
+from .ipplan import SegmentRequest, plan_by_template, plan_segments
 from .models import (
     ADDON_KEYS,
     ApGroup,
@@ -29,7 +29,7 @@ from .models import (
     SiteInput,
     SiteResult,
 )
-from .passive import plan_passive
+from .passive import EDGE_KEYS, plan_passive
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +88,8 @@ class _Ctx:
     counts: EffectiveCounts
     dual_psu: bool
     checks: list[Check]
+    calc_counts: dict[str, int] = field(default_factory=dict)
+    """BoM line key -> calculated quantity, for lines whose count the user overrode."""
 
     def check(
         self,
@@ -131,6 +133,21 @@ def pick_variant(cat: Category, count: int, ctx: _Ctx) -> tuple[str, bool]:
     else:  # dual_psu
         premium = ctx.dual_psu
     return (cat.premium if premium else cat.base), premium
+
+
+def apply_count_override(ctx: _Ctx, key: str, model: str, count: int) -> int:
+    """Return the user's manual quantity for ``key:model`` (remembering the calculated one)."""
+    ov = ctx.site.bom.overrides.get(f"{key}:{model}")
+    if ov is None or ov.qty is None or not model:
+        return count
+    ctx.calc_counts[f"{key}:{model}"] = count
+    return ov.qty
+
+
+def _override_count(ctx: _Ctx, res: CategoryResult) -> None:
+    res.count = apply_count_override(ctx, res.key, res.model, res.count)
+    if res.count and res.poe_load_w:
+        res.poe_per_switch_w = res.poe_load_w / res.count
 
 
 def _variant_note(ctx: _Ctx, dev: Device, premium: bool) -> str:
@@ -256,6 +273,7 @@ def size_wifi(ctx: _Ctx) -> CategoryResult:
                 after=needed,
             )
             res.count = needed
+    _override_count(ctx, res)
     _poe_checks(ctx, res, dev, label)
     return res
 
@@ -269,6 +287,7 @@ def size_access(ctx: _Ctx) -> CategoryResult:
         return res
     res.count = ceil_div(ctx.counts.sockets, cat.endpoints_per_switch)
     res.model, res.premium = pick_variant(cat, res.count, ctx)
+    _override_count(ctx, res)
     return res
 
 
@@ -303,6 +322,7 @@ def size_cameras(ctx: _Ctx) -> CategoryResult:
                 after=needed,
             )
             res.count = needed
+    _override_count(ctx, res)
     _poe_checks(ctx, res, dev, label)
     return res
 
@@ -314,9 +334,10 @@ def size_core(ctx: _Ctx, edge_count: int, fw_count_hint: int) -> CategoryResult:
     cat = ctx.catalog.categories["core_switch"]
     res = CategoryResult(key="core_switch", endpoints=edge_count, endpoints_per_switch=cat.endpoints_per_switch)
     mode = ctx.site.aggregation
-    need = mode == "yes" or (mode == "auto" and edge_count >= ctx.rules.aggregation_auto_threshold)
+    auto_need = edge_count > ctx.rules.core_min_switches and ctx.site.floors > ctx.rules.core_min_floors
+    need = mode == "yes" or (mode == "auto" and auto_need)
     if not need:
-        if mode == "no" and edge_count > ctx.rules.aggregation_auto_threshold:
+        if mode == "no" and auto_need:
             ctx.check(
                 Severity.WARNING,
                 "AGG_OFF_MANY",
@@ -340,7 +361,7 @@ def size_core(ctx: _Ctx, edge_count: int, fw_count_hint: int) -> CategoryResult:
         capacity = free // links if free > 0 else 0
     groups = max(1, ceil_div(edge_count, capacity)) if capacity > 0 and ctx.rules.core_port_check else 1
     per_group = 2 if redundant else 1
-    res.count = groups * per_group
+    res.count = apply_count_override(ctx, "core_switch", res.model, groups * per_group)
     res.premium = redundant
     if groups > 1:
         ctx.check(
@@ -481,6 +502,7 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk") -> SiteResult
     firewall: FirewallChoice | None = None
     if total_switches > 0:
         firewall = pick_firewall(ctx, total_switches, counts.aps, requires_10g=core.count > 0)
+        firewall.count = apply_count_override(ctx, "firewall", firewall.model, firewall.count)
         if not firewall.fits:
             ctx.check(Severity.ERROR, "FW_NONE", "check.fw_none", "check.fw_none_hint", "firewall", need=total_switches)
         else:
@@ -549,14 +571,10 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk") -> SiteResult
         )
 
     _general_checks(ctx, bom, rack)
-    for line in bom:
-        dev = catalog.models.get(line.model)
-        if dev is not None:
-            line.unit_price = dev.price
-            if not line.description:
-                line.description = t.pick(dev.name)
+    _finalize_bom(ctx, bom)
+    _bom_custom(ctx, bom)
 
-    ip_plan = build_ip_plan(ctx, total_switches, firewall) if site.mode == "extended" else None
+    ip_plan = build_ip_plan(ctx, total_switches, firewall)
 
     order = {Severity.ERROR: 0, Severity.WARNING: 1, Severity.INFO: 2}
     checks.sort(key=lambda c: order[c.severity])
@@ -803,7 +821,8 @@ def _bom_transceivers(
     fw: FirewallChoice | None,
     rack: RackSummary,
 ) -> None:
-    t = ctx.t
+    """Uplinks: DAC length from the cabinet layout, fibre transceivers for remote closets."""
+    t, rules = ctx.t, ctx.rules
     edge = sum(c.count for c in categories.values())
     if edge == 0 and core.count == 0:
         return
@@ -813,36 +832,71 @@ def _bom_transceivers(
     ps = rack.passive
     remote_links = ps.fiber_links
     fspec = ctx.catalog.passive.fiber.get(ps.fiber_type)
-    dac = gc = 0
+
+    where: dict[str, tuple[str, float]] = {}
+    local_edges: list[str] = []
+    for plan in rack.plans:
+        for it in sorted(plan.items, key=lambda i: -i.u):
+            where[it.id] = (plan.key, (it.u + it.top) / 2)
+            if it.group in EDGE_KEYS and plan.role != "idf":
+                local_edges.append(it.id)
+    short = long = gc = 0
+
+    def link(a: str, b: str) -> None:
+        nonlocal short, long
+        pa, pb = where.get(a), where.get(b)
+        if pa and pb and pa[0] == pb[0] and abs(pa[1] - pb[1]) <= rules.dac_short_max_u:
+            short += 1
+        else:
+            long += 1
+
     details: list[str] = []
     if core.count:
-        links_edge = sum(c.count * core.uplinks_per_switch for c in categories.values())
-        dac += links_edge - remote_links
-        dac += core.count * max(fw_count, 1) if fw_has_10g else 0
-        icl = ctx.rules.core_icl_links * (core.count // 2) if ctx.tier.core_redundant else 0
-        dac += icl
-        details.append(t.t("detail.links_core", edge=links_edge, fw=core.count * max(fw_count, 1), icl=icl))
-    else:
-        local = edge - remote_links
+        per_group = 2 if ctx.tier.core_redundant else 1
+        groups = max(1, core.count // per_group)
+        for i, sid in enumerate(local_edges):
+            g = i % groups
+            for j in range(core.uplinks_per_switch):
+                link(sid, f"core_switch:{min(core.count, g * per_group + j % per_group + 1)}")
+        fw_links = 0
         if fw_has_10g:
-            dac += local
+            for c in range(core.count):
+                for f in range(max(fw_count, 1)):
+                    link(f"core_switch:{c + 1}", f"firewall:{f + 1}")
+                    fw_links += 1
+        icl = 0
+        if ctx.tier.core_redundant:
+            for g in range(groups):
+                for _ in range(rules.core_icl_links):
+                    link(f"core_switch:{g * 2 + 1}", f"core_switch:{g * 2 + 2}")
+                    icl += 1
+        details.append(t.t("detail.links_core", edge=len(local_edges) * core.uplinks_per_switch, fw=fw_links, icl=icl))
+    else:
+        if fw_has_10g:
+            for sid in local_edges:
+                link(sid, "firewall:1")
         else:
-            gc += local
+            gc += len(local_edges)
         details.append(t.t("detail.links_direct", edge=edge))
     if remote_links:
         details.append(t.t("detail.links_remote", n=remote_links, idf=rack.idf_count - 1))
-    if dac:
-        bom.append(
-            BomLine(
-                group="transceiver",
-                category=t.t("cat.transceivers"),
-                model="FN-CABLE-SFP+3",
-                qty=dac,
-                reason=t.t("reason.dac"),
-                details=details,
-                tags=["addon"],
+    dac_detail = [t.t("detail.dac_length", u=rules.dac_short_max_u), *details]
+    for model, qty, key in (
+        (rules.dac_short_model, short, "reason.dac_short"),
+        (rules.dac_long_model, long, "reason.dac_long"),
+    ):
+        if qty:
+            bom.append(
+                BomLine(
+                    group="transceiver",
+                    category=t.t("cat.transceivers"),
+                    model=model,
+                    qty=qty,
+                    reason=t.t(key, u=rules.dac_short_max_u),
+                    details=dac_detail,
+                    tags=["addon"],
+                )
             )
-        )
     if remote_links:
         model = fspec.transceiver if fspec else "FN-TRAN-SFP+SR"
         bom.append(
@@ -871,6 +925,62 @@ def _bom_transceivers(
                 reason=t.t("reason.gc", model=fw.model if fw else ""),
                 details=details,
                 tags=["addon"],
+            )
+        )
+
+
+def _finalize_bom(ctx: _Ctx, bom: list[BomLine]) -> None:
+    """Stable keys, catalog data (prices, codes, units) and the user's manual quantities/prices."""
+    t, catalog = ctx.t, ctx.catalog
+    seen: dict[str, int] = {}
+    for line in bom:
+        base = f"{line.group}:{line.model}"
+        seen[base] = n = seen.get(base, 0) + 1
+        line.key = base if n == 1 else f"{base}#{n}"
+        dev = catalog.models.get(line.model)
+        if dev is not None:
+            line.unit_price = dev.price
+            line.price_min = dev.price_min
+            line.code = dev.code
+            line.unit = dev.unit
+            if not line.description:
+                line.description = t.pick(dev.name)
+        line.calc_qty = ctx.calc_counts.get(line.key, line.qty)
+        ov = ctx.site.bom.overrides.get(line.key)
+        if ov is None:
+            continue
+        if ov.qty is not None and line.qty is not None:
+            line.qty = ov.qty
+        if ov.price is not None:
+            line.unit_price = ov.price
+        if ov.price_min is not None:
+            line.price_min = ov.price_min
+        if line.qty != line.calc_qty or ov.price is not None or ov.price_min is not None:
+            line.manual = True
+            line.tags.append("manual")
+
+
+def _bom_custom(ctx: _Ctx, bom: list[BomLine]) -> None:
+    """Lines the user added by hand (from the catalog or free text)."""
+    t = ctx.t
+    for c in ctx.site.bom.custom:
+        dev = ctx.catalog.models.get(c.model)
+        bom.append(
+            BomLine(
+                group="custom",
+                category=t.t(f"section.{c.section}"),
+                model=c.model or c.name or "—",
+                qty=c.qty,
+                reason=t.t("reason.custom"),
+                description=c.name or (t.pick(dev.name) if dev else ""),
+                tags=["manual"],
+                unit_price=c.price if c.price is not None else (dev.price if dev else None),
+                price_min=c.price_min if c.price_min is not None else (dev.price_min if dev else None),
+                key=f"custom:{c.id}",
+                code=c.code or (dev.code if dev else ""),
+                unit=c.unit or (dev.unit if dev else "шт."),
+                calc_qty=c.qty,
+                manual=True,
             )
         )
 
@@ -1234,6 +1344,8 @@ def _general_checks(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
                 used=plan.used_u,
                 size=plan.size_u,
             )
+    for problem in rack.layout_problems:
+        ctx.checks.append(Check(Severity.WARNING, "RACK_LAYOUT", problem, t.t("check.rack_layout_hint"), "rack"))
     if ctx.tier.dual_wan and any(line.group == "firewall" for line in bom):
         ctx.check(Severity.INFO, "DUAL_WAN", "check.dual_wan", "", "firewall")
 
@@ -1276,12 +1388,12 @@ def _general_checks(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
 def build_ip_plan(ctx: _Ctx, total_switches: int, fw: FirewallChoice | None) -> IpPlan:
     t = ctx.t
     rules = ctx.rules.ip
+    ip = ctx.site.ip
     counts = ctx.counts
     wifi_hosts = counts.wifi_clients or counts.aps * ctx.rules.wifi_clients_per_ap_default
     fw_count = fw.count if fw else 0
     sources = {
         "sockets": counts.sockets,
-        "voice": ctx.site.voice_phones,
         "wifi": wifi_hosts,
         "guest": ctx.site.guest_clients,
         "cameras": counts.cameras,
@@ -1290,20 +1402,48 @@ def build_ip_plan(ctx: _Ctx, total_switches: int, fw: FirewallChoice | None) -> 
     }
     requests: list[SegmentRequest] = []
     for seg in rules.segments:
-        hosts = sources.get(seg.source, 0)
-        explicit = ctx.site.ip.segments.get(seg.id)
-        enabled = explicit if explicit is not None else hosts > 0
-        if not enabled or hosts <= 0:
+        if seg.source == "voice":  # IP phones are not used any more
             continue
-        vlan = ctx.site.ip.vlan_overrides.get(seg.id, seg.vlan)
-        requests.append(SegmentRequest(id=seg.id, name=t.pick(seg.label), vlan=vlan, hosts=hosts, dhcp=seg.dhcp))
+        hosts = sources.get(seg.source, 0)
+        explicit = ip.segments.get(seg.id)
+        enabled = explicit if explicit is not None else hosts > 0
+        if not enabled:
+            continue
+        vlan = ip.vlan_overrides.get(seg.id, seg.vlan)
+        name = ip.name_overrides.get(seg.id) or t.pick(seg.label)
+        requests.append(SegmentRequest(id=seg.id, name=name, vlan=vlan, hosts=hosts, dhcp=seg.dhcp))
+    for c in ip.custom:
+        requests.append(SegmentRequest(id=c.id, name=c.name, vlan=c.vlan, hosts=c.hosts, dhcp=c.dhcp, custom=True))
     texts = {
         "note": t.t("ip.note", pct=round(rules.buffer * 100)),
         "no_dhcp": t.t("ip.static"),
         "overflow": t.t("ip.overflow"),
         "bad_network": t.t("ip.bad_network"),
+        "bad_template": t.t("ip.bad_template"),
+        "too_small": t.t("ip.too_small", need="{need}", cap="{cap}"),
+        "overlap": t.t("ip.overlap", a="{a}", b="{b}"),
     }
-    plan = plan_segments(requests, rules, ctx.site.ip.base_network, texts)
+    if ctx.site.location_id is not None:
+        plan = plan_by_template(requests, rules, ctx.site.location_id, ip.prefix_overrides, texts)
+    else:
+        plan = plan_segments(requests, rules, ip.base_network, texts, ip.prefix_overrides)
+    vlans: dict[int, str] = {}
+    for seg in plan.segments:
+        if seg.vlan in vlans:
+            ctx.check(
+                Severity.ERROR, "VLAN_DUP", "check.vlan_dup", "", "ip", vlan=seg.vlan, a=vlans[seg.vlan], b=seg.name
+            )
+        vlans[seg.vlan] = seg.name
+        if seg.too_small:
+            ctx.check(
+                Severity.WARNING,
+                "IP_SMALL",
+                "check.ip_small",
+                "check.ip_small_hint",
+                "ip",
+                name=seg.name,
+                vlan=seg.vlan,
+            )
     if plan.error:
         ctx.check(Severity.ERROR, "IP_PLAN", "check.ip_plan", "", "ip", error=plan.error)
     return plan

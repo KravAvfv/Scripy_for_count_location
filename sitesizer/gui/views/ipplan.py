@@ -24,7 +24,6 @@ from ..widgets.controls import Callout, Card, Chip, FieldRow, FlowLayout, button
 
 HOST_SOURCE_KEYS = {
     "sockets": "ui.sockets",
-    "voice": "ui.voice",
     "wifi": "ui.clients",
     "guest": "ui.guest",
     "cameras": "ui.cameras",

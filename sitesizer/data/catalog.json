@@ -9,6 +9,7 @@
   "models": {
     "FS-124G-FPOE": {
       "kind": "switch",
+      "code": "000081459", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiswitch-secure-access-series.pdf",
       "family": "FortiSwitch 100G",
       "name": {"uk": "24× 2.5G PoE (8× 802.3bt + 16× af/at), 6× 10G SFP+", "en": "24× 2.5G PoE (8× 802.3bt + 16× af/at), 6× 10G SFP+"},
       "ports": {"count": 24, "speed_gbps": 2.5},
@@ -22,6 +23,7 @@
     },
     "FS-624F-FPOE": {
       "kind": "switch",
+      "code": "000081182", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortiswitch-campus-series.pdf",
       "family": "FortiSwitch 600F",
       "name": {"uk": "24× 5G PoE++ (802.3bt), 4× 25G SFP28, 2× hot-swap БЖ", "en": "24× 5G PoE++ (802.3bt), 4× 25G SFP28, 2× hot-swap PSU"},
       "ports": {"count": 24, "speed_gbps": 5},
@@ -35,6 +37,7 @@
     },
     "FS-148F": {
       "kind": "switch",
+      "code": "000084545", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiswitch-secure-access-series.pdf",
       "family": "FortiSwitch 100F",
       "name": {"uk": "48× 1G RJ45, 4× 10G SFP+, без PoE", "en": "48× 1G RJ45, 4× 10G SFP+, no PoE"},
       "ports": {"count": 48, "speed_gbps": 1},
@@ -46,6 +49,7 @@
     },
     "FS-648F": {
       "kind": "switch",
+      "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortiswitch-campus-series.pdf",
       "family": "FortiSwitch 600F",
       "name": {"uk": "48× 2.5G/5G RJ45, 8× 25G SFP28, 2× hot-swap БЖ, без PoE", "en": "48× 2.5G/5G RJ45, 8× 25G SFP28, 2× hot-swap PSU, no PoE"},
       "ports": {"count": 48, "speed_gbps": 2.5},
@@ -58,6 +62,7 @@
     },
     "FS-148F-FPOE": {
       "kind": "switch",
+      "code": "000075059", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiswitch-secure-access-series.pdf",
       "family": "FortiSwitch 100F",
       "name": {"uk": "48× 1G PoE+ (802.3af/at), 4× 10G SFP+", "en": "48× 1G PoE+ (802.3af/at), 4× 10G SFP+"},
       "ports": {"count": 48, "speed_gbps": 1},
@@ -70,6 +75,7 @@
     },
     "FS-648F-FPOE": {
       "kind": "switch",
+      "code": "000085651", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortiswitch-campus-series.pdf",
       "family": "FortiSwitch 600F",
       "name": {"uk": "48× 2.5G/5G PoE++ (802.3bt), 8× 25G SFP28, 2× hot-swap БЖ", "en": "48× 2.5G/5G PoE++ (802.3bt), 8× 25G SFP28, 2× hot-swap PSU"},
       "ports": {"count": 48, "speed_gbps": 2.5},
@@ -83,6 +89,7 @@
     },
     "FS-448E": {
       "kind": "switch",
+      "code": "000099372", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/og-fortiswitch.pdf",
       "family": "FortiSwitch 400E",
       "name": {"uk": "48× 1G RJ45, 4× 10G SFP+, 2 резервовані БЖ", "en": "48× 1G RJ45, 4× 10G SFP+, dual redundant PSU"},
       "ports": {"count": 48, "speed_gbps": 1},
@@ -96,6 +103,7 @@
     },
     "FS-448E-POE": {
       "kind": "switch",
+      "code": "000072216", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/og-fortiswitch.pdf",
       "family": "FortiSwitch 400E",
       "name": {"uk": "48× 1G PoE+ (802.3af/at) 421 Вт, 4× 10G SFP+, 2 резервовані БЖ", "en": "48× 1G PoE+ (802.3af/at) 421 W, 4× 10G SFP+, dual redundant PSU"},
       "ports": {"count": 48, "speed_gbps": 1},
@@ -110,6 +118,7 @@
     },
     "FS-448E-FPOE": {
       "kind": "switch",
+      "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/og-fortiswitch.pdf",
       "family": "FortiSwitch 400E",
       "name": {"uk": "48× 1G PoE+ (802.3af/at) 772 Вт, 4× 10G SFP+, 2 резервовані БЖ", "en": "48× 1G PoE+ (802.3af/at) 772 W, 4× 10G SFP+, dual redundant PSU"},
       "ports": {"count": 48, "speed_gbps": 1},
@@ -124,6 +133,7 @@
     },
     "FS-1024E": {
       "kind": "switch",
+      "code": "000081176", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/og-fortiswitch.pdf",
       "family": "FortiSwitch 1000E",
       "name": {"uk": "24× 10G SFP+, 2× 100G QSFP28, 2× hot-swap БЖ", "en": "24× 10G SFP+, 2× 100G QSFP28, 2× hot-swap PSU"},
       "ports": {"count": 24, "speed_gbps": 10},
@@ -137,6 +147,7 @@
 
     "FAP-221K": {
       "kind": "ap", "family": "FortiAP Wi-Fi 7",
+      "code": "000101602", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiap-series.pdf",
       "name": {"uk": "Wi-Fi 7, 2 радіо 2×2, 2.5G", "en": "Wi-Fi 7, dual-radio 2×2, 2.5G"},
       "ap": {"poe_class": "at", "power_w": 16.3, "uplink_gbps": 2.5, "outdoor": false, "wifi": "Wi-Fi 7", "radios": 2, "mimo": "2x2"},
       "verified": "datasheet",
@@ -144,6 +155,7 @@
     },
     "FAP-231K": {
       "kind": "ap", "family": "FortiAP Wi-Fi 7",
+      "code": "000081431", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiap-series.pdf",
       "name": {"uk": "Wi-Fi 7, 3 радіо 2×2, 5G", "en": "Wi-Fi 7, tri-radio 2×2, 5G"},
       "ap": {"poe_class": "at", "power_w": 15.2, "uplink_gbps": 5, "outdoor": false, "wifi": "Wi-Fi 7", "radios": 3, "mimo": "2x2"},
       "verified": "datasheet",
@@ -151,6 +163,7 @@
     },
     "FAP-241K": {
       "kind": "ap", "family": "FortiAP Wi-Fi 7",
+      "code": "000073859", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiap-series.pdf",
       "name": {"uk": "Wi-Fi 7, 4 радіо 2×2, 10G, потребує 802.3bt", "en": "Wi-Fi 7, quad-radio 2×2, 10G, needs 802.3bt"},
       "ap": {"poe_class": "bt", "power_w": 26.1, "uplink_gbps": 10, "outdoor": false, "wifi": "Wi-Fi 7", "radios": 4, "mimo": "2x2"},
       "verified": "datasheet",
@@ -159,6 +172,7 @@
     },
     "FAP-441K": {
       "kind": "ap", "family": "FortiAP Wi-Fi 7",
+      "code": "000081463", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiap-series.pdf",
       "name": {"uk": "Wi-Fi 7, 4 радіо 4×4, 2× 10G, потребує 802.3bt", "en": "Wi-Fi 7, quad-radio 4×4, 2× 10G, needs 802.3bt"},
       "ap": {"poe_class": "bt", "power_w": 41.7, "uplink_gbps": 10, "outdoor": false, "wifi": "Wi-Fi 7", "radios": 4, "mimo": "4x4"},
       "verified": "datasheet",
@@ -167,6 +181,7 @@
     },
     "FAP-234G": {
       "kind": "ap", "family": "FortiAP Outdoor",
+      "code": "000084907", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortiap-series.pdf",
       "name": {"uk": "Wi-Fi 6E, зовнішня IP67, 3 радіо 2×2, 2.5G + 1G", "en": "Wi-Fi 6E outdoor IP67, tri-radio 2×2, 2.5G + 1G"},
       "ap": {"poe_class": "at", "power_w": 28, "uplink_gbps": 2.5, "outdoor": true, "wifi": "Wi-Fi 6E", "radios": 3, "mimo": "2x2"},
       "verified": "datasheet",
@@ -175,6 +190,7 @@
 
     "FG-80F": {
       "kind": "firewall", "family": "FortiGate 80F",
+      "code": "000072208", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortigate-fortiwifi-80f-series.pdf",
       "name": {"uk": "NGFW, 1G, настільний, без SFP+", "en": "NGFW, 1G, desktop, no SFP+"},
       "firewall": {
         "max_switches": 24, "max_aps": 96, "max_aps_tunnel": 48, "ports_10g": 0,
@@ -189,6 +205,7 @@
     },
     "FG-120G": {
       "kind": "firewall", "family": "FortiGate 120G",
+      "code": "000053698", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortigate-120g-series.pdf",
       "name": {"uk": "NGFW, 4× 10G SFP+, 8× 1G SFP, 16× 1G RJ45", "en": "NGFW, 4× 10G SFP+, 8× 1G SFP, 16× 1G RJ45"},
       "firewall": {
         "max_switches": 32, "max_switches_fortios": [{"min_version": "7.6.1", "value": 48}],
@@ -204,6 +221,7 @@
     },
     "FG-200G": {
       "kind": "firewall", "family": "FortiGate 200G",
+      "code": "000064051", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortigate-200g-series.pdf",
       "name": {"uk": "NGFW, 8× 10G SFP+, 8× 5G RJ45, 4× 1G SFP", "en": "NGFW, 8× 10G SFP+, 8× 5G RJ45, 4× 1G SFP"},
       "firewall": {
         "max_switches": 64, "max_aps": 256, "max_aps_tunnel": 128, "ports_10g": 8,
@@ -217,6 +235,7 @@
     },
     "FG-400G": {
       "kind": "firewall", "family": "FortiGate 400G",
+      "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortigate-400g-series.pdf",
       "name": {"uk": "NGFW, 4× 25G SFP28, 4× 10G SFP+, 16× 1G SFP, 8× 5G RJ45", "en": "NGFW, 4× 25G SFP28, 4× 10G SFP+, 16× 1G SFP, 8× 5G RJ45"},
       "firewall": {
         "max_switches": 96, "max_aps": 512, "max_aps_tunnel": 256, "ports_10g": 8,
@@ -229,10 +248,11 @@
       "source": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/pdf/fortigate-400g-series.pdf"
     },
 
-    "FN-TRAN-SFP+SR": {"kind": "accessory", "family": "Transceiver", "name": {"uk": "Трансивер 10G SFP+ SR (багатомод, до 300 м)", "en": "10G SFP+ SR transceiver (multimode, up to 300 m)"}, "verified": "datasheet"},
-    "FN-TRAN-SFP+LR": {"kind": "accessory", "family": "Transceiver", "name": {"uk": "Трансивер 10G SFP+ LR (одномод, до 10 км)", "en": "10G SFP+ LR transceiver (single-mode, up to 10 km)"}, "verified": "datasheet"},
-    "FN-CABLE-SFP+3": {"kind": "accessory", "family": "DAC", "name": {"uk": "DAC-кабель 10G SFP+, 3 м", "en": "10G SFP+ DAC cable, 3 m"}, "verified": "datasheet"},
-    "FN-TRAN-GC": {"kind": "accessory", "family": "Transceiver", "name": {"uk": "Трансивер 1G SFP RJ45 (мідь)", "en": "1G SFP RJ45 transceiver (copper)"}, "verified": "datasheet"},
+    "FN-TRAN-SFP+SR": {"kind": "accessory", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/Fortinet_Transceivers.pdf", "family": "Transceiver", "name": {"uk": "Трансивер 10G SFP+ SR (багатомод, до 300 м)", "en": "10G SFP+ SR transceiver (multimode, up to 300 m)"}, "verified": "datasheet"},
+    "FN-TRAN-SFP+LR": {"kind": "accessory", "code": "000081238", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/Fortinet_Transceivers.pdf", "family": "Transceiver", "name": {"uk": "Трансивер 10G SFP+ LR (одномод, до 10 км)", "en": "10G SFP+ LR transceiver (single-mode, up to 10 km)"}, "verified": "datasheet"},
+    "FN-CABLE-SFP+1": {"kind": "accessory", "code": "000081433", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/Fortinet_Transceivers.pdf", "family": "DAC", "name": {"uk": "DAC-кабель 10G SFP+, 1 м", "en": "10G SFP+ DAC cable, 1 m"}, "verified": "datasheet"},
+    "FN-CABLE-SFP+3": {"kind": "accessory", "code": "000085278", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/Fortinet_Transceivers.pdf", "family": "DAC", "name": {"uk": "DAC-кабель 10G SFP+, 3 м", "en": "10G SFP+ DAC cable, 3 m"}, "verified": "datasheet"},
+    "FN-TRAN-GC": {"kind": "accessory", "code": "000085652", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/Fortinet_Transceivers.pdf", "family": "Transceiver", "name": {"uk": "Трансивер 1G SFP RJ45 (мідь)", "en": "1G SFP RJ45 transceiver (copper)"}, "verified": "datasheet"},
     "FS-PSU-1200": {"kind": "accessory", "family": "PSU", "name": {"uk": "Запасний БЖ 1200 Вт для FS-624F/648F-FPOE", "en": "Spare 1200 W PSU for FS-624F/648F-FPOE"}, "verified": "datasheet"},
 
     "KAXBSM-00104-C001-BP": {"kind": "accessory", "family": "Corning Everon · мідь", "name": {"uk": "Модуль Keystone RJ45 Cat.6A екранований Everon KS500S, 10GBase-T, 4PPoE (802.3bt), упаковка 24 шт.", "en": "Everon KS500S shielded Cat.6A Keystone RJ45 jack, 10GBase-T, 4PPoE (802.3bt), pack of 24"}, "verified": "datasheet", "source": "https://ecatalog.corning.com/optical-communications/EMEA/en_GB/Copper-Hardware/Copper-Jacks/Copper-Jacks-Shielded/Everon%C2%AE-Copper-Datacom-KS500S-Shielded-Jack/p/everon-copper-datacom-ks500s-shielded-jack", "notes": "Є також упаковка 6 шт.: KAXBSM-00104-C001-B6."},
@@ -243,8 +263,8 @@
     "UAXCSE-U0201-C001": {"kind": "accessory", "family": "Corning Everon · мідь", "name": {"uk": "Розетка Everon накладна на 2 модулі Keystone/VOL, 78×70 мм, біла (без модулів)", "en": "Everon surface-mount outlet for 2 Keystone/VOL jacks, 78×70 mm, white (no jacks)"}, "verified": "datasheet", "source": "https://ecatalog.corning.com/optical-communications/IN/en/Copper-Hardware/Copper-Outlets/Everon%C2%AE-Copper-Datacom-Terminal-Outlet-VOL-and-Keystone/p/UAXCSE-U0201-C001"},
     "XE005315637": {"kind": "accessory", "family": "Corning Everon · мідь", "name": {"uk": "Кабельний органайзер Everon 19\", 1U, чорний", "en": "Everon cable management panel 19\", 1U, black"}, "rack_units": 1, "verified": "third_party", "source": "https://cms.ua/en/catalogue/racks/organizers/"},
 
-    "012TEU-83198A2G": {"kind": "accessory", "family": "Corning · оптика", "name": {"uk": "Кабель оптичний FREEDM, 12 волокон OM4 (ClearCurve), indoor/outdoor U-DQ(ZN)BH, LSZH, ціна за метр", "en": "FREEDM fibre cable, 12× OM4 (ClearCurve), indoor/outdoor U-DQ(ZN)BH, LSZH, per metre"}, "verified": "datasheet", "source": "https://ecatalog.corning.com/optical-communications/EMEA/en/Fiber-Optic-Cables/Indoor-Outdoor/Indoor-Outdoor-Duct-Cables/FREEDM%C2%AE-Gel-filled-Central-Tube-Dielectric-Armor-Indoor-Outdoor-Cable%2C-U-DQ%28ZN%29BH/p/012TEU-83198A2G", "notes": "Центральна трубка з гелем, діелектрична броня, Ø 5,6 мм, CPR Dca. Кількість у специфікації — у метрах."},
-    "012EEU-13122A2G": {"kind": "accessory", "family": "Corning · оптика", "name": {"uk": "Кабель оптичний 12 волокон OS2 (SMF-28 Ultra), indoor/outdoor U-DQ(ZN)BH, LSZH, ціна за метр", "en": "Fibre cable, 12× OS2 (SMF-28 Ultra), indoor/outdoor U-DQ(ZN)BH, LSZH, per metre"}, "verified": "third_party", "source": "https://multinetfze.com/product/012eeu-13122a2g/", "notes": "Кількість у специфікації — у метрах. Звірити конструкцію з дистриб'ютором."},
+    "012TEU-83198A2G": {"kind": "accessory", "unit": "м", "family": "Corning · оптика", "name": {"uk": "Кабель оптичний FREEDM, 12 волокон OM4 (ClearCurve), indoor/outdoor U-DQ(ZN)BH, LSZH, ціна за метр", "en": "FREEDM fibre cable, 12× OM4 (ClearCurve), indoor/outdoor U-DQ(ZN)BH, LSZH, per metre"}, "verified": "datasheet", "source": "https://ecatalog.corning.com/optical-communications/EMEA/en/Fiber-Optic-Cables/Indoor-Outdoor/Indoor-Outdoor-Duct-Cables/FREEDM%C2%AE-Gel-filled-Central-Tube-Dielectric-Armor-Indoor-Outdoor-Cable%2C-U-DQ%28ZN%29BH/p/012TEU-83198A2G", "notes": "Центральна трубка з гелем, діелектрична броня, Ø 5,6 мм, CPR Dca. Кількість у специфікації — у метрах."},
+    "012EEU-13122A2G": {"kind": "accessory", "unit": "м", "family": "Corning · оптика", "name": {"uk": "Кабель оптичний 12 волокон OS2 (SMF-28 Ultra), indoor/outdoor U-DQ(ZN)BH, LSZH, ціна за метр", "en": "Fibre cable, 12× OS2 (SMF-28 Ultra), indoor/outdoor U-DQ(ZN)BH, LSZH, per metre"}, "verified": "third_party", "source": "https://multinetfze.com/product/012eeu-13122a2g/", "notes": "Кількість у специфікації — у метрах. Звірити конструкцію з дистриб'ютором."},
     "LAN1-12AD-PGTL-B": {"kind": "accessory", "family": "Corning LANscape · оптика", "name": {"uk": "Оптична панель LANscape 1U: 12 волокон OM3/OM4, LC duplex зі шторками, з пігтейлами та сплайс-касетою", "en": "LANscape fibre housing 1U: 12 fibres OM3/OM4, shuttered LC duplex, with pigtails and splice pack"}, "rack_units": 1, "verified": "third_party", "source": "https://cms.ua/en/catalogue/fiber_optic_system/lanscape_fiber_housing/", "notes": "КДЗС (гільзи) замовляються окремо."},
     "LAN1-24AD-PGTL-B": {"kind": "accessory", "family": "Corning LANscape · оптика", "name": {"uk": "Оптична панель LANscape 1U: 24 волокна OM3/OM4, LC duplex зі шторками, з пігтейлами та сплайс-касетою", "en": "LANscape fibre housing 1U: 24 fibres OM3/OM4, shuttered LC duplex, with pigtails and splice pack"}, "rack_units": 1, "verified": "third_party", "source": "https://cms.ua/en/catalogue/fiber_optic_system/lanscape_fiber_housing/", "notes": "КДЗС (гільзи) замовляються окремо."},
     "LAN1-12AE-PGTL-B": {"kind": "accessory", "family": "Corning LANscape · оптика", "name": {"uk": "Оптична панель LANscape 1U: 12 волокон OS2, LC/UPC duplex зі шторками, з пігтейлами та сплайс-касетою", "en": "LANscape fibre housing 1U: 12 fibres OS2, shuttered LC/UPC duplex, with pigtails and splice pack"}, "rack_units": 1, "verified": "third_party", "source": "https://cms.ua/en/catalogue/fiber_optic_system/lanscape_fiber_housing/", "notes": "КДЗС (гільзи) замовляються окремо."},
@@ -349,6 +369,11 @@
     "variant_quantity_threshold": 25,
     "bt_auto_upgrade": true,
     "aggregation_auto_threshold": 3,
+    "core_min_switches": 16,
+    "core_min_floors": 2,
+    "dac_short_model": "FN-CABLE-SFP+1",
+    "dac_long_model": "FN-CABLE-SFP+3",
+    "dac_short_max_u": 10,
     "core_icl_links": 2,
     "core_port_check": true,
     "reserve_percent_default": 20,
@@ -373,12 +398,12 @@
     "fortios_default": "7.6.4",
     "dual_psu_tiers_hint": [1, 2],
     "ip": {
+      "id_template": "10.{id}.{vlan}.0/24",
       "buffer": 0.3,
       "smallest_prefix": 30,
       "static_reserve": 10,
       "segments": [
         {"id": "data", "vlan": 10, "label": {"uk": "Data (проводові користувачі)", "en": "Data (wired users)"}, "source": "sockets", "dhcp": true, "default": true},
-        {"id": "voice", "vlan": 20, "label": {"uk": "Voice (IP-телефони)", "en": "Voice (IP phones)"}, "source": "voice", "dhcp": true, "default": false},
         {"id": "wifi", "vlan": 30, "label": {"uk": "Wi-Fi (корпоративні клієнти)", "en": "Wi-Fi (corporate clients)"}, "source": "wifi", "dhcp": true, "default": true},
         {"id": "guest", "vlan": 40, "label": {"uk": "Гостьовий Wi-Fi", "en": "Guest Wi-Fi"}, "source": "guest", "dhcp": true, "default": false},
         {"id": "cctv", "vlan": 50, "label": {"uk": "CCTV (камери)", "en": "CCTV (cameras)"}, "source": "cameras", "dhcp": false, "default": true},

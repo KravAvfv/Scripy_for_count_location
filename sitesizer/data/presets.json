@@ -28,7 +28,7 @@
       "description": {"uk": "Open space з високою щільністю Wi-Fi, IP-телефонія, гостьова мережа, висока критичність.", "en": "High-density open space, IP telephony, guest network, high criticality."},
       "input": {
         "mode": "extended", "sockets": 120, "cameras": 8, "tier": 2, "aggregation": "auto", "reserve": true,
-        "voice_phones": 40, "guest_clients": 30,
+        "guest_clients": 30,
         "ap_groups": [{"zone": "high_density", "qty": 14, "name": "Open space"}, {"zone": "corridor", "qty": 4}],
         "ip": {"base_network": "10.60.0.0/16"}
       }
@@ -51,7 +51,7 @@
       "description": {"uk": "Критичний майданчик: HA, резервоване ядро, ДБЖ, OOB, повний IP-план.", "en": "Critical site: HA, redundant core, UPS, OOB, full IP plan."},
       "input": {
         "mode": "extended", "sockets": 300, "cameras": 64, "tier": 1, "aggregation": "yes", "reserve": true,
-        "redundant_psu": true, "voice_phones": 120, "guest_clients": 80, "inspected_mbps": 1500,
+        "redundant_psu": true, "guest_clients": 80, "inspected_mbps": 1500,
         "ap_groups": [{"zone": "high_density", "qty": 30}, {"zone": "low_density", "qty": 10}, {"zone": "corridor", "qty": 8}, {"zone": "outdoor", "qty": 4}],
         "ip": {"base_network": "10.10.0.0/16"}
       }

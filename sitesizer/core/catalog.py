@@ -99,7 +99,9 @@ class ApSpec(_Strict):
     mimo: str = ""
 
 
-Kind = Literal["switch", "firewall", "ap", "accessory", "license"]
+Kind = Literal["switch", "firewall", "ap", "accessory", "license", "work"]
+Section = Literal["", "sks", "network", "works"]
+SECTION_ORDER = ("sks", "network", "works")
 Verified = Literal["datasheet", "third_party", "assumption"]
 Lifecycle = Literal["active", "eoo", "eol"]
 
@@ -122,6 +124,18 @@ class Device(_Strict):
     rack_size_u: int | None = Field(default=None, ge=1)
     ups_va: int | None = Field(default=None, ge=1)
     price: float | None = Field(default=None, ge=0)
+    """Main price (column G of the Excel template)."""
+    price_min: float | None = Field(default=None, ge=0)
+    """Second, lower price (column E of the Excel template)."""
+    code: str = ""
+    """Internal (1C) article number, column A of the Excel template."""
+    unit: str = "шт."
+    section: Section = ""
+    """Excel template section; empty = derived from the kind (see :func:`section_of`)."""
+    datasheet: str = ""
+    """Official datasheet (PDF) URL."""
+    order: int | None = None
+    """Position in the Excel template (imported rows keep their order)."""
     lifecycle: Lifecycle = "active"
     verified: Verified = "assumption"
     source: str = ""
@@ -186,6 +200,8 @@ class IpSegment(_Strict):
 
 
 class IpRules(_Strict):
+    id_template: str = "10.{id}.{vlan}.0/24"
+    """Subnet of each VLAN when the location ID (second octet) is set."""
     buffer: float = Field(default=0.3, ge=0, le=10)
     smallest_prefix: int = Field(default=30, ge=8, le=30)
     static_reserve: int = Field(default=10, ge=0)
@@ -203,6 +219,15 @@ class Rules(_Strict):
     variant_quantity_threshold: int = Field(default=25, ge=0)
     bt_auto_upgrade: bool = True
     aggregation_auto_threshold: int = Field(default=3, ge=0)
+    """Deprecated (kept so older user catalogs still load); see ``core_min_*``."""
+    core_min_switches: int = Field(default=16, ge=0)
+    """The core (FS-1024E) is added automatically only above this many edge switches..."""
+    core_min_floors: int = Field(default=2, ge=0)
+    """...and only when the location has more floors than this."""
+    dac_short_model: str = "FN-CABLE-SFP+1"
+    dac_long_model: str = "FN-CABLE-SFP+3"
+    dac_short_max_u: int = Field(default=10, ge=0, le=60)
+    """Devices in the same cabinet at most this many units apart get the short DAC."""
     core_icl_links: int = Field(default=2, ge=0)
     core_port_check: bool = True
     reserve_percent_default: float = Field(default=20, ge=0, le=500)
@@ -350,12 +375,39 @@ class Catalog(_Strict):
         items = [(k, v) for k, v in self.models.items() if v.rack_size_u]
         return sorted(items, key=lambda kv: kv[1].rack_size_u or 0)
 
+    def template_models(self) -> list[tuple[str, Device]]:
+        """Models in Excel-template order: section, explicit order, then catalog order."""
+        items = [(k, v) for k, v in self.models.items() if v.kind != "license" or v.code]
+        index = {k: i for i, k in enumerate(self.models)}
+        return sorted(
+            items,
+            key=lambda kv: (
+                SECTION_ORDER.index(section_of(kv[0], kv[1])),
+                kv[1].order if kv[1].order is not None else 10**6,
+                index[kv[0]],
+            ),
+        )
+
     def tier(self, tier_id: int | str) -> Tier:
         return self.tiers[str(tier_id)]
 
     @property
     def has_prices(self) -> bool:
         return any(d.price is not None for d in self.models.values())
+
+
+_NETWORK_PREFIXES = ("FN-", "FG-", "FS-", "FAP-", "FC-", "UPS-", "OOB-")
+
+
+def section_of(model: str, dev: Device) -> str:
+    """Excel template section of a model: ``sks`` (structured cabling), ``network`` or ``works``."""
+    if dev.section:
+        return dev.section
+    if dev.kind == "work":
+        return "works"
+    if dev.kind in ("switch", "firewall", "ap", "license") or model.startswith(_NETWORK_PREFIXES):
+        return "network"
+    return "sks"
 
 
 class CatalogError(Exception):
@@ -426,6 +478,12 @@ def with_missing_defaults(catalog: Catalog, default: Catalog | None = None) -> C
         if model not in data["models"]:
             data["models"][model] = dev.model_dump(mode="json")
             added = True
+            continue
+        mine = data["models"][model]
+        for key in ("code", "datasheet"):
+            if not mine.get(key) and getattr(dev, key):
+                mine[key] = getattr(dev, key)
+                added = True
     if not catalog.passive.fiber and base.passive.fiber:
         data["passive"] = base.passive.model_dump(mode="json")
         added = True
@@ -459,6 +517,8 @@ PROTOTYPE_COMPAT_OVERRIDES: dict[str, Any] = {
         "bt_auto_upgrade": False,
         "poe_autoscale": False,
         "core_port_check": False,
+        "core_min_switches": 2,
+        "core_min_floors": 0,
     },
     "categories": {"camera_switch": {"premium": "FS-448E-POE"}},
     "models": {

@@ -145,10 +145,10 @@ def test_pricing_totals(catalog: Catalog) -> None:
 
 
 def test_compare_tiers(catalog: Catalog) -> None:
-    a = size_site(make_site(sockets=100, tier=2, redundant_psu=False), catalog)
-    b = size_site(make_site(sockets=100, tier=1, redundant_psu=False), catalog)
+    a = size_site(make_site(sockets=100, tier=2, redundant_psu=False, aggregation="yes"), catalog)
+    b = size_site(make_site(sockets=100, tier=1, redundant_psu=False, aggregation="yes"), catalog)
     rows = {(r.group, r.model): r for r in diff_results(a, b)}
-    fw = rows[("firewall", "FG-120G")]  # 3 access switches → core → 10G firewall
+    fw = rows[("firewall", "FG-120G")]  # core → 10G firewall
     assert fw.qty_a == 1 and fw.qty_b == 2 and fw.status == "changed"
     assert rows[("power", "OOB-LTE")].status == "added"
     assert cost_delta(list(rows.values())) is None

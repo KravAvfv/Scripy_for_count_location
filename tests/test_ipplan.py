@@ -88,7 +88,7 @@ def test_tiny_segments(catalog: Catalog) -> None:
 
 def test_engine_ip_plan_optional_segments(catalog: Catalog) -> None:
     r = size_site(
-        make_site(mode="extended", sockets=20, guest_clients=30, voice_phones=0, ip={"base_network": "10.1.0.0/16"}),
+        make_site(mode="extended", sockets=20, guest_clients=30, ip={"base_network": "10.1.0.0/16"}),
         catalog,
     )
     assert r.ip_plan is not None

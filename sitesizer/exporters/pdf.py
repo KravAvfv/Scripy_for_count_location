@@ -34,6 +34,7 @@ BORDER = "#D5DEE7"
 TEXT = "#1F2D3A"
 MUTED = "#6A7682"
 DPI = 300
+PDF_SECTIONS = ("diagram", "bom", "ip", "racks", "notes")
 
 
 def _e(text: object) -> str:
@@ -74,6 +75,15 @@ def build_html(
     tier = catalog.tier(result.tier_id)
     fw = result.firewall
     parts: list[str] = []
+    want = set(opts.get("sections") or PDF_SECTIONS)
+    site = result.input
+    if site.location_code or site.location_id is not None:
+        bits = [
+            site.location_code and t.t("pdf.loc_code", code=site.location_code),
+            site.location_id is not None and t.t("pdf.loc_id", id=site.location_id),
+            t.plural("plural.floors", site.floors),
+        ]
+        parts.append(f"<p class='m'>{_e('  ·  '.join(str(b) for b in bits if b))}</p>")
     # ---- summary tiles -----------------------------------------------------------------------
     tiles = [
         (t.t("pdf.t_tier"), f"{result.tier_id} · {t.pick(tier.label)}", t.pick(tier.sla)),
@@ -101,32 +111,48 @@ def build_html(
     )
     parts.append(f"<table class='tiles' width='100%' cellspacing='4'><tr>{tile_cells}</tr></table>")
 
+    # ---- equipment summary ---------------------------------------------------------------------
+    counts = [
+        (line.model, line.qty, line.description)
+        for line in result.bom
+        if line.qty and line.group in ("firewall", "core_switch", "wifi_switch", "access_switch", "camera_switch", "ap")
+    ]
+    if counts:
+        parts.append(f"<h2>{_e(t.t('pdf.h_summary'))}</h2>")
+        rows_s = "".join(
+            f"<tr><td width='22%'><b>{_e(m)}</b></td><td class='qty' width='8%'>{_e(q)}</td><td>{_e(d)}</td></tr>"
+            for m, q, d in counts
+        )
+        parts.append(f"<table class='grid' cellspacing='0'>{rows_s}</table>")
+
     # ---- diagram -------------------------------------------------------------------------------
-    parts.append(f"<h2>{_e(t.t('pdf.h_diagram'))}</h2>")
-    parts.append(f"<p align='center'><img src='diagram://site' width='{image_width}'></p>")
+    if "diagram" in want:
+        parts.append(f"<h2>{_e(t.t('pdf.h_diagram'))}</h2>")
+        parts.append(f"<p align='center'><img src='diagram://site' width='{image_width}'></p>")
 
     # ---- BoM -----------------------------------------------------------------------------------
     with_prices = any(line.unit_price is not None for line in result.bom)
-    parts.append(f"<h2>{_e(t.t('pdf.h_bom'))}</h2>")
-    head: list[str] = [t.t("col.model"), t.t("ui.col_qty_short"), t.t("col.reason")]
+    head: list[str] = [t.t("col.model"), t.t("col.code"), t.t("ui.col_qty_short")]
     if with_prices:
         head += [t.t("col.unit_price"), t.t("col.total_price")]
-    widths = ["26%", "8%", "66%"] if not with_prices else ["22%", "7%", "45%", "13%", "13%"]
+    widths = ["66%", "18%", "16%"] if not with_prices else ["44%", "14%", "10%", "16%", "16%"]
     rows = ["<tr>" + "".join(f"<th width='{w}'>{_e(h)}</th>" for h, w in zip(head, widths, strict=True)) + "</tr>"]
     order = {g: i for i, g in enumerate(BOM_GROUP_ORDER)}
     grouped: dict[str, list[Any]] = {}
     for line in result.bom:
+        if line.qty is None:
+            continue
         grouped.setdefault(line.group, []).append(line)
     cur = catalog.meta.currency
     for g in sorted(grouped, key=lambda g: order.get(g, 99)):
         rows.append(f"<tr><td class='group' colspan='{len(head)}'>{_e(t.t(f'group.{g}'))}</td></tr>")
         for line in grouped[g]:
-            cls = " class='ref'" if line.is_reference else ""
+            cls = ""
             desc = f"<br><span class='m small'>{_e(line.description or line.category)}</span>"
             cells = [
                 f"<td{cls}><b>{_e(line.model)}</b>{desc}</td>",
-                f"<td class='qty'>{_e(line.qty if line.qty is not None else '—')}</td>",
-                f"<td{cls}>{_e(line.reason)}</td>",
+                f"<td class='m'>{_e(line.code)}</td>",
+                f"<td class='qty'>{_e(line.qty)} {_e(line.unit)}</td>",
             ]
             if with_prices:
                 cells += [
@@ -134,8 +160,10 @@ def build_html(
                     f"<td class='num'>{_e(format_money(line.total_price, cur) if line.total_price is not None else '')}</td>",
                 ]
             rows.append("<tr>" + "".join(cells) + "</tr>")
-    parts.append("<table class='grid' cellspacing='0'>" + "".join(rows) + "</table>")
-    if with_prices:
+    if "bom" in want:
+        parts.append(f"<h2>{_e(t.t('pdf.h_bom'))}</h2>")
+        parts.append("<table class='grid' cellspacing='0'>" + "".join(rows) + "</table>")
+    if with_prices and "bom" in want:
         s = summarize_prices(
             result.bom, cur, float(opts.get("discount_pct", 0) or 0), float(opts.get("vat_pct", 0) or 0)
         )
@@ -157,17 +185,17 @@ def build_html(
 
     # ---- IP plan -------------------------------------------------------------------------------
     plan = result.ip_plan
-    if plan is not None and plan.segments:
+    if plan is not None and plan.segments and "ip" in want:
         parts.append(f"<h2>{_e(t.t('pdf.h_ip'))}</h2>")
-        with_addr = bool(plan.base_network) and not plan.error
-        head = [t.t("col.segment"), "VLAN", t.t("col.hosts"), t.t("col.prefix")]
+        with_addr = plan.has_addresses
+        head = ["VLAN", t.t("col.segment"), t.t("col.hosts"), t.t("col.prefix")]
         if with_addr:
-            head += [t.t("col.network"), t.t("col.gateway"), t.t("col.dhcp")]
+            head += [t.t("col.network"), t.t("col.mask"), t.t("col.gateway"), t.t("col.dhcp")]
         rows = ["<tr>" + "".join(f"<th>{_e(h)}</th>" for h in head) + "</tr>"]
         for sgm in plan.segments:
-            vals = [sgm.name, sgm.vlan, sgm.hosts, f"/{sgm.prefix} ({sgm.capacity})"]
+            vals = [sgm.vlan, sgm.name, sgm.hosts, f"/{sgm.prefix} ({sgm.capacity})"]
             if with_addr:
-                vals += [sgm.network, sgm.gateway, sgm.dhcp_range]
+                vals += [sgm.network, sgm.mask, sgm.gateway, sgm.dhcp_range]
             rows.append("<tr>" + "".join(f"<td>{_e(v)}</td>" for v in vals) + "</tr>")
         parts.append("<table class='grid' cellspacing='0'>" + "".join(rows) + "</table>")
         parts.append(f"<p class='m small'>{_e(t.t('ip.note', pct=round(catalog.rules.ip.buffer * 100)))}</p>")
@@ -184,7 +212,7 @@ def build_html(
         )
 
     # ---- racks ---------------------------------------------------------------------------------
-    if result.rack.plans and rack_width:
+    if result.rack.plans and rack_width and "racks" in want:
         parts.append(f"<h2>{_e(t.t('pdf.h_racks'))}</h2>")
         parts.append(f"<p align='center'><img src='diagram://racks' width='{rack_width}'></p>")
 
@@ -196,7 +224,7 @@ def build_html(
         or c.code
         in ("PSU_CONFIRM", "FW_FORTIOS", "BT_UPGRADE", "POE_AUTOSCALE", "DUAL_WAN", "UNVERIFIED", "CORE_PORTS")
     ]
-    if notable or result.input.notes:
+    if (notable or result.input.notes) and "notes" in want:
         parts.append(f"<h2>{_e(t.t('pdf.h_notes'))}</h2>")
         if result.input.notes:
             parts.append(f"<p>{_e(result.input.notes)}</p>")

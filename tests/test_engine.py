@@ -154,14 +154,19 @@ def test_single_psu_poe_note(catalog: Catalog) -> None:
 
 
 # ---- aggregation ----------------------------------------------------------------------------
-def test_aggregation_auto_threshold(catalog: Catalog) -> None:
-    assert size_site(make_site(sockets=96), catalog).core.count == 0  # 2 switches
-    assert size_site(make_site(sockets=144), catalog).core.count == 1  # 3 switches
+def test_core_only_above_16_switches_and_2_floors(catalog: Catalog) -> None:
+    def core(switches: int, floors: int) -> int:
+        return size_site(make_site(sockets=48 * switches, floors=floors), catalog).core.count
+
+    assert core(16, 5) == 0  # 16 switches is not "more than 16"
+    assert core(17, 2) == 0  # 2 floors is not "more than 2"
+    assert core(17, 3) == 1
+    assert core(3, 10) == 0  # the old "3 switches" rule is gone
 
 
 def test_aggregation_forced_and_disabled(catalog: Catalog) -> None:
     assert size_site(make_site(sockets=10, aggregation="yes"), catalog).core.count == 1
-    r = size_site(make_site(sockets=48 * 6, aggregation="no"), catalog)
+    r = size_site(make_site(sockets=48 * 20, floors=4, aggregation="no"), catalog)
     assert r.core.count == 0 and "AGG_OFF_MANY" in codes(r)
 
 
@@ -172,14 +177,14 @@ def test_prototype_aggregation_aliases() -> None:
 
 
 def test_tier1_core_pair(catalog: Catalog) -> None:
-    r = size_site(make_site(sockets=200, tier=1, redundant_psu=False), catalog)
+    r = size_site(make_site(sockets=200, tier=1, redundant_psu=False, aggregation="yes"), catalog)
     assert r.core.count == 2
     assert "n+1" in r.lines("core_switch")[0].tags
 
 
 def test_core_port_limit_adds_groups(catalog: Catalog) -> None:
     # 24 ports − 1 FortiLink uplink = 23 access switches per single core
-    r = size_site(make_site(sockets=48 * 30), catalog)
+    r = size_site(make_site(sockets=48 * 30, floors=5), catalog)
     assert r.core.count == 2 and "CORE_PORTS" in codes(r)
 
 
@@ -318,10 +323,17 @@ def test_english_output(catalog: Catalog) -> None:
     assert r.lines("access_switch")[0].category == "Access switches"
 
 
-def test_extended_ip_plan_present(catalog: Catalog) -> None:
+def test_ip_plan_in_every_mode(catalog: Catalog) -> None:
     r = size_site(make_site(mode="extended", sockets=50), catalog)
     assert r.ip_plan is not None and r.ip_plan.segments[0].id == "data"
-    assert size_site(make_site(sockets=50), catalog).ip_plan is None
+    quick = size_site(make_site(sockets=50), catalog).ip_plan
+    assert quick is not None and not quick.has_addresses
+
+
+def test_old_project_with_voice_phones_loads(catalog: Catalog) -> None:
+    site = SiteInput.model_validate({"sockets": 10, "voice_phones": 30})
+    r = size_site(site, catalog)
+    assert r.ip_plan is not None and "voice" not in [s.id for s in r.ip_plan.segments]
 
 
 def test_448e_fpoe_camera_switch(catalog: Catalog) -> None:
@@ -371,11 +383,104 @@ def test_rack_size_preference_and_split(catalog: Catalog) -> None:
         assert len(units) == len(set(units)), "items overlap"
 
 
-def test_switch_stays_with_its_panels(catalog: Catalog) -> None:
-    r = size_site(make_site(sockets=96, rack_size_u=24), catalog)
+def test_house_rack_pattern(catalog: Catalog) -> None:
+    """Organizer · PP · organizer · switch · organizer · PP PP · organizer · switch … (photo of rack 5B)."""
+    r = size_site(make_site(sockets=96, cameras=48, aps=[("corridor", 10)]), catalog)
     items = r.rack.plans[0].items
-    idx = next(i for i, it in enumerate(items) if it.group == "access_switch")
-    assert [it.group for it in items[idx - 3 : idx]] == ["panel", "panel", "manager"]
+    first = next(i for i, it in enumerate(items) if it.group == "manager")
+    body = [it.group for it in items[first:] if it.group not in ("pdu", "power")]
+    assert body == [
+        "manager", "panel",  # Wi-Fi panel
+        "manager", "wifi_switch",
+        "manager", "panel",  # ASW01 upper
+        "manager", "access_switch",
+        "manager", "panel", "panel",  # ASW01 lower + ASW02 upper
+        "manager", "access_switch",
+        "manager", "panel", "panel",  # ASW02 lower + VSW01 upper
+        "manager", "camera_switch",
+        "manager", "panel",  # VSW01 lower
+    ]  # fmt: skip
+    labels = [it.label for it in items if it.group == "panel"]
+    assert labels == ["ПП Wi-Fi", "ПП №1", "ПП №2", "ПП №3", "ПП №4", "ПП №V1", "ПП №V2"]
+
+
+def test_device_and_rack_names_use_location_code(catalog: Catalog) -> None:
+    r = size_site(make_site(sockets=96, location_code="BO123"), catalog)
+    plan = r.rack.plans[0]
+    assert plan.name == "BO123-1 поверх комутаційна A (1A)"
+    names = [it.label for it in plan.items if it.group == "access_switch"]
+    assert names == ["BO123-1A-ASW01", "BO123-1A-ASW02"]
+    r2 = size_site(
+        make_site(sockets=96, location_code="BO123", layout={"props": {"mdf-1": {"floor": 5, "letter": "B"}}}),
+        catalog,
+    )
+    assert r2.rack.plans[0].tag == "5B"
+    assert next(it.label for it in r2.rack.plans[0].items if it.group == "access_switch") == "BO123-5B-ASW01"
+
+
+def _dac(r) -> dict[str, int]:
+    return {line.model: line.qty for line in r.bom if line.model.startswith("FN-CABLE")}
+
+
+def test_dac_length_follows_layout(catalog: Catalog) -> None:
+    site = dict(mode="extended", sockets=48 * 2, aggregation="yes")
+    r = size_site(make_site(**site), catalog)
+    # core and both switches sit close together at the top of the cabinet → 1 m
+    assert _dac(r) == {"FN-CABLE-SFP+1": 3}  # 2 uplinks + core ↔ FortiGate
+    # drag the second switch to the bottom of the cabinet → its uplink needs 3 m
+    plan = r.rack.plans[0]
+    moved = make_site(**site, layout={"positions": {"access_switch:2": {"rack": plan.key, "u": 3}}})
+    r2 = size_site(moved, catalog)
+    assert _dac(r2) == {"FN-CABLE-SFP+1": 2, "FN-CABLE-SFP+3": 1}
+    it = next(i for i in r2.rack.plans[0].items if i.id == "access_switch:2")
+    assert it.u == 3 and it.manual
+
+
+def test_manual_layout_racks_and_extras(catalog: Catalog) -> None:
+    base = size_site(make_site(sockets=96), catalog)
+    key = base.rack.plans[0].key
+    layout = {
+        "added": ["user-1"],
+        "props": {"user-1": {"size_u": 24}},
+        "positions": {"access_switch:2": {"rack": "user-1", "u": 20}},
+        "extras": [{"id": "x1", "kind": "manager", "rack": "user-1", "u": 21}],
+        "hidden": [f"pdu:{key}:1"],
+    }
+    r = size_site(make_site(sockets=96, layout=layout), catalog)
+    assert [p.key for p in r.rack.plans] == [key, "user-1"]
+    user = r.rack.plans[1]
+    assert user.size_u == 24 and user.letter == "B"
+    assert {it.id for it in user.items} == {"access_switch:2", "x1"}
+    assert not any(it.group == "pdu" for it in r.rack.plans[0].items)
+    assert any(line.model == "RACK-24U" for line in r.lines("rack"))
+    # removing the automatic cabinet moves its devices into the remaining one
+    r2 = size_site(make_site(sockets=96, layout={**layout, "removed": [key]}), catalog)
+    assert [p.key for p in r2.rack.plans] == ["user-1"]
+    ids = {it.id for it in r2.rack.plans[0].items}
+    assert {"access_switch:1", "access_switch:2", "firewall:1"} <= ids
+
+
+def test_manual_overlap_is_reported(catalog: Catalog) -> None:
+    r = size_site(make_site(sockets=96), catalog)
+    plan = r.rack.plans[0]
+    fw = next(it for it in plan.items if it.group == "firewall")
+    site = make_site(sockets=96, layout={"positions": {"access_switch:1": {"rack": plan.key, "u": fw.u}}})
+    r2 = size_site(site, catalog)
+    units = [u for it in r2.rack.plans[0].items for u in range(it.u, it.top + 1)]
+    assert len(units) == len(set(units)), "the firewall must move away from the dropped switch"
+
+
+def test_manual_quantity_and_price(catalog: Catalog) -> None:
+    site = make_site(sockets=96, bom={"overrides": {"access_switch:FS-148F": {"qty": 5, "price": 1000}}})
+    r = size_site(site, catalog)
+    line = r.lines("access_switch")[0]
+    assert (line.qty, line.calc_qty, line.unit_price, line.manual) == (5, 2, 1000, True)
+    assert r.categories["access_switch"].count == 5
+    assert sum(1 for p in r.rack.plans for it in p.items if it.group == "access_switch") == 5
+    custom = {"id": "c1", "name": "Монтаж шафи", "qty": 2, "price": 900, "section": "works"}
+    r2 = size_site(make_site(sockets=10, bom={"custom": [custom]}), catalog)
+    line = r2.lines("custom")[0]
+    assert (line.description, line.qty, line.total_price, line.key) == ("Монтаж шафи", 2, 1800, "custom:c1")
 
 
 def test_fibre_backbone_to_idf(catalog: Catalog) -> None:

@@ -31,14 +31,121 @@ class ApGroup(BaseModel):
     """Optional free-text zone name (e.g. "Склад, ряд A")."""
 
 
+class CustomSegment(BaseModel):
+    """A VLAN added by the user (not in the catalog)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    name: str = "VLAN"
+    vlan: int = Field(default=100, ge=1, le=4094)
+    hosts: int = Field(default=10, ge=0, le=1_000_000)
+    dhcp: bool = True
+
+
 class IpOptions(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     base_network: str = ""
-    """e.g. ``10.50.0.0/16``; empty = sizes only, no addresses."""
+    """e.g. ``10.50.0.0/16``; empty = sizes only, no addresses. Ignored when the location ID is set."""
     segments: dict[str, bool] = Field(default_factory=dict)
     """Segment id -> enabled; missing ids use the catalog default."""
     vlan_overrides: dict[str, int] = Field(default_factory=dict)
+    name_overrides: dict[str, str] = Field(default_factory=dict)
+    prefix_overrides: dict[str, int] = Field(default_factory=dict)
+    """Segment id -> prefix length (e.g. 23 for a /23)."""
+    custom: list[CustomSegment] = Field(default_factory=list)
+
+
+class BomOverride(BaseModel):
+    """Manual edits of one BoM line (``None`` = keep the calculated value)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    qty: int | None = Field(default=None, ge=0, le=1_000_000)
+    price: float | None = Field(default=None, ge=0)
+    price_min: float | None = Field(default=None, ge=0)
+
+
+Section = Literal["sks", "network", "works"]
+
+
+class CustomLine(BaseModel):
+    """A line added to the BoM by hand (from the catalog or free text)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    model: str = ""
+    """Catalog model id or a free part number."""
+    name: str = ""
+    code: str = ""
+    unit: str = "шт."
+    qty: int = Field(default=1, ge=0, le=1_000_000)
+    price: float | None = Field(default=None, ge=0)
+    price_min: float | None = Field(default=None, ge=0)
+    section: Section = "network"
+
+
+class BomEdits(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    overrides: dict[str, BomOverride] = Field(default_factory=dict)
+    """BoM line key (``group:model``) -> manual values."""
+    custom: list[CustomLine] = Field(default_factory=list)
+
+
+RackExtraKind = Literal["manager", "panel", "shelf", "blank", "odf", "custom"]
+
+
+class RackProps(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    size_u: int | None = Field(default=None, ge=4, le=60)
+    floor: int | None = Field(default=None, ge=-10, le=300)
+    letter: str | None = None
+    name: str | None = None
+
+
+class RackPos(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    rack: str
+    u: int = Field(ge=1, le=60)
+
+
+class RackExtra(BaseModel):
+    """A passive item placed by the user (organizer, patch panel, shelf, blank...)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    kind: RackExtraKind = "manager"
+    rack: str
+    u: int = Field(ge=1, le=60)
+    height: int = Field(default=1, ge=1, le=10)
+    label: str = ""
+
+
+class RackLayout(BaseModel):
+    """Manual cabinet layout on top of the automatic one."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    added: list[str] = Field(default_factory=list)
+    """Keys of cabinets added by the user."""
+    removed: list[str] = Field(default_factory=list)
+    """Keys of automatic cabinets removed by the user (their items move elsewhere)."""
+    props: dict[str, RackProps] = Field(default_factory=dict)
+    positions: dict[str, RackPos] = Field(default_factory=dict)
+    """Item id -> where the user dropped it."""
+    hidden: list[str] = Field(default_factory=list)
+    """Automatic passive items removed by the user."""
+    extras: list[RackExtra] = Field(default_factory=list)
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.added or self.removed or self.props or self.positions or self.hidden or self.extras)
 
 
 class SiteInput(BaseModel):
@@ -47,6 +154,11 @@ class SiteInput(BaseModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
     name: str = "Локація"
+    location_code: str = Field(default="", max_length=32)
+    """Short site code used in device and cabinet names (e.g. ``BO123``)."""
+    location_id: int | None = Field(default=None, ge=0, le=255)
+    """Second octet of the site's addresses; builds the IP table (``10.<ID>.<VLAN>.0/24``)."""
+    floors: int = Field(default=1, ge=1, le=300)
     mode: Mode = "quick"
     sockets: int = Field(default=0, ge=0, le=1_000_000)
     cameras: int = Field(default=0, ge=0, le=1_000_000)
@@ -71,11 +183,12 @@ class SiteInput(BaseModel):
     fiber_type: FiberChoice = "auto"
     fiber_backbone_m: int | None = Field(default=None, ge=1, le=100_000)
     """Average fibre run from the main rack to each remote closet; ``None`` = estimate."""
-    voice_phones: int = Field(default=0, ge=0)
     guest_clients: int = Field(default=0, ge=0)
     iot_devices: int = Field(default=0, ge=0)
     addons: dict[str, bool | None] = Field(default_factory=dict)
     ip: IpOptions = Field(default_factory=IpOptions)
+    bom: BomEdits = Field(default_factory=BomEdits)
+    layout: RackLayout = Field(default_factory=RackLayout)
     notes: str = ""
 
     @field_validator("aggregation", mode="before")
@@ -133,6 +246,15 @@ class BomLine:
     details: list[str] = field(default_factory=list)
     """Extra "why this line?" bullet points."""
     unit_price: float | None = None
+    price_min: float | None = None
+    """Second (lower) price column of the Excel template (column E)."""
+    key: str = ""
+    """Stable id used for manual overrides (``group:model``, ``#n`` suffix for duplicates)."""
+    code: str = ""
+    unit: str = "шт."
+    calc_qty: int | None = None
+    """Calculated quantity before a manual override."""
+    manual: bool = False
 
     @property
     def total_price(self) -> float | None:
@@ -196,8 +318,18 @@ class RackItem:
     height: int
     label: str
     group: str
-    """Colour key: a BoM group, or ``panel``, ``manager``, ``fiber``, ``pdu``."""
+    """Colour key: a BoM group, or ``panel``, ``manager``, ``fiber``, ``pdu``, ``blank``, ``shelf``."""
     model: str = ""
+    id: str = ""
+    """Stable id used by the manual layout (``access_switch:3``, ``panel:access_switch:3:1``...)."""
+    manual: bool = False
+    """Placed by the user (drag & drop) rather than automatically."""
+    extra: bool = False
+    """Added by the user."""
+
+    @property
+    def top(self) -> int:
+        return self.u + self.height - 1
 
 
 @dataclass
@@ -210,6 +342,27 @@ class RackPlan:
     size_u: int
     model: str
     items: list[RackItem] = field(default_factory=list)
+    key: str = ""
+    floor: int = 1
+    letter: str = "A"
+
+    @property
+    def tag(self) -> str:
+        """Short cabinet tag like ``5B``."""
+        return f"{self.floor}{self.letter}"
+
+    def free_slot(self, height: int, start: int | None = None) -> int | None:
+        """Highest unit where ``height`` units are free (searching top-down), or ``None``."""
+        occupied = [False] * (self.size_u + 2)
+        for it in self.items:
+            for u in range(max(1, it.u), min(self.size_u, it.top) + 1):
+                occupied[u] = True
+        top = min(self.size_u, start or self.size_u)
+        for hi in range(top, height - 1, -1):
+            lo = hi - height + 1
+            if all(not occupied[u] for u in range(lo, hi + 1)):
+                return lo
+        return None
 
     @property
     def used_u(self) -> int:
@@ -271,6 +424,8 @@ class RackSummary:
     cable_boxes: int = 0
     plans: list[RackPlan] = field(default_factory=list)
     passive: PassiveSummary = field(default_factory=PassiveSummary)
+    layout_problems: list[str] = field(default_factory=list)
+    """Conflicts of the manual layout (overlaps, items that did not fit)."""
 
 
 @dataclass
@@ -285,6 +440,10 @@ class IpSegmentResult:
     gateway: str = ""
     dhcp_range: str = ""
     note: str = ""
+    mask: str = ""
+    custom: bool = False
+    dhcp: bool = True
+    too_small: bool = False
 
 
 @dataclass
@@ -293,6 +452,12 @@ class IpPlan:
     base_network: str = ""
     used_addresses: int = 0
     error: str = ""
+    location_id: int | None = None
+    template: str = ""
+
+    @property
+    def has_addresses(self) -> bool:
+        return any(s.network for s in self.segments)
 
 
 @dataclass
