@@ -167,7 +167,7 @@ class RacksView(QWidget):
         self.summary = label("", "muted", wrap=True)
         self.sum_card.add(self.summary)
         self.sum_card.add(hline())
-        self.sum_card.add(label(tr("rk.legend"), "caption", wrap=True))
+        self.sum_card.add(label(tr("rk.legend", u=state.catalog.rules.dac_short_max_u), "caption", wrap=True))
         side_lay.addWidget(self.sum_card)
         side_lay.addStretch(1)
 

@@ -30,7 +30,14 @@ catalog in the meantime.
       "power_base_w": 100,                 // system power without PoE (used for UPS sizing)
       "power_max_w": 880,
       "rack_units": 1,
-      "price": null,                       // unit price in meta.currency; null = unpriced
+      "price": null,                       // main unit price (template column G); null = unpriced
+      "price_min": null,                   // second price (template column E)
+      "code": "000084545",                 // 1C code (template column A)
+      "unit": "шт.",                       // unit (template column C)
+      "spec_name": "",                     // name as written in the template (used in the exported spec)
+      "section": "",                       // sks | network | works; empty = derived from the kind
+      "order": null,                       // row position in the template (set by the import)
+      "datasheet": "https://…pdf",         // official datasheet, opened from the BoM and the catalog
       "lifecycle": "active",               // active | eoo | eol  → EOO warning in checks
       "verified": "datasheet",             // datasheet | third_party | assumption
       "source": "https://…", "notes": "…"
@@ -69,7 +76,12 @@ catalog in the meantime.
 | `variant_mode` | `dual_psu` | How base/premium is chosen: `dual_psu` (confirmed 2-PSU choice), `quantity` (prototype: count ≥ threshold), `always_base`, `always_premium` |
 | `variant_quantity_threshold` | 25 | Threshold for `quantity` mode |
 | `bt_auto_upgrade` | true | Switch Wi-Fi to the premium model if the APs need more 802.3bt ports than the base model has |
-| `aggregation_auto_threshold` | 3 | "Auto" core from this many access switches |
+| `core_min_switches` | 16 | "Auto" core only with **more** switches than this… |
+| `core_min_floors` | 2 | …and **more** floors than this |
+| `dac_short_model` / `dac_long_model` | FN-CABLE-SFP+1 / +3 | DAC models |
+| `dac_short_max_u` | 10 | Devices in one cabinet at most this many units apart get the short DAC |
+| `ip.id_template` | `10.{id}.{vlan}.0/24` | Subnet of each VLAN from the location ID |
+| `aggregation_auto_threshold` | 3 | Deprecated (kept so older catalogs load) |
 | `core_icl_links`, `core_port_check` | 2, true | MC-LAG ICL links; check the core's port capacity |
 | `reserve_percent_default` | 20 | Growth reserve |
 | `camera_watts_default` | 15 | PoE per camera (editable per location) |
@@ -108,6 +120,12 @@ description and price; scalar fields can be edited in the app (Catalog → Rules
 Cabinet sizes come from models with `rack_size_u` (default RACK-24U and RACK-42U).
 
 ## Common tasks
+
+- **Import the company template** — Catalog → *Import Excel template* → pick the workbook with the
+  *Слаботрумка* sheet. Rows are matched to models by 1C code, then by the model number in the name
+  (`Комутатор FS-148F` → `FS-148F`; rows with *for/для/FortiCare…* are never matched to the device itself).
+  Matched models get the code, name, unit, section and both prices; other rows become new catalog items
+  (kind `work` in the *Роботи* section), so the exported specification lists the whole template.
 
 - **Add prices** — Catalog → Models → double-click *Price, UAH*. Price columns, totals, discount and VAT appear
   in the BoM, Excel and PDF as soon as any line has a price.

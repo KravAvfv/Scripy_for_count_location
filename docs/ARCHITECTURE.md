@@ -6,16 +6,17 @@ sitesizer/
     catalog.py   schema + validation of data/catalog.json, FortiOS-dependent limits, compat overlay
     models.py    SiteInput (user input), SiteResult, BomLine, Check, Power/Rack/IP summaries
     sizing.py    size_site(): reserve → switch categories → core → firewall ladder → BoM → power/rack → checks
-    passive.py   closets (MDF/IDF), cabinet layout 24U/42U, Corning copper + fibre quantities, PDUs
+    passive.py   closets (MDF/IDF), house cabinet pattern, manual layout overrides, device names, Corning parts
+    template_import.py  company Excel template → catalog (codes, names, units, two prices, sections)
     ipplan.py    subnet sizing (prototype formula) and aligned, non-overlapping carving
     pricing.py   subtotal / discount / VAT;  compare.py  scenario diff
     project.py   multi-location project files (*.sizing.json, atomic save)
     presets.py   one-click templates (data/presets.json)
-    report.py    rows/CSV/TSV/JSON views of a result for exporters, CLI and clipboard
+    report.py    rows/CSV/TSV/JSON views of a result, specification sections in template order
   exporters/   Qt-based rendering without widgets (works in a worker thread and from the CLI)
     diagram.py   SiteDiagram / ProjectDiagram QPainter renderers → screen, PNG, SVG, PDF, Excel
     rack.py      RackDiagram: front elevation of every cabinet (same renderer for screen and exports)
-    xlsx.py      openpyxl workbook (BoM, IP-план, Схема, Вихідні дані)
+    xlsx.py      openpyxl workbook: Слаботрумка (template), Схема+шафи (cells), IP, prices, inputs
     pdf.py       QPdfWriter + QTextDocument report, paginated with header/footer
   gui/         PySide6 widgets only — no business rules
     state.py     AppState: project, current site, debounced recompute, undo stack, settings
@@ -23,7 +24,9 @@ sitesizer/
     icons.py     Lucide SVG icons recoloured per theme
     widgets/     controls (stepper, toggle, segmented, chips, callouts), shell (sidebar, top bar, summary bar),
                  feedback (toasts, checks panel), overlays (dialogs, command palette, tour), diagram views
-    views/       location, bom, topology, ipplan, power, compare, projects, catalog_view, settings_view, help_view
+    views/       location, racks (drag & drop editor), bom (inline edits), ipplan (VLAN edits), topology, power,
+                 compare, projects, catalog_view (template import), settings_view, help_view
+    widgets/rack_editor.py  interactive cabinet canvas; widgets/export_dialog.py  export choices
     main_window.py, app.py (entry point, logging, crash safety), workers.py (background exports)
   i18n/        uk.json / en.json + Translator (formatting, Ukrainian plural forms)
   data/        catalog.json (default, datasheet-verified), presets.json
@@ -63,7 +66,9 @@ user edit ─► AppState.edit() ─► QUndoCommand (mergeable per field) ─�
    ports when a core exists, and the optional threat-protection throughput with headroom.
 6. **BoM** — equipment lines with reasons, details and tags; tier lines (UPS, OOB); add-ons (transceivers,
    cabling, rack, licences, spares, management); SLA reference row.
-7. **Power, passive & racks, IP plan, general checks** (`passive.plan_passive` lays out cabinets and counts cabling) (lifecycle, unverified data, IDF, dual WAN, density hints).
+7. **Manual edits** — quantity overrides are applied to the switch categories *before* racks and power, so
+   a changed switch count re-plans everything; price overrides and hand-added lines are applied to the BoM.
+8. **Power, passive & racks, IP plan, general checks** (`passive.plan_passive` lays out cabinets and counts cabling) (lifecycle, unverified data, IDF, dual WAN, density hints).
 
 ## GUI design system
 
@@ -86,3 +91,19 @@ user edit ─► AppState.edit() ─► QUndoCommand (mergeable per field) ─�
 - Exceptions are logged to a rotating file (`logs/sitesizer.log`) and shown as a toast; the app keeps running.
 - Signal connections to long-lived state use bound methods, so views that are deleted when the language
   changes and the UI is rebuilt disconnect automatically.
+
+## Racks and manual layout (core/passive.py)
+
+1. Switches are assigned to closets (MDF + IDFs when the longest run exceeds 90 m).
+2. Each closet is laid out top-down: fibre panels (ODF), FortiGate/core, then the house pattern
+   `organizer · panels · organizer · switch · organizer · panels …` (a 48-port switch gets one panel above
+   and one below), PDUs and UPS at the bottom; cabinets are split and balanced by switches.
+3. `SiteInput.layout` is applied: removed/added cabinets, per-cabinet floor/letter/size/name, items moved by
+   the user (exact unit), hidden passive items and extra organizers/panels/shelves. Automatic items that collide
+   with a manual one move to the nearest free slot; conflicts become `RACK_LAYOUT` checks.
+4. Names are assigned top-down per cabinet: `<code>-<floor><letter>-ASW01`, `ПП №1`, `ПП №V1`, `ПП Wi-Fi`.
+5. Uplinks are matched to the final positions: ≤ `dac_short_max_u` apart in one cabinet → 1 m DAC,
+   otherwise 3 m; remote closets use fibre.
+
+Every item has a stable id (`access_switch:3`, `panel:access_switch:3:1`, `org:…`, `firewall:1`) so manual
+positions survive recalculation.

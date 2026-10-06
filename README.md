@@ -11,17 +11,30 @@ The UI is Ukrainian by default, with a full English version (Settings → Langua
 ## Швидкий старт (для колег)
 
 1. Запустіть `SiteSizer.exe`.
-2. Натисніть шаблон («Склад», «R&D-офіс», «HQ»…) або введіть кількість розеток, камер і зон Wi-Fi.
-3. Оберіть рівень критичності — праворуч одразу видно, що він змінює.
-4. **Експорт → Excel / PDF.** Готово.
+2. **Локація:** код (напр. `BO123`), ID локації (другий октет, напр. `57` → `10.57.x.x`), кількість поверхів,
+   розетки, камери, зони Wi-Fi (або натисніть шаблон «Склад», «HQ»…).
+3. **Шафи:** перевірте розміщення; пристрої перетягуються мишею, шафи додаються/видаляються.
+4. **IP-план** будується сам з ID локації; номери, назви й маски VLAN змінюються подвійним кліком.
+5. **Специфікація:** за потреби змініть кількість або ціну (подвійний клік), додайте роботи.
+6. **Експорт (`Ctrl+E`)** — позначте, що потрібно: «Слаботрумка», шафи, IP, ціни, PDF, картинки.
 
 `Ctrl+K` — палітра команд, `Ctrl+S` — зберегти проєкт, `F1` — довідка з поясненням логіки.
+Ціни й коди 1С: **Каталог → Імпорт шаблону Excel** (ваш файл «Слаботрумка»).
 
 ## Features
 
+**v2 (company workflow):** site code / location ID / floors · cabinets in the house pattern
+(organizer · panels · organizer · switch) with names like `BO123-5B-ASW01` · drag & drop rack editor (add/remove
+cabinets, organizers, panels) · DAC 1 m / 3 m from the actual layout · FS-1024E core only with > 16 switches and
+> 2 floors · IP table from the location ID (`10.<ID>.<VLAN>.0/24`) with editable VLAN IDs, names and masks ·
+manual quantities and prices, hand-added lines (works) · Excel export in the company template
+(*Слаботрумка* with formulas, cabinets drawn in cells, IP, prices) chosen in an export dialog · Excel template
+import (1C codes, names, two prices) · datasheet links · no customer justification in exports · IP phones removed.
+
 - **Live sizing** — every keystroke recalculates the BoM, diagram, IP plan, power and checks (no "Calculate" button).
-- **Justified BoM** — every line has a customer-facing reason; the *Why this line?* panel shows how it was
-  calculated, which rule or tier added it, and the catalog data behind it.
+- **Editable BoM** — double-click a quantity or price; changing the number of switches re-plans racks, DACs and
+  power. The *Why this line?* panel (for the engineer) shows how each line was calculated; exports carry no
+  justification text.
 - **Criticality tiers 1–4** — firewall HA, N+1 core (MC-LAG), UPS, OOB, dual-PSU switches, dual uplinks, spares,
   FortiGuard/FortiCare level. All of these can be edited in the catalog.
 - **Datasheet-verified catalog** — FortiLink and FortiAP limits, PoE budgets and 802.3bt port counts, power,
@@ -46,6 +59,7 @@ The UI is Ukrainian by default, with a full English version (Settings → Langua
 
 | | |
 |---|---|
+| ![Racks](docs/screenshots/racks-light.png) | ![Racks dark](docs/screenshots/racks-dark.png) |
 | ![BoM](docs/screenshots/bom-light.png) | ![Topology](docs/screenshots/topology-light.png) |
 | ![IP plan](docs/screenshots/ipplan-light.png) | ![Power & rack](docs/screenshots/power-light.png) |
 | ![Compare](docs/screenshots/compare-light.png) | ![Catalog](docs/screenshots/catalog-light.png) |
@@ -80,7 +94,8 @@ python -m sitesizer.cli --compat --json site.json
 
 A site JSON uses the same fields as the GUI: `sockets`, `cameras`, `ap_groups` (`zone`, `qty`, optional `model`),
 `tier`, `aggregation` (`auto`/`yes`/`no`, or the prototype's `y`/`n`/empty), `reserve`, `redundant_psu`,
-`mode` (`quick`/`extended`), `fortios_version`, `inspected_mbps`, `max_cable_run_m`, `ip.base_network`, …
+`mode` (`quick`/`extended`), `fortios_version`, `inspected_mbps`, `max_cable_run_m`, `location_code`,
+`location_id`, `floors`, `ip.base_network`, `bom.overrides`, `layout`, …
 
 ## Windows 11: get the app on another laptop
 
@@ -108,7 +123,7 @@ unused Qt modules are excluded). On Linux/macOS use `./build.sh`.
 
 ```powershell
 pip install -r requirements-dev.txt
-$env:QT_QPA_PLATFORM="offscreen"; python -m pytest      # 145 tests: engine, golden, IP, exporters, GUI smoke
+$env:QT_QPA_PLATFORM="offscreen"; python -m pytest      # 160+ tests: engine, golden, IP, exporters, template import, GUI
 ruff check sitesizer tests; ruff format sitesizer tests
 mypy sitesizer
 python tools\screenshots.py docs\screenshots            # regenerate screenshots (light + dark)
@@ -127,7 +142,11 @@ User data (catalog edits, settings, logs) lives in `%APPDATA%\SiteSizer\SiteSize
 | Whiteboard "25х / 15х" | **2 PSU / 1 PSU.** Premium (dual hot-swap PSU) models are recommended for tiers 1–2, and the app asks you to confirm. The old quantity threshold is still available (`variant_mode: quantity`). |
 | FS-448E family | **Kept as the dual-PSU models**: FS-448E (access) and FS-448E-FPOE (CCTV, 772 W PoE). Third-party sources list them as End-of-Order 2026-09-13, so the app shows an info note to check availability; FS-648F / FS-648F-FPOE are in the catalog as alternatives. FS-448E-POE (421 W, the whiteboard model) stays in the catalog as an alternative. |
 | Not enough 802.3bt ports on FS-124G-FPOE | **Automatic upgrade** to FS-624F-FPOE, explained in the BoM line. |
-| Currency | **UAH**; VAT and discount are optional. Prices are empty by default, so the price columns stay hidden. |
+| Currency | **UAH**; VAT and discount are optional. Two prices per item like the Excel template: **G (main, used in totals)** and E; both editable. |
+| Core switch | **FS-1024E only with more than 16 switches and more than 2 floors** (both thresholds in the catalog). |
+| DAC length | **From the layout**: neighbours in a cabinet (≤ 10U apart) — 1 m, bottom ↔ top or another cabinet — 3 m. |
+| IP plan | **Location ID = second octet**, one /24 per VLAN (`10.<ID>.<VLAN>.0/24`), masks editable per VLAN. |
+| IP phones | **Not used** — the field and the Voice VLAN are gone (old projects still open). |
 | FortiOS version | **Per-location input** (FG-120G manages 48 switches on FortiOS 7.6.1+, 32 on older versions). |
 
 ## Known limitations
@@ -136,5 +155,11 @@ User data (catalog edits, settings, logs) lives in `%APPDATA%\SiteSizer\SiteSize
   🟡 in the app and in RESEARCH.md. Confirm them on support.fortinet.com before quoting.
 - Each switch category uses one model for the whole site (no mixed FS-124G + FS-624F in the same category).
 - PDF tables can break between pages in the middle of a long row.
+- Moving a switch between the main room and a remote closet (IDF) by hand does not re-plan the fibre backbone;
+  fibre is sized from the automatic closets.
+- 1C codes in the default catalog were read from photos of the template — import the real template
+  (Catalog → Import Excel template) to make codes and prices authoritative.
+- FortiSwitch 448E / 1024E have no stand-alone datasheet on fortinet.com any more; their links point to the
+  FortiSwitch ordering guide.
 - The Windows `.exe` has to be built on Windows (`build.ps1`). The PyInstaller spec was validated by building
   and launching a Linux binary.
