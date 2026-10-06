@@ -46,9 +46,16 @@ ROLE_CODES = {
     "firewall": "FW",
 }
 """Device name role codes: ``<site>-<floor><cabinet>-<ROLE><NN>``."""
-PASSIVE_GROUPS = ("panel", "manager", "fiber", "pdu", "shelf", "blank", "custom")
+PASSIVE_GROUPS = ("panel", "manager", "fiber", "pdu", "shelf", "blank", "custom", "device")
 """Item groups the user may delete from a cabinet (active equipment can only be moved)."""
-EXTRA_GROUPS = {"manager": "manager", "panel": "panel", "shelf": "shelf", "blank": "blank", "odf": "fiber"}
+EXTRA_GROUPS = {
+    "manager": "manager",
+    "panel": "panel",
+    "shelf": "shelf",
+    "blank": "blank",
+    "odf": "fiber",
+    "device": "device",
+}
 DEFAULT_USER_RACK_U = 42
 
 
@@ -317,7 +324,9 @@ def plan_passive(
         plan.letter = _letter(i)
 
     # ---- manual layout, names -----------------------------------------------------------
-    rs.layout_problems = apply_layout(plans, ctx.site.layout, model_for, ctx.site.rack_size_u, t)
+    rs.layout_problems = apply_layout(
+        plans, ctx.site.layout, model_for, ctx.site.rack_size_u, t, {"manager": pr.manager, "panel": pr.panel}
+    )
     name_items(plans, ctx.site.layout, ctx.site.location_code, t, pr.panel_ports)
     for plan in plans:
         plan.items.sort(key=lambda it: -it.u)
@@ -433,8 +442,12 @@ def apply_layout(
     model_for: dict[int | None, str],
     preferred_u: int,
     t: Translator,
+    extra_models: dict[str, str] | None = None,
 ) -> list[str]:
     """Apply the user's manual layout to the automatic ``plans`` (in place).
+
+    ``extra_models`` gives the part number of hand-added organizers / patch panels so they are
+    counted in the bill of materials like the automatic ones.
 
     Returns human-readable problems (overlaps, items that no longer fit) for the checks panel.
     """
@@ -503,13 +516,14 @@ def apply_layout(
         if target is None:
             continue
         group = EXTRA_GROUPS.get(ex.kind, "custom")
+        model = ex.model if ex.kind == "device" else (extra_models or {}).get(ex.kind, "")
         manual[target.key].append(
             RackItem(
                 u=ex.u,
                 height=ex.height,
-                label=ex.label or t.t(f"rack.extra.{ex.kind}"),
+                label=ex.label or (ex.model if ex.kind == "device" else "") or t.t(f"rack.extra.{ex.kind}"),
                 group=group,
-                model="",
+                model=model,
                 id=ex.id,
                 manual=True,
                 extra=True,

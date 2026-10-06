@@ -95,7 +95,7 @@ class BomEdits(BaseModel):
     custom: list[CustomLine] = Field(default_factory=list)
 
 
-RackExtraKind = Literal["manager", "panel", "shelf", "blank", "odf", "custom"]
+RackExtraKind = Literal["manager", "panel", "shelf", "blank", "odf", "custom", "device"]
 
 
 class RackProps(BaseModel):
@@ -115,7 +115,7 @@ class RackPos(BaseModel):
 
 
 class RackExtra(BaseModel):
-    """A passive item placed by the user (organizer, patch panel, shelf, blank...)."""
+    """An item placed by the user: organizer, patch panel, shelf, blank, a catalog device or a custom one."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -125,6 +125,8 @@ class RackExtra(BaseModel):
     u: int = Field(ge=1, le=60)
     height: int = Field(default=1, ge=1, le=10)
     label: str = ""
+    model: str = ""
+    """Catalog model of a ``device`` (it is added to the bill of materials)."""
 
 
 class RackLayout(BaseModel):

@@ -509,3 +509,22 @@ def test_dual_psu_gets_ab_pdus(catalog: Catalog) -> None:
     r = size_site(make_site(sockets=48, tier=2, redundant_psu=True), catalog)
     pdus = [it for it in r.rack.plans[0].items if it.group == "pdu"]
     assert len(pdus) == 2 and {it.label.split()[1] for it in pdus} == {"A", "B"}
+
+
+def test_devices_added_to_racks_go_to_the_bom(catalog: Catalog) -> None:
+    base = size_site(make_site(sockets=48), catalog)
+    key = base.rack.plans[0].key
+    managers = base.rack.passive.managers
+    extras = [
+        {"id": "d1", "kind": "device", "model": "FS-148F-FPOE", "rack": key, "u": 15},
+        {"id": "d2", "kind": "device", "model": "UPS-3000", "rack": key, "u": 10, "height": 2},
+        {"id": "c1", "kind": "custom", "label": "NVR", "rack": key, "u": 6, "height": 2},
+        {"id": "m1", "kind": "manager", "rack": key, "u": 4},
+    ]
+    r = size_site(make_site(sockets=48, layout={"extras": extras}), catalog)
+    devices = {line.model: line.qty for line in r.lines("rack_device")}
+    assert devices == {"FS-148F-FPOE": 1, "UPS-3000": 1}
+    assert r.lines("rack_device")[0].manual
+    assert r.rack.passive.managers == managers + 1  # a hand-added organizer is counted too
+    items = {it.id: it for it in r.rack.plans[0].items}
+    assert items["d2"].height == 2 and items["c1"].label == "NVR" and items["d1"].label == "FS-148F-FPOE"

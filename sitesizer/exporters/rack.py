@@ -22,6 +22,7 @@ EQUIPMENT_COLORS = {
     "core_switch": "#1F4E78",
     "firewall": "#94505B",
     "power": "#857637",
+    "device": "#4C6E91",
 }
 PASSIVE_LIGHT = {
     "panel": "#D9E0E8",

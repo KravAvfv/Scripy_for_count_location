@@ -1002,5 +1002,19 @@
   "rule.dac_long_model": "DAC довгий (модель)",
   "rule.dac_short_max_u": "DAC 1 м: до скількох U між пристроями",
   "rule.dac_short_max_u.help": "Далі (або між шафами) — 3 м",
-  "rule.ip.id_template": "Шаблон підмережі за ID"
+  "rule.ip.id_template": "Шаблон підмережі за ID",
+  "rk.add_device": "Пристрій…",
+  "rk.add_device_sub": "Модель з каталогу потрапить у специфікацію з ціною й кодом. Свій пристрій лише займає місце в шафі.",
+  "rk.add_device_ok": "Додати в шафу",
+  "rk.custom_device": "— свій пристрій (ввести назву) —",
+  "rk.device_model": "Модель",
+  "rk.device_name": "Підпис у шафі",
+  "rk.device_name_ph": "напр. Сервер NVR, MikroTik RB5009",
+  "rk.device_height": "Висота",
+  "rk.device_bom": "Буде додано в специфікацію (розділ «Додано в шафу»).",
+  "rk.device_custom_note": "Свій пристрій не потрапляє в специфікацію — додайте його там через «Додати позицію», якщо потрібно.",
+  "rack.extra.device": "Пристрій",
+  "cat.rack_device": "Додано в шафу",
+  "group.rack_device": "Додано в шафу вручну",
+  "reason.rack_device": "Додано вручну на сторінці «Шафи» ({racks})."
 }

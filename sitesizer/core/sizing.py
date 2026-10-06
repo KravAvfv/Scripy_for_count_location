@@ -538,6 +538,7 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk") -> SiteResult
         _bom_cabling(ctx, bom, rack)
     if addons["rack"] and rack.plans:
         _bom_rack(ctx, bom, rack)
+    _bom_rack_devices(ctx, bom, rack)
     if addons["licensing"] and firewall is not None:
         _bom_licensing(ctx, bom, categories, core, firewall)
     if addons["spares"]:
@@ -1121,6 +1122,28 @@ def _bom_rack(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
                 qty=rack.passive.pdus,
                 reason=t.t("reason.pdu", n=pr.pdu_outlets) + (" " + t.t("reason.pdu_ab") if ctx.dual_psu else ""),
                 tags=["addon"],
+            )
+        )
+
+
+def _bom_rack_devices(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
+    """Catalog devices the user put into a cabinet by hand."""
+    t = ctx.t
+    found: dict[str, list[str]] = {}
+    for plan in rack.plans:
+        for it in plan.items:
+            if it.extra and it.group == "device" and it.model:
+                found.setdefault(it.model, []).append(plan.tag)
+    for model, tags in found.items():
+        bom.append(
+            BomLine(
+                group="rack_device",
+                category=t.t("cat.rack_device"),
+                model=model,
+                qty=len(tags),
+                reason=t.t("reason.rack_device", racks=", ".join(sorted(set(tags)))),
+                tags=["manual"],
+                manual=True,
             )
         )
 

@@ -64,6 +64,7 @@ RACK_FILLS = {
     "fiber": "DDEBF7",
     "shelf": "D9D9D9",
     "blank": "EDEDED",
+    "device": "9DC3E6",
 }
 
 
@@ -266,7 +267,7 @@ def _spec_sheet(ws: Worksheet, result: SiteResult, catalog: Catalog, t: Translat
 # Схема + шафи — cabinets drawn in cells, plus the topology picture
 # =========================================================================================
 def rack_cell_label(item_label: str, model: str, group: str) -> str:
-    if group in ("wifi_switch", "access_switch", "camera_switch", "core_switch", "firewall") and model:
+    if group in ("wifi_switch", "access_switch", "camera_switch", "core_switch", "firewall", "device") and model:
         return f"{item_label} ({model})" if model not in item_label else item_label
     return item_label
 

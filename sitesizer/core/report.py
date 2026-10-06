@@ -26,6 +26,7 @@ BOM_GROUP_ORDER = (
     "rack",
     "license",
     "spare",
+    "rack_device",
     "custom",
     "reference",
 )

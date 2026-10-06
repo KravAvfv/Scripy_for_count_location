@@ -264,6 +264,11 @@ def test_rack_editor_drag_and_drop(app: QApplication, window) -> None:
     pump(app)
     assert st.site.layout.positions["access_switch:2"].u == 4
     window.racks.add_extra("manager")
+    dev_id = window.racks.add_extra("device", 30, 1, "FS-148F")
+    pump(app)
+    assert dev_id and any(line.group == "rack_device" for line in st.result.bom)
+    st.undo.undo()
+    pump(app)
     window.racks.add_rack(24)
     pump(app)
     assert len(st.site.layout.extras) == 1 and st.site.layout.added == ["user-1"]

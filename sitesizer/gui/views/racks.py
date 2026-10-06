@@ -14,6 +14,7 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
     QHBoxLayout,
     QLineEdit,
     QMenu,
@@ -26,7 +27,7 @@ from ...core.models import SiteResult
 from ...core.passive import PASSIVE_GROUPS
 from ...exporters.diagram import style_from_tokens
 from ...exporters.rack import RackDiagram
-from ...i18n import tr
+from ...i18n import current, tr
 from .. import icons
 from ..state import AppState
 from ..theme import theme_manager, tokens
@@ -36,6 +37,74 @@ from ..widgets.rack_editor import RackEditor
 
 EXTRA_KINDS = ("manager", "panel", "shelf", "blank", "odf")
 RACK_SIZES = (9, 12, 15, 18, 24, 27, 32, 42, 47)
+
+
+class AddDeviceDialog(QDialog):
+    """Pick a catalog device (it goes into the bill of materials) or describe a custom one."""
+
+    def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.state = state
+        self.setWindowTitle(tr("rk.add_device"))
+        self.setMinimumWidth(px(500))
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(px(24), px(20), px(24), px(18))
+        lay.setSpacing(px(10))
+        lay.addWidget(label(tr("rk.add_device"), "subtitle"))
+        lay.addWidget(label(tr("rk.add_device_sub"), "muted", wrap=True))
+        t = current()
+        self.model = QComboBox()
+        self.model.setEditable(True)
+        self.model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.model.addItem(tr("rk.custom_device"), "")
+        for key, dev in state.catalog.models.items():
+            if dev.kind in ("license", "work", "ap") or dev.rack_size_u:
+                continue
+            if dev.kind == "accessory" and not dev.rack_units and dev.order is None:
+                continue  # cables, jacks, transceivers… (imported template items stay selectable)
+            self.model.addItem(f"{key} — {dev.spec_name or t.pick(dev.name)}"[:90], key)
+        comp = self.model.completer()
+        if comp is not None:
+            comp.setFilterMode(Qt.MatchFlag.MatchContains)
+            comp.setCompletionMode(comp.CompletionMode.PopupCompletion)
+        self.model.currentIndexChanged.connect(self._prefill)
+        lay.addWidget(FieldRow(tr("rk.device_model"), self.model))
+        self.name = QLineEdit()
+        self.name.setPlaceholderText(tr("rk.device_name_ph"))
+        lay.addWidget(FieldRow(tr("rk.device_name"), self.name))
+        self.height = SpinBox()
+        self.height.setRange(1, 10)
+        self.height.setSuffix(" U")
+        self.height.setFixedWidth(px(100))
+        lay.addWidget(FieldRow(tr("rk.device_height"), self.height))
+        self.note = label("", "caption", wrap=True)
+        lay.addWidget(self.note)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        cancel = button(tr("ui.cancel"))
+        cancel.clicked.connect(self.reject)
+        ok = button(tr("rk.add_device_ok"), "primary", "plus")
+        ok.setDefault(True)
+        ok.clicked.connect(self._accept)
+        row.addWidget(cancel)
+        row.addWidget(ok)
+        lay.addLayout(row)
+        self._prefill()
+
+    def _prefill(self) -> None:
+        key = self.model.currentData() or ""
+        dev = self.state.catalog.models.get(key)
+        self.height.setValue((dev.rack_units if dev and dev.rack_units else 1) if dev else self.height.value())
+        self.note.setText(tr("rk.device_bom") if dev else tr("rk.device_custom_note"))
+
+    def _accept(self) -> None:
+        if not self.model.currentData() and not self.name.text().strip():
+            self.name.setFocus()
+            return
+        self.accept()
+
+    def values(self) -> tuple[str, str, int]:
+        return self.model.currentData() or "", self.name.text().strip(), self.height.value()
 
 
 class RacksView(QWidget):
@@ -125,6 +194,10 @@ class RacksView(QWidget):
         add_row.setSpacing(px(6))
         self.add_extra_btn = button(tr("rk.add_item"), None, "plus")
         extra_menu = QMenu(self.add_extra_btn)
+        act = QAction(icons.icon("server", size=16), tr("rk.add_device"), extra_menu)
+        act.triggered.connect(lambda: self.add_device())
+        extra_menu.addAction(act)
+        extra_menu.addSeparator()
         for kind in EXTRA_KINDS:
             act = QAction(tr(f"rack.extra.{kind}"), extra_menu)
             act.triggered.connect(lambda _=False, k=kind: self.add_extra(k))
@@ -314,21 +387,38 @@ class RacksView(QWidget):
         self.editor.sel_item = ""
         self._layout(tr("rk.item_delete"), fn)
 
-    def add_extra(self, kind: str, u: int | None = None) -> None:
+    def add_extra(
+        self, kind: str, u: int | None = None, height: int = 1, model: str = "", label: str = ""
+    ) -> str | None:
+        """Put an item into the selected cabinet at ``u`` (or the highest free slot); returns its id."""
         plan = self.editor.plan(self.editor.sel_rack)
         if plan is None:
-            return
-        slot = plan.free_slot(1, u) if u else plan.free_slot(1)
+            return None
+        slot = None
+        if u is not None:
+            slot = plan.free_slot(height, min(plan.size_u, u + height - 1))
+        if slot is None:
+            slot = plan.free_slot(height)
         if slot is None:
             self.state.message.emit("warning", tr("rk.no_space"))
-            return
+            return None
         new_id = f"extra:{uuid.uuid4().hex[:8]}"
-        rack = plan.key
+        item = {"id": new_id, "kind": kind, "rack": plan.key, "u": slot, "height": height}
+        if model:
+            item["model"] = model
+        if label:
+            item["label"] = label
         self.editor.sel_item = new_id
-        self._layout(
-            tr(f"rack.extra.{kind}"),
-            lambda lay: lay["extras"].append({"id": new_id, "kind": kind, "rack": rack, "u": slot, "height": 1}),
-        )
+        self._layout(tr(f"rack.extra.{kind}"), lambda lay: lay["extras"].append(item))
+        return new_id
+
+    def add_device(self, u: int | None = None) -> None:
+        if self.editor.plan(self.editor.sel_rack) is None:
+            return
+        dlg = AddDeviceDialog(self.state, self)
+        if dlg.exec():
+            model, label_text, height = dlg.values()
+            self.add_extra("device" if model else "custom", u, height, model, label_text)
 
     def add_rack(self, size: int) -> None:
         taken = {p.key for p in (self.editor.diagram.plans if self.editor.diagram else [])}
@@ -390,6 +480,10 @@ class RacksView(QWidget):
                 menu.addAction(a)
         else:
             sub = menu.addMenu(icons.icon("plus", size=16), tr("rk.add_here", u=u))
+            dev_act = QAction(icons.icon("server", size=16), tr("rk.add_device"), sub)
+            dev_act.triggered.connect(lambda: self.add_device(u))
+            sub.addAction(dev_act)
+            sub.addSeparator()
             for kind in EXTRA_KINDS:
                 a = QAction(tr(f"rack.extra.{kind}"), sub)
                 a.triggered.connect(lambda _=False, k=kind: self.add_extra(k, u))

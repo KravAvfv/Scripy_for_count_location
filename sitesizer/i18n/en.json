@@ -995,5 +995,19 @@
   "rule.dac_long_model": "Long DAC (model)",
   "rule.dac_short_max_u": "1 m DAC: max units apart",
   "rule.dac_short_max_u.help": "Further (or between cabinets) — 3 m",
-  "rule.ip.id_template": "Subnet template by ID"
+  "rule.ip.id_template": "Subnet template by ID",
+  "rk.add_device": "Device…",
+  "rk.add_device_sub": "A catalog model goes into the bill of materials with its price and code. A custom device only takes space in the cabinet.",
+  "rk.add_device_ok": "Add to cabinet",
+  "rk.custom_device": "— custom device (type a name) —",
+  "rk.device_model": "Model",
+  "rk.device_name": "Label in the cabinet",
+  "rk.device_name_ph": "e.g. NVR server, MikroTik RB5009",
+  "rk.device_height": "Height",
+  "rk.device_bom": "Will be added to the bill of materials (“Added to cabinet”).",
+  "rk.device_custom_note": "A custom device is not in the bill of materials — add it there with “Add line” if needed.",
+  "rack.extra.device": "Device",
+  "cat.rack_device": "Added to cabinet",
+  "group.rack_device": "Added to cabinet manually",
+  "reason.rack_device": "Added manually on the Racks page ({racks})."
 }
