@@ -131,3 +131,20 @@ def test_cli_exports(tmp_path: Path) -> None:
         == 0
     )
     assert (tmp_path / "x.xlsx").exists() and (tmp_path / "x.pdf").exists()
+
+
+def test_exports_include_rack_devices(tmp_path: Path, catalog: Catalog) -> None:
+    from sitesizer.exporters.rack import RackDiagram, rack_table_rows
+
+    key = size_site(make_site(sockets=48), catalog).rack.plans[0].key
+    extras = [
+        {"id": "d1", "kind": "device", "model": "FS-148F", "rack": key, "u": 2},
+        {"id": "c1", "kind": "custom", "label": "NVR", "rack": key, "u": 3},
+    ]
+    r = size_site(make_site(sockets=48, layout={"extras": extras}), catalog)
+    wb = load_workbook(export_xlsx(r, tmp_path / "x.xlsx", catalog=catalog))
+    cells = {str(c.value) for ws in wb.worksheets for row in ws.iter_rows() for c in row if c.value is not None}
+    assert any("FS-148F" in v for v in cells) and any("NVR" in v for v in cells)
+    assert any(row and "FS-148F" in " ".join(map(str, row)) for row in rack_table_rows(r))
+    assert export_png(RackDiagram(r, catalog), tmp_path / "r.png").exists()  # type: ignore[arg-type]
+    assert export_pdf(r, tmp_path / "r.pdf", catalog=catalog).stat().st_size > 1000

@@ -327,6 +327,8 @@ def plan_passive(
     rs.layout_problems = apply_layout(
         plans, ctx.site.layout, model_for, ctx.site.rack_size_u, t, {"manager": pr.manager, "panel": pr.panel}
     )
+    if not ctx.site.layout.is_empty:
+        rs.layout_problems += top_up_pdus(plans, feeds, pr.pdu_outlets, pr.pdu, set(ctx.site.layout.hidden), t)
     name_items(plans, ctx.site.layout, ctx.site.location_code, t, pr.panel_ports)
     for plan in plans:
         plan.items.sort(key=lambda it: -it.u)
@@ -511,26 +513,29 @@ def apply_layout(
         moved.u = pos.u
         moved.manual = True
         manual[target.key].append(moved)
+    lost: list[RackItem] = []
     for ex in layout.extras:
         target = by_key.get(ex.rack)
-        if target is None:
-            continue
         group = EXTRA_GROUPS.get(ex.kind, "custom")
         model = ex.model if ex.kind == "device" else (extra_models or {}).get(ex.kind, "")
-        manual[target.key].append(
-            RackItem(
-                u=ex.u,
-                height=ex.height,
-                label=ex.label or (ex.model if ex.kind == "device" else "") or t.t(f"rack.extra.{ex.kind}"),
-                group=group,
-                model=model,
-                id=ex.id,
-                manual=True,
-                extra=True,
-            )
+        item = RackItem(
+            u=ex.u,
+            height=ex.height,
+            label=ex.label or (ex.model if ex.kind == "device" else "") or t.t(f"rack.extra.{ex.kind}"),
+            group=group,
+            model=model,
+            id=ex.id,
+            manual=True,
+            extra=True,
         )
+        if target is None:
+            # its cabinet is gone (removed, or no longer produced by the sizing): keep the item
+            # in another cabinet so that it is still counted
+            lost.append(item)
+        else:
+            manual[target.key].append(item)
     manual_ids = {it.id for items in manual.values() for it in items}
-    displaced: list[RackItem] = list(it for it in orphans if it.id not in manual_ids)
+    displaced: list[RackItem] = [it for it in orphans if it.id not in manual_ids] + lost
     for plan in plans:
         auto = [it for it in plan.items if it.id not in manual_ids]
         plan.items = []
@@ -561,6 +566,41 @@ def apply_layout(
             problems.append(t.t("check.rack_no_space", item=it.label or it.model or it.id))
             it.u = max(1, min(it.u, target.size_u - it.height + 1))
             target.items.append(it)
+    return problems
+
+
+POWERED_GROUPS = {*EDGE_KEYS, "core_switch", "firewall", "device"}
+"""Rack items that take a power cord from a PDU."""
+
+
+def top_up_pdus(
+    plans: list[RackPlan], feeds: int, outlets: int, model: str, hidden: set[str], t: Translator
+) -> list[str]:
+    """Add PDUs where the manual layout put more powered devices into a cabinet than its PDUs can feed.
+
+    PDUs the user deleted stay deleted; existing ones are never removed.
+    """
+    problems: list[str] = []
+    ids = {it.id for plan in plans for it in plan.items}
+    for plan in plans:
+        cords = sum(
+            1
+            for it in plan.items
+            if it.group in POWERED_GROUPS or (it.group == "power" and not it.id.startswith("ups:"))
+        )
+        need = feeds * max(1, _ceil_div(cords, outlets)) if cords else 0
+        for i in range(1, need + 1):
+            item_id = f"pdu:{plan.key}:{i}"
+            if item_id in ids or item_id in hidden:
+                continue
+            slot = _nearest_slot(plan, 1, 1)
+            feed = "AB"[(i - 1) % 2] if feeds == 2 else "A"
+            label = t.t("rack.pdu", feed=feed, n=outlets)
+            if slot is None:
+                problems.append(t.t("check.rack_no_space", item=label))
+                continue
+            plan.items.append(RackItem(u=slot, height=1, label=label, group="pdu", model=model, id=item_id))
+            ids.add(item_id)
     return problems
 
 

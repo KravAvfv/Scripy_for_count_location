@@ -450,8 +450,9 @@ def test_manual_layout_racks_and_extras(catalog: Catalog) -> None:
     assert [p.key for p in r.rack.plans] == [key, "user-1"]
     user = r.rack.plans[1]
     assert user.size_u == 24 and user.letter == "B"
-    assert {it.id for it in user.items} == {"access_switch:2", "x1"}
-    assert not any(it.group == "pdu" for it in r.rack.plans[0].items)
+    # the moved switch needs power: the user cabinet gets its own PDU
+    assert {it.id for it in user.items} == {"access_switch:2", "x1", "pdu:user-1:1"}
+    assert not any(it.group == "pdu" for it in r.rack.plans[0].items)  # the deleted PDU stays deleted
     assert any(line.model == "RACK-24U" for line in r.lines("rack"))
     # removing the automatic cabinet moves its devices into the remaining one
     r2 = size_site(make_site(sockets=96, layout={**layout, "removed": [key]}), catalog)
@@ -523,8 +524,88 @@ def test_devices_added_to_racks_go_to_the_bom(catalog: Catalog) -> None:
     ]
     r = size_site(make_site(sockets=48, layout={"extras": extras}), catalog)
     devices = {line.model: line.qty for line in r.lines("rack_device")}
-    assert devices == {"FS-148F-FPOE": 1, "UPS-3000": 1}
-    assert r.lines("rack_device")[0].manual
+    assert devices == {"FS-148F-FPOE": 1, "UPS-3000": 1, "NVR": 1}  # custom devices are listed too
+    assert all(line.manual for line in r.lines("rack_device"))
+    line = next(line for line in r.lines("rack_device") if line.model == "FS-148F-FPOE")
+    assert line.code == catalog.models["FS-148F-FPOE"].code and line.key == "rack_device:FS-148F-FPOE"
     assert r.rack.passive.managers == managers + 1  # a hand-added organizer is counted too
     items = {it.id: it for it in r.rack.plans[0].items}
     assert items["d2"].height == 2 and items["c1"].label == "NVR" and items["d1"].label == "FS-148F-FPOE"
+
+
+def _with_devices(catalog: Catalog, models: list[str], rack: str | None = None, **kw: object):
+    base = size_site(make_site(sockets=48, **kw), catalog)
+    key = rack or base.rack.plans[0].key
+    extras = [{"id": f"d{i}", "kind": "device", "model": m, "rack": key, "u": 2 + i} for i, m in enumerate(models)]
+    layout = {"extras": extras}
+    if rack and rack.startswith("user-"):
+        layout["added"] = [rack]
+        layout["props"] = {rack: {"size_u": 42}}
+    return base, size_site(make_site(sockets=48, layout=layout, **kw), catalog)
+
+
+def test_rack_device_counts_in_power_heat_and_ups(catalog: Catalog) -> None:
+    base, r = _with_devices(catalog, ["FS-148F", "FS-148F"], ups=True)
+    w = catalog.models["FS-148F"].power_base_w
+    assert w and r.power.equipment_w == pytest.approx(base.power.equipment_w + 2 * w)
+    assert r.power.total_w == pytest.approx(base.power.total_w + 2 * w)
+    assert r.power.heat_btu > base.power.heat_btu and r.power.ups_va >= base.power.ups_va
+    assert ("FS-148F", 2, 2 * w) in r.power.breakdown
+    # a UPS placed by hand feeds the cabinet, it is not a load
+    _, r2 = _with_devices(catalog, ["UPS-3000"])
+    assert r2.power.total_w == pytest.approx(base.power.total_w)
+
+
+def test_rack_device_switch_counts_for_firewall_and_mgmt_ips(catalog: Catalog) -> None:
+    base, r = _with_devices(catalog, ["FS-148F"])
+    mgmt = {seg.id: seg.hosts for seg in base.ip_plan.segments}
+    mgmt2 = {seg.id: seg.hosts for seg in r.ip_plan.segments}
+    assert mgmt2["mgmt"] == mgmt["mgmt"] + 1
+    assert r.firewall and base.firewall and r.firewall.model == base.firewall.model
+    # enough hand-placed switches push the FortiGate over its FortiLink switch limit
+    limit = base.firewall.switch_limit
+    _, big = _with_devices(catalog, ["FS-148F"] * limit, rack="user-1")
+    assert big.firewall and big.firewall.model != base.firewall.model
+    assert big.firewall.switch_limit >= limit + 1
+
+
+def test_rack_devices_get_pdu_outlets(catalog: Catalog) -> None:
+    outlets = catalog.passive.pdu_outlets
+    base, r = _with_devices(catalog, ["FS-148F"] * (outlets + 1), rack="user-1")
+    user = next(p for p in r.rack.plans if p.key == "user-1")
+    pdus = [it for it in user.items if it.group == "pdu"]
+    assert len(pdus) == 2
+    units = [u for it in user.items for u in range(it.u, it.top + 1)]
+    assert len(units) == len(set(units)), "PDUs must not overlap the devices"
+    pdu_qty = {line.model: line.qty for line in r.lines("rack")}[catalog.passive.pdu]
+    assert pdu_qty == base.rack.passive.pdus + 2 == r.rack.passive.pdus
+
+
+def test_rack_device_survives_a_missing_cabinet(catalog: Catalog) -> None:
+    _, r = _with_devices(catalog, ["FS-148F"], rack="idf7-1")  # this cabinet is not produced
+    assert {line.model: line.qty for line in r.lines("rack_device")} == {"FS-148F": 1}
+    assert any(it.id == "d0" for p in r.rack.plans for it in p.items)
+
+
+def test_rack_device_in_spec_and_overrides(catalog: Catalog) -> None:
+    from sitesizer.core.report import spec_sections
+    from sitesizer.i18n import Translator
+
+    base, r = _with_devices(catalog, ["FS-148F"])
+    rows = {row.model: row.qty for _, sec in spec_sections(r, catalog, Translator("uk")) for row in sec}
+    rows0 = {row.model: row.qty for _, sec in spec_sections(base, catalog, Translator("uk")) for row in sec}
+    assert rows["FS-148F"] == rows0.get("FS-148F", 0) + 1
+    key = base.rack.plans[0].key
+    site = make_site(
+        sockets=48,
+        layout={"extras": [{"id": "d0", "kind": "device", "model": "FS-148F", "rack": key, "u": 1}]},
+        bom={"overrides": {"rack_device:FS-148F": {"qty": 3}}},
+    )
+    line = size_site(site, catalog).lines("rack_device")[0]
+    assert line.qty == 3 and line.calc_qty == 1
+
+
+def test_rack_device_unknown_model_is_ignored_safely(catalog: Catalog) -> None:
+    base, r = _with_devices(catalog, ["NOT-IN-CATALOG"])
+    assert r.power.total_w == pytest.approx(base.power.total_w)
+    assert {line.model for line in r.lines("rack_device")} == {"NOT-IN-CATALOG"}

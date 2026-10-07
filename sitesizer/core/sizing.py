@@ -90,6 +90,11 @@ class _Ctx:
     checks: list[Check]
     calc_counts: dict[str, int] = field(default_factory=dict)
     """BoM line key -> calculated quantity, for lines whose count the user overrode."""
+    manual_devices: list[tuple[str, Device]] = field(default_factory=list)
+    """Catalog devices the user put into cabinets by hand, one entry per unit."""
+
+    def manual_count(self, *kinds: str) -> int:
+        return sum(1 for _, dev in self.manual_devices if dev.kind in kinds)
 
     def check(
         self,
@@ -472,6 +477,11 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk") -> SiteResult
     else:
         dual_psu, confirmed = site.redundant_psu, True
     ctx = _Ctx(site=site, catalog=catalog, t=t, tier=tier, counts=counts, dual_psu=dual_psu, checks=checks)
+    ctx.manual_devices = [
+        (ex.model, catalog.models[ex.model])
+        for ex in site.layout.extras
+        if ex.kind == "device" and ex.model in catalog.models
+    ]
     addons = resolve_addons(site, tier)
 
     if catalog.rules.variant_mode == "dual_psu" and not confirmed and tier.dual_psu:
@@ -500,11 +510,16 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk") -> SiteResult
     total_switches = edge + core.count
 
     firewall: FirewallChoice | None = None
-    if total_switches > 0:
-        firewall = pick_firewall(ctx, total_switches, counts.aps, requires_10g=core.count > 0)
+    # switches / APs placed into cabinets by hand are managed by the same FortiGate
+    managed_switches = total_switches + ctx.manual_count("switch")
+    managed_aps = counts.aps + ctx.manual_count("ap")
+    if managed_switches > 0:
+        firewall = pick_firewall(ctx, managed_switches, managed_aps, requires_10g=core.count > 0)
         firewall.count = apply_count_override(ctx, "firewall", firewall.model, firewall.count)
         if not firewall.fits:
-            ctx.check(Severity.ERROR, "FW_NONE", "check.fw_none", "check.fw_none_hint", "firewall", need=total_switches)
+            ctx.check(
+                Severity.ERROR, "FW_NONE", "check.fw_none", "check.fw_none_hint", "firewall", need=managed_switches
+            )
         else:
             fw_dev = catalog.device(firewall.model)
             if fw_dev.firewall and fw_dev.firewall.max_switches_fortios:
@@ -1127,13 +1142,17 @@ def _bom_rack(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
 
 
 def _bom_rack_devices(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
-    """Catalog devices the user put into a cabinet by hand."""
+    """Devices the user put into a cabinet by hand: catalog ones (with code and price) and custom ones."""
     t = ctx.t
     found: dict[str, list[str]] = {}
     for plan in rack.plans:
         for it in plan.items:
-            if it.extra and it.group == "device" and it.model:
+            if not it.extra:
+                continue
+            if it.group == "device" and it.model:
                 found.setdefault(it.model, []).append(plan.tag)
+            elif it.group == "custom" and it.label:
+                found.setdefault(it.label, []).append(plan.tag)
     for model, tags in found.items():
         bom.append(
             BomLine(
@@ -1241,6 +1260,22 @@ def compute_power(
         w = (dev.power_max_w or dev.power_base_w or 0) * fw.count
         eq += w
         ps.breakdown.append((fw.model, fw.count, w))
+    manual: dict[str, int] = {}
+    for model, dev in ctx.manual_devices:
+        if not dev.ups_va:  # a hand-placed UPS feeds the cabinet, it does not load it
+            manual[model] = manual.get(model, 0) + 1
+    for model, n in manual.items():
+        dev = ctx.catalog.device(model)
+        if dev.kind == "firewall":
+            per = dev.power_max_w or dev.power_base_w or 0
+            ps.legacy_w += lp.firewall * n
+        else:
+            per = dev.power_base_w or dev.power_max_w or (dev.ap.power_w if dev.ap else 0)
+            if dev.kind == "switch":
+                ps.legacy_w += lp.switch_base * n
+        if per:
+            eq += per * n
+            ps.breakdown.append((model, n, per * n))
     poe = categories["wifi_switch"].poe_load_w + categories["camera_switch"].poe_load_w
     ps.equipment_w = eq
     ps.poe_w = poe
@@ -1421,7 +1456,7 @@ def build_ip_plan(ctx: _Ctx, total_switches: int, fw: FirewallChoice | None) -> 
         "guest": ctx.site.guest_clients,
         "cameras": counts.cameras,
         "iot": ctx.site.iot_devices,
-        "mgmt": total_switches + fw_count + counts.aps,
+        "mgmt": total_switches + fw_count + counts.aps + ctx.manual_count("switch", "firewall", "ap"),
     }
     requests: list[SegmentRequest] = []
     for seg in rules.segments:
