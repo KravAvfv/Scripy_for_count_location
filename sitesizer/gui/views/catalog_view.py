@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
@@ -67,9 +68,10 @@ MODEL_COLUMNS: list[tuple[str, tuple[str, ...], str, tuple[str, ...] | None]] = 
     ("cat.col.psu_count", ("psu", "count"), "int", ("switch", "firewall")),
     ("cat.col.hot_swap", ("psu", "hot_swap"), "bool", ("switch", "firewall")),
     ("cat.col.redundant", ("psu", "redundant"), "bool", ("switch", "firewall")),
-    ("cat.col.power_base", ("power_base_w",), "float?", ("switch", "firewall")),
-    ("cat.col.power_max", ("power_max_w",), "float?", ("switch", "firewall")),
+    ("cat.col.power_base", ("power_base_w",), "float?", ("switch", "firewall", "accessory")),
+    ("cat.col.power_max", ("power_max_w",), "float?", ("switch", "firewall", "accessory")),
     ("cat.col.ru", ("rack_units",), "int", None),
+    ("cat.col.ups_va", ("ups_va",), "int?", ("accessory",)),
     ("cat.col.fw_switches", ("firewall", "max_switches"), "int", ("firewall",)),
     ("cat.col.fw_aps", ("firewall", "max_aps"), "int", ("firewall",)),
     ("cat.col.fw_10g", ("firewall", "ports_10g"), "int", ("firewall",)),
@@ -91,6 +93,141 @@ ENUMS = {
     "verified": ["datasheet", "third_party", "assumption"],
     "poe": ["af", "at", "bt"],
 }
+
+
+def kind_defaults(kind: str) -> dict[str, Any]:
+    """The sections a model of ``kind`` must have, with neutral values the user then edits."""
+    if kind == "switch":
+        return {
+            "ports": {"count": 24, "speed_gbps": 1},
+            "uplinks": {"count": 4, "speed_gbps": 10, "type": "SFP+"},
+            "psu": {"count": 1},
+        }
+    if kind == "firewall":
+        tp = dict.fromkeys(("firewall", "ipsec", "ips", "ngfw", "threat", "ssl"), 0)
+        return {"firewall": {"max_switches": 0, "max_aps": 0, "throughput_gbps": tp}, "psu": {"count": 1}}
+    if kind == "ap":
+        return {"ap": {"power_w": 0}}
+    return {}
+
+
+def new_model(
+    kind: str,
+    name: str = "",
+    family: str = "",
+    rack_units: int = 1,
+    power_w: float | None = None,
+    price: float | None = None,
+    code: str = "",
+) -> dict[str, Any]:
+    """A catalog entry for a model the user adds by hand."""
+    model: dict[str, Any] = {"kind": kind, **kind_defaults(kind), "rack_units": rack_units}
+    if name:
+        model["name"] = {"uk": name, "en": name}
+    if family:
+        model["family"] = family
+    if power_w is not None:
+        model["power_base_w"] = model["power_max_w"] = power_w
+    if price is not None:
+        model["price"] = price
+    if code:
+        model["code"] = code
+    return model
+
+
+class AddModelDialog(QDialog):
+    """A new catalog model: SKU, type and the few fields that matter for sizing and the BoM."""
+
+    def __init__(self, existing: set[str], kind: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.existing = existing
+        self.setWindowTitle(tr("cat.add_model"))
+        self.setMinimumWidth(px(480))
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(px(24), px(20), px(24), px(18))
+        lay.setSpacing(px(10))
+        lay.addWidget(label(tr("cat.add_model"), "subtitle"))
+        lay.addWidget(label(tr("cat.add_model_sub"), "muted", wrap=True))
+        self.sku = QLineEdit()
+        self.sku.setPlaceholderText("FS-108F")
+        lay.addWidget(FieldRow(tr("cat.col.model"), self.sku))
+        self.kind = QComboBox()
+        for k in ENUMS["kind"]:
+            self.kind.addItem(tr(f"cat.kind_{k}"), k)
+        self.kind.setCurrentIndex(max(0, self.kind.findData(kind or "accessory")))
+        lay.addWidget(FieldRow(tr("cat.col.kind"), self.kind))
+        self.name = QLineEdit()
+        self.name.setPlaceholderText(tr("cat.add_model_name_ph"))
+        lay.addWidget(FieldRow(tr("cat.add_model_name"), self.name))
+        self.family = QLineEdit()
+        lay.addWidget(FieldRow(tr("cat.col.family"), self.family))
+        self.units = SpinBox()
+        self.units.setRange(0, 10)
+        self.units.setValue(1)
+        self.units.setSuffix(" U")
+        self.units.setFixedWidth(px(100))
+        lay.addWidget(FieldRow(tr("cat.col.ru"), self.units))
+        self.power = QLineEdit()
+        self.power.setPlaceholderText(tr("cat.add_model_power_ph"))
+        lay.addWidget(FieldRow(tr("cat.add_model_power"), self.power))
+        self.price = QLineEdit()
+        lay.addWidget(FieldRow(tr("cat.col.price"), self.price))
+        self.code = QLineEdit()
+        lay.addWidget(FieldRow(tr("cat.col.code"), self.code))
+        for edit in (self.sku, self.kind, self.name, self.family, self.power, self.price, self.code):
+            edit.setFixedWidth(px(280))
+        self.note = label(tr("cat.add_model_note"), "caption", wrap=True)
+        lay.addWidget(self.note)
+        self.problem = label("", "caption", wrap=True)
+        self.problem.setStyleSheet(f"color: {tokens().error};")
+        self.problem.hide()
+        lay.addWidget(self.problem)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        cancel = button(tr("ui.cancel"))
+        cancel.clicked.connect(self.reject)
+        ok = button(tr("cat.add_model_ok"), "primary", "plus")
+        ok.setDefault(True)
+        ok.clicked.connect(self._accept)
+        row.addWidget(cancel)
+        row.addWidget(ok)
+        lay.addLayout(row)
+
+    @staticmethod
+    def _number(text: str) -> float | None:
+        text = text.strip().replace(",", ".").replace(" ", "")
+        return float(text) if text else None
+
+    def _fail(self, text: str, widget: QWidget) -> None:
+        self.problem.setText(text)
+        self.problem.show()
+        widget.setFocus()
+
+    def _accept(self) -> None:
+        sku = self.sku.text().strip()
+        if not sku:
+            return self._fail(tr("cat.add_model_need_sku"), self.sku)
+        if sku in self.existing:
+            return self._fail(tr("cat.add_model_exists", model=sku), self.sku)
+        for edit in (self.power, self.price):
+            try:
+                value = self._number(edit.text())
+            except ValueError:
+                return self._fail(tr("cat.err_number"), edit)
+            if value is not None and value < 0:
+                return self._fail(tr("cat.err_number"), edit)
+        self.accept()
+
+    def values(self) -> tuple[str, dict[str, Any]]:
+        return self.sku.text().strip(), new_model(
+            self.kind.currentData(),
+            name=self.name.text().strip(),
+            family=self.family.text().strip(),
+            rack_units=self.units.value(),
+            power_w=self._number(self.power.text()),
+            price=self._number(self.price.text()),
+            code=self.code.text().strip(),
+        )
 
 
 def _get(d: dict[str, Any], path: tuple[str, ...]) -> Any:
@@ -191,6 +328,9 @@ class ModelsTable(QAbstractTableModel):
                 new: Any = value == Qt.CheckState.Checked.value or value == Qt.CheckState.Checked
             elif typ in ("int",):
                 new = int(str(value).strip())
+            elif typ == "int?":
+                text = str(value).strip()
+                new = int(text) if text else None
             elif typ in ("float", "float?"):
                 text = str(value).strip().replace(",", ".")
                 new = None if (text == "" and typ == "float?") else float(text)
@@ -205,6 +345,9 @@ class ModelsTable(QAbstractTableModel):
             self.view.show_error(tr("cat.err_number"))
             return False
         _set(model, path, new)
+        if typ == "kind":  # a new type needs its own sections (ports, firewall limits, AP power…)
+            for section, default in kind_defaults(new).items():
+                model.setdefault(section, default)
         if self.view.apply(data):
             self.dataChanged.emit(index, index)
             return True
@@ -312,10 +455,13 @@ class CatalogView(QWidget):
         sheet = button(tr("ui.datasheet"), None, "external-link")
         sheet.clicked.connect(self.open_datasheet)
         row.addWidget(sheet)
+        add = button(tr("cat.add_model"), "primary", "plus")
+        add.clicked.connect(self.add_model)
         dup = button(tr("cat.duplicate"), None, "copy")
         dup.clicked.connect(self.duplicate_model)
         delete = button(tr("cat.delete"), "danger", "trash-2")
         delete.clicked.connect(self.delete_model)
+        row.addWidget(add)
         row.addWidget(dup)
         row.addWidget(delete)
         lay.addLayout(row)
@@ -411,6 +557,25 @@ class CatalogView(QWidget):
                     priced=report.priced,
                 ),
             )
+
+    def add_model(self) -> None:
+        dlg = AddModelDialog(set(self.data["models"]), self.kind_filter.value() or "", self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.insert_model(*dlg.values())
+
+    def insert_model(self, key: str, model: dict[str, Any]) -> bool:
+        if key in self.data["models"]:
+            self.show_error(tr("cat.add_model_exists", model=key))
+            return False
+        data = copy.deepcopy(self.data)
+        data["models"][key] = model
+        if not self.apply(data):
+            return False
+        self.models.reload()
+        self.select_model(key)
+        self.state.message.emit("success", tr("cat.add_model_done", model=key))
+        return True
 
     def duplicate_model(self) -> None:
         key = self._selected_key()

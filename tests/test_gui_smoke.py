@@ -219,6 +219,45 @@ def test_catalog_edit_applies(app: QApplication, window) -> None:
     window.state.reset_catalog()
 
 
+def test_catalog_add_model(app: QApplication, window) -> None:
+    from sitesizer.gui.views.catalog_view import MODEL_COLUMNS, AddModelDialog, new_model
+
+    cv = window.catalog
+    dlg = AddModelDialog(set(cv.data["models"]), "", cv)
+    dlg.sku.setText("FS-148F")
+    dlg._accept()
+    assert dlg.result() != dlg.DialogCode.Accepted and not dlg.problem.isHidden()  # duplicate SKU
+    dlg.sku.setText("NVR-16")
+    dlg.name.setText("NVR 16 ch")
+    dlg.power.setText("45,5")
+    dlg.price.setText("12000")
+    dlg._accept()
+    key, model = dlg.values()
+    assert key == "NVR-16" and model["power_base_w"] == 45.5 and model["price"] == 12000.0
+    assert cv.insert_model(key, model)
+    dev = window.state.catalog.device("NVR-16")
+    assert dev.kind == "accessory" and dev.rack_units == 1 and dev.name["uk"] == "NVR 16 ch"
+    # every kind gets the sections it needs, so a new switch / FortiGate / AP is valid right away
+    for kind in ("switch", "firewall", "ap", "license", "work"):
+        assert cv.insert_model(f"NEW-{kind}", new_model(kind))
+    # changing the type in the table fills the missing sections instead of failing
+    col = next(i for i, c in enumerate(MODEL_COLUMNS) if c[0] == "cat.col.kind")
+    assert cv.models.setData(cv.models.index(cv.models.keys.index("NVR-16"), col), "switch")
+    assert window.state.catalog.device("NVR-16").ports is not None
+    # a model from the catalog can be put into a cabinet and is counted everywhere
+    assert cv.insert_model("NVR-32", new_model("accessory", rack_units=2, power_w=60))
+    st = window.state
+    st.set_field("sockets", 48, merge=False)
+    pump(app)
+    window.racks.add_extra("device", 30, 2, "NVR-32")
+    pump(app)
+    assert any(line.model == "NVR-32" for line in st.result.lines("rack_device"))
+    assert ("NVR-32", 1, 60) in st.result.power.breakdown
+    st.undo.undo()
+    pump(app)
+    window.state.reset_catalog()
+
+
 def _mouse(widget, kind, pos) -> None:
     from PySide6.QtCore import QEvent, QPointF
     from PySide6.QtGui import QMouseEvent

@@ -1009,5 +1009,17 @@
   "rack.extra.device": "Device",
   "cat.rack_device": "Added to cabinet",
   "group.rack_device": "Added to cabinet manually",
-  "reason.rack_device": "Added manually on the Racks page ({racks})."
+  "reason.rack_device": "Added manually on the Racks page ({racks}).",
+  "cat.add_model": "New model",
+  "cat.add_model_sub": "Add equipment that is not in the catalog. Other specs (ports, PoE, FortiGate limits…) can be edited right in the table.",
+  "cat.add_model_name": "Name",
+  "cat.add_model_name_ph": "e.g. “16-channel NVR”",
+  "cat.add_model_power": "Power, W",
+  "cat.add_model_power_ph": "optional, for power and UPS",
+  "cat.add_model_note": "The new model can be put into a cabinet right away (Racks → Add device) or into the BoM.",
+  "cat.add_model_ok": "Add to catalog",
+  "cat.add_model_need_sku": "Enter the model (SKU).",
+  "cat.add_model_exists": "{model} is already in the catalog.",
+  "cat.add_model_done": "{model} added to the catalog.",
+  "cat.col.ups_va": "UPS, VA"
 }

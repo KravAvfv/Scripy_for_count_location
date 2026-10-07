@@ -1016,5 +1016,17 @@
   "rack.extra.device": "Пристрій",
   "cat.rack_device": "Додано в шафу",
   "group.rack_device": "Додано в шафу вручну",
-  "reason.rack_device": "Додано вручну на сторінці «Шафи» ({racks})."
+  "reason.rack_device": "Додано вручну на сторінці «Шафи» ({racks}).",
+  "cat.add_model": "Нова модель",
+  "cat.add_model_sub": "Додайте обладнання, якого немає в каталозі. Решту характеристик (порти, PoE, ліміти FortiGate…) можна відредагувати прямо в таблиці.",
+  "cat.add_model_name": "Назва",
+  "cat.add_model_name_ph": "напр. «Відеореєстратор 16 каналів»",
+  "cat.add_model_power": "Споживання, Вт",
+  "cat.add_model_power_ph": "необов'язково, для живлення й UPS",
+  "cat.add_model_note": "Нову модель можна одразу додати в шафу («Шафи» → «Додати пристрій») або в специфікацію.",
+  "cat.add_model_ok": "Додати в каталог",
+  "cat.add_model_need_sku": "Вкажіть модель (SKU).",
+  "cat.add_model_exists": "Модель {model} вже є в каталозі.",
+  "cat.add_model_done": "{model} додано в каталог.",
+  "cat.col.ups_va": "UPS, ВА"
 }
