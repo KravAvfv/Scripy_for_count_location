@@ -4,7 +4,7 @@ The catalog is the single source of truth for models, limits, tiers and rule par
 **Catalog** page (every edit is validated and applied immediately), or edit the JSON directly.
 
 - Default (shipped): `sitesizer/data/catalog.json`. This is datasheet-verified and read-only in the app.
-- Your copy: `%APPDATA%\SiteSizer\SiteSizer\catalog.json`, created on your first edit.
+- Your copy: `%APPDATA%\LocalCount\LocalCount\catalog.json`, created on your first edit.
   **Catalog → Folder** opens it; **Reset to defaults** deletes it.
 - **Import / Export** exchange catalogs with colleagues (for example a price list).
 

@@ -20,7 +20,7 @@ from PySide6.QtGui import (
     QTextDocument,
 )
 
-from .. import __version__
+from .. import APP_NAME, __version__
 from ..core.catalog import Catalog
 from ..core.models import Severity, SiteResult
 from ..core.pricing import format_money, summarize_prices
@@ -269,7 +269,7 @@ def export_pdf(
         )
     )
     writer.setTitle(t.t("xl.title", site=result.input.name))
-    writer.setCreator(f"SiteSizer {__version__}")
+    writer.setCreator(f"{APP_NAME} {__version__}")
     painter = QPainter(writer)
     if not painter.isActive():
         raise OSError(f"Cannot write {path}")
@@ -404,7 +404,7 @@ def _draw_footer(
     p.save()
     p.setPen(QColor(MUTED))
     p.setFont(_font(7.5))
-    left = f"SiteSizer {__version__}" + (f"  ·  {opts['project']}" if opts.get("project") else "")
+    left = f"{APP_NAME} {__version__}" + (f"  ·  {opts['project']}" if opts.get("project") else "")
     p.drawText(QRectF(0, ph - h, pw / 2, h), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom, left)
     p.drawText(
         QRectF(pw / 2, ph - h, pw / 2, h),

@@ -1,4 +1,4 @@
-# SiteSizer — розрахунок мережевого обладнання для локацій
+# LocalCount — розрахунок мережевого обладнання для локацій
 
 Desktop tool for sizing Fortinet equipment (FortiGate, FortiSwitch, FortiAP) for a company location. Enter a few
 numbers — sockets, cameras, Wi-Fi zones, criticality — and instantly get a justified bill of materials, a clean
@@ -104,8 +104,8 @@ A site JSON uses the same fields as the GUI: `sockets`, `cameras`, `ap_groups` (
 
 ```powershell
 # 1. Install Python 3.12+ from python.org (tick "Add python.exe to PATH") and Git for Windows.
-git clone https://github.com/KravAvfv/Scripy_for_count_location.git SiteSizer
-cd SiteSizer
+git clone https://github.com/KravAvfv/Scripy_for_count_location.git LocalCount
+cd LocalCount
 # 2. Build the .exe (creates .venv, installs deps, runs tests, writes dist\LocalCount.exe):
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 # or just run from source:
@@ -136,7 +136,7 @@ python tools\screenshots.py docs\screenshots            # regenerate screenshots
 - [docs/CATALOG.md](docs/CATALOG.md) — how to edit models, tiers and rules.
 - [docs/RESEARCH.md](docs/RESEARCH.md) — datasheet findings, discrepancies from the whiteboard notes, sources.
 
-User data (catalog edits, settings, logs) lives in `%APPDATA%\SiteSizer\SiteSizer\`; the log rotates at 1 MB.
+User data (catalog edits, settings, logs) lives in `%APPDATA%\LocalCount\LocalCount\` (moved over automatically from the old `%APPDATA%\SiteSizer\SiteSizer\` on the first start); the log rotates at 1 MB.
 
 ## Decisions made with the network engineer
 

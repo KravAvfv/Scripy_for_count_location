@@ -1,4 +1,4 @@
-"""Render the SiteSizer brand mark to packaging/sitesizer.ico and .png (multi-size)."""
+"""Render the LocalCount brand mark to packaging/sitesizer.ico and .png (multi-size)."""
 
 from __future__ import annotations
 

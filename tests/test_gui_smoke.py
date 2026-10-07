@@ -387,3 +387,25 @@ def test_export_dialog_choices(app: QApplication, window, tmp_path: Path, monkey
     assert wb.sheetnames == ["Слаботрумка", "BO7 - Схема+шафи", "BO7 - IP"]
     assert (tmp_path / "out.pdf").read_bytes().startswith(b"%PDF")
     assert st.settings.export_choices["only_used"] is True
+
+
+def test_settings_and_catalog_move_over_from_the_old_name(tmp_path: Path) -> None:
+    from sitesizer.gui.app import migrate_legacy_data
+
+    old_dir = tmp_path / "SiteSizer" / "SiteSizer"
+    old_dir.mkdir(parents=True)
+    (old_dir / "catalog.json").write_text('{"x": 1}', encoding="utf-8")
+    new_dir = tmp_path / "LocalCount" / "LocalCount"
+    new_dir.mkdir(parents=True)
+    legacy = QSettings(str(tmp_path / "old.ini"), QSettings.Format.IniFormat)
+    legacy.setValue("app/settings_json", '{"theme": "dark"}')
+    settings = QSettings(str(tmp_path / "new.ini"), QSettings.Format.IniFormat)
+    assert migrate_legacy_data(settings, legacy, new_dir)
+    assert settings.value("app/settings_json") == '{"theme": "dark"}'
+    assert (new_dir / "catalog.json").read_text(encoding="utf-8") == '{"x": 1}'
+    # the second start leaves the new data alone
+    (new_dir / "catalog.json").write_text('{"x": 2}', encoding="utf-8")
+    settings.setValue("app/settings_json", '{"theme": "light"}')
+    assert not migrate_legacy_data(settings, legacy, new_dir)
+    assert (new_dir / "catalog.json").read_text(encoding="utf-8") == '{"x": 2}'
+    assert settings.value("app/settings_json") == '{"theme": "light"}'

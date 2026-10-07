@@ -16,7 +16,7 @@ VSVersionInfo(
                     subtype=0x0, date=(0, 0)),
   kids=[
     StringFileInfo([StringTable('042204B0', [
-      StringStruct('CompanyName', 'SiteSizer'),
+      StringStruct('CompanyName', 'LocalCount'),
       StringStruct('FileDescription', 'LocalCount — Fortinet location sizing'),
       StringStruct('FileVersion', '{v}'),
       StringStruct('InternalName', 'LocalCount'),

@@ -1,4 +1,4 @@
-# PyInstaller spec — single-file, windowed SiteSizer build.
+# PyInstaller spec — single-file, windowed LocalCount build.
 # Usage (from the repo root):  pyinstaller --noconfirm --clean packaging/sitesizer.spec
 # The build scripts (build.ps1 / build.sh) wrap this and regenerate the icon + version info.
 
@@ -56,4 +56,4 @@ exe = EXE(  # noqa: F821
     icon=str(ROOT / "packaging" / "sitesizer.ico") if is_win else None,
     version=str(ROOT / "packaging" / "version_info.txt") if is_win else None,
 )
-print(f"SiteSizer {__version__} spec loaded")
+print(f"LocalCount {__version__} spec loaded")

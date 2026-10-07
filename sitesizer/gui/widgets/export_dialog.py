@@ -153,5 +153,5 @@ class ExportDialog(QDialog):
 
     def target(self) -> tuple[Path, str]:
         folder = Path(self.folder.text().strip() or Path.home())
-        name = self.name.text().strip() or "SiteSizer"
+        name = self.name.text().strip() or "LocalCount"
         return folder, name

@@ -56,8 +56,8 @@ def main() -> int:
     from PySide6.QtCore import QCoreApplication, QSettings
     from PySide6.QtWidgets import QApplication
 
-    QCoreApplication.setOrganizationName("SiteSizerShots")
-    QCoreApplication.setApplicationName("SiteSizerShots")
+    QCoreApplication.setOrganizationName("LocalCountShots")
+    QCoreApplication.setApplicationName("LocalCountShots")
     app = QApplication(sys.argv[:1])
     app.setStyle("Fusion")
     from sitesizer.gui.main_window import MainWindow

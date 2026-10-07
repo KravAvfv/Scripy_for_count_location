@@ -556,7 +556,7 @@ def export_svg(diagram: Diagram, path: str | Path, title: str = "") -> Path:
     gen.setSize(QSize(math.ceil(size.width()), math.ceil(size.height())))
     gen.setViewBox(QRectF(0, 0, size.width(), size.height()))
     gen.setTitle(title or "Topology")
-    gen.setDescription("SiteSizer topology diagram")
+    gen.setDescription("LocalCount topology diagram")
     p = QPainter(gen)
     diagram.paint(p)
     p.end()

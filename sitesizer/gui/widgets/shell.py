@@ -142,7 +142,7 @@ class Sidebar(QFrame):
         brand.addWidget(BrandMark(30))
         col = QVBoxLayout()
         col.setSpacing(0)
-        self.app_name = label("SiteSizer")
+        self.app_name = label("LocalCount")
         self.app_name.setStyleSheet(f"font-weight: 700; font-size: {px(15)}px;")
         self.project_label = label("", "faint")
         col.addWidget(self.app_name)

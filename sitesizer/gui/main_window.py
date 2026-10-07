@@ -276,7 +276,7 @@ class MainWindow(QMainWindow):
             self.topbar.subtitle.setText(f"{project}{path}{dirty}")
         else:
             self.topbar.subtitle.setText(f"{project}  ›  {site}{dirty}")
-        self.setWindowTitle(f"{'• ' if self.state.dirty else ''}{project} — SiteSizer")
+        self.setWindowTitle(f"{'• ' if self.state.dirty else ''}{project} — LocalCount")
 
     # ---- sites / projects ----------------------------------------------------------------
     def site_action(self, action: str, site_id: str) -> None:
