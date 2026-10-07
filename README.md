@@ -10,7 +10,7 @@ The UI is Ukrainian by default, with a full English version (Settings → Langua
 
 ## Швидкий старт (для колег)
 
-1. Запустіть `SiteSizer.exe`.
+1. Запустіть `LocalCount.exe`.
 2. **Локація:** код (напр. `BO123`), ID локації (другий октет, напр. `57` → `10.57.x.x`), кількість поверхів,
    розетки, камери, зони Wi-Fi (або натисніть шаблон «Склад», «HQ»…).
 3. **Шафи:** перевірте розміщення; пристрої перетягуються мишею, шафи додаються/видаляються.
@@ -106,7 +106,7 @@ A site JSON uses the same fields as the GUI: `sockets`, `cameras`, `ap_groups` (
 # 1. Install Python 3.12+ from python.org (tick "Add python.exe to PATH") and Git for Windows.
 git clone https://github.com/KravAvfv/Scripy_for_count_location.git SiteSizer
 cd SiteSizer
-# 2. Build the .exe (creates .venv, installs deps, runs tests, writes dist\SiteSizer.exe):
+# 2. Build the .exe (creates .venv, installs deps, runs tests, writes dist\LocalCount.exe):
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 # or just run from source:
 py -3 -m venv .venv; .\.venv\Scripts\pip install -r requirements.txt; .\.venv\Scripts\python -m sitesizer
@@ -115,7 +115,7 @@ py -3 -m venv .venv; .\.venv\Scripts\pip install -r requirements.txt; .\.venv\Sc
 ## Build the single-file .exe
 
 ```powershell
-.\build.ps1            # creates .venv, runs tests, builds dist\SiteSizer.exe
+.\build.ps1            # creates .venv, runs tests, builds dist\LocalCount.exe
 .\build.ps1 -SkipTests
 ```
 

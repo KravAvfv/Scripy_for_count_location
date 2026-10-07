@@ -17,11 +17,11 @@ VSVersionInfo(
   kids=[
     StringFileInfo([StringTable('042204B0', [
       StringStruct('CompanyName', 'SiteSizer'),
-      StringStruct('FileDescription', 'SiteSizer — Fortinet location sizing'),
+      StringStruct('FileDescription', 'LocalCount — Fortinet location sizing'),
       StringStruct('FileVersion', '{v}'),
-      StringStruct('InternalName', 'SiteSizer'),
-      StringStruct('OriginalFilename', 'SiteSizer.exe'),
-      StringStruct('ProductName', 'SiteSizer'),
+      StringStruct('InternalName', 'LocalCount'),
+      StringStruct('OriginalFilename', 'LocalCount.exe'),
+      StringStruct('ProductName', 'LocalCount'),
       StringStruct('ProductVersion', '{v}')])]),
     VarFileInfo([VarStruct('Translation', [0x0422, 1200])])
   ]

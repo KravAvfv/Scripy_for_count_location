@@ -1,4 +1,4 @@
-# Build SiteSizer.exe (single file) on Windows.
+# Build LocalCount.exe (single file) on Windows.
 # Usage (PowerShell, from the repo folder):   .\build.ps1
 # Optional:                                     .\build.ps1 -SkipTests
 param([switch]$SkipTests)
@@ -26,5 +26,5 @@ if (-not $SkipTests) {
 & $py -m PyInstaller --noconfirm --clean packaging\sitesizer.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 
-$exe = Get-Item "dist\SiteSizer.exe"
+$exe = Get-Item "dist\LocalCount.exe"
 Write-Host ("Done: {0} ({1:N1} MB)" -f $exe.FullName, ($exe.Length / 1MB)) -ForegroundColor Green

@@ -48,7 +48,7 @@ exe = EXE(  # noqa: F821
     a.binaries,
     a.datas,
     [],
-    name="SiteSizer",
+    name="LocalCount",
     debug=False,
     strip=False,
     upx=False,
