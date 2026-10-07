@@ -24,6 +24,20 @@ The UI is Ukrainian by default, with a full English version (Settings → Langua
 `Ctrl+K` — палітра команд, `Ctrl+S` — зберегти проєкт, `F1` — довідка з поясненням логіки.
 Ціни й коди 1С: **Каталог → Імпорт шаблону Excel** (ваш файл «Слаботрумка»).
 
+## Оновлення до нової версії (Windows)
+
+У папці проєкту (PowerShell):
+
+```powershell
+git pull
+powershell -ExecutionPolicy Bypass -File .\build.ps1
+```
+
+Скрипт проганяє тести і збирає новий `dist\LocalCount.exe`. Закрийте програму перед збіркою; ярлик на робочому
+столі має вказувати на `dist\LocalCount.exe` (старий `SiteSizer.exe` більше не оновлюється). Каталог і
+налаштування зберігаються в `%APPDATA%\LocalCount\LocalCount\` і при оновленні не губляться.
+Перше встановлення на новий ноутбук — див. розділ «Windows 11: get the app on another laptop» нижче.
+
 ## Features
 
 **v2 (company workflow):** site code / location ID / floors · cabinets in the house pattern
