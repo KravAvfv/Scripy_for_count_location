@@ -411,33 +411,91 @@ def test_settings_and_catalog_move_over_from_the_old_name(tmp_path: Path) -> Non
     assert settings.value("app/settings_json") == '{"theme": "light"}'
 
 
-def test_racks_switch_rename_and_delete(app: QApplication, window) -> None:
+def test_racks_rooms_rename_and_delete(app: QApplication, window, monkeypatch: pytest.MonkeyPatch) -> None:
+    from sitesizer.gui.views import racks as racks_mod
+
+    monkeypatch.setattr(racks_mod, "confirm", lambda *a, **k: True)
+    st = window.state
+    racks = window.racks
+
+    def settle() -> None:
+        pump(app)
+        st.recompute()
+        pump(app)
+
+    def chip_texts() -> list[str]:
+        return [racks.chips.itemAt(i).widget().text() for i in range(racks.chips.count())]
+
+    st.edit("t", lambda d: d.update(sockets=96, mode="extended"))
+    st.recompute()
+    window.navigate("racks")
+    pump(app)
+    # one room: "all cabinets", the room and "+ room"
+    assert chip_texts() == ["Усі шафи (1)", "Комутаційна 1 (MDF) · 1 шафа", " Комутаційна"]
+    # add a room: the switches are spread over it and the view jumps to it
+    racks.add_room_btn.click()
+    settle()
+    assert st.site.closets == 2 and st.result.rack.rooms[1] == "Комутаційна 2 (IDF-1)"
+    assert racks.view_room == 1
+    assert [p.room for p in racks.editor.diagram.plans] == [1]
+    assert window.location.closets.value() == 2
+    # add two cabinets to that room, then look at it and at everything
+    racks.add_rack(42)
+    settle()
+    racks.add_rack(24)
+    settle()
+    assert [p.room for p in st.result.rack.plans] == [0, 1, 1, 1]
+    assert len(racks.editor.diagram.plans) == 3 and racks.view_room == 1
+    assert "3 шафи" in chip_texts()[2]
+    racks.chips.itemAt(0).widget().click()  # "all cabinets"
+    pump(app)
+    assert racks.view_room is None and len(racks.editor.diagram.plans) == 4
+    racks.chips.itemAt(1).widget().click()  # the main room
+    pump(app)
+    assert [p.room for p in racks.editor.diagram.plans] == [0] and racks.chips.itemAt(1).widget().isChecked()
+    assert not racks.del_room.isEnabled()  # the main room stays
+    # delete a cabinet of room 2
+    racks.show_room(1)
+    pump(app)
+    racks.editor.select("user-2")
+    racks.delete_rack()
+    settle()
+    assert [p.key for p in st.result.rack.plans if p.room == 1] == ["idf1-1", "user-1"]
+    # rename the room; empty name = automatic again
+    racks.room_name.setText("Серверна 2 поверх")
+    racks.room_name.editingFinished.emit()
+    settle()
+    assert st.result.rack.rooms[1] == "Серверна 2 поверх" and "Серверна 2 поверх · 2 шафи" in chip_texts()
+    # a third room, then remove the second: the third one takes its place
+    racks.add_room()
+    settle()
+    assert len(st.result.rack.rooms) == 3
+    racks.delete_room(1)
+    settle()
+    assert st.site.closets == 2 and st.result.rack.rooms == ["Комутаційна 1 (MDF)", "Комутаційна 2 (IDF-1)"]
+    assert not st.site.layout.added and not st.site.layout.room_names
+    st.undo.undo()
+    settle()
+    assert st.result.rack.rooms[1] == "Серверна 2 поверх" and st.site.layout.added == ["user-1"]
+    # a room without cabinets shows a hint instead of an empty canvas
+    racks.show_room(2)
+    for p in [p for p in st.result.rack.plans if p.room == 2]:
+        racks.editor.sel_rack = p.key
+        racks.delete_rack()
+        settle()
+    assert racks.view_room == 2 and racks.empty.isVisible() and not racks.scroll.isVisible()
+    racks.add_rack(24)
+    settle()
+    assert [p.key for p in st.result.rack.plans if p.room == 2] and racks.scroll.isVisible()
+
+
+def test_rack_items_rename_and_delete(app: QApplication, window) -> None:
     st = window.state
     racks = window.racks
     st.edit("t", lambda d: d.update(sockets=96, mode="extended"))
     st.recompute()
     window.navigate("racks")
     pump(app)
-    assert racks.chips_box.isHidden()  # a single cabinet: nothing to switch between
-    # the number of closets is entered on the racks page and in the location form
-    racks.closets.field.setValue(3)
-    pump(app)
-    st.recompute()
-    pump(app)
-    assert st.site.closets == 3 and len(st.result.rack.plans) == 3
-    assert window.location.closets.value() == 3
-    assert not racks.chips_box.isHidden() and racks.chips.count() == 4  # "all" + 3 cabinets
-    assert len(racks.editor.diagram.plans) == 3
-    # switch to the second cabinet: only it is drawn and selected
-    second = st.result.rack.plans[1]
-    racks.chips.itemAt(2).widget().click()
-    pump(app)
-    assert racks.view_rack == second.key
-    assert [p.key for p in racks.editor.diagram.plans] == [second.key]
-    assert racks.editor.sel_rack == second.key and racks.chips.itemAt(2).widget().isChecked()
-    racks.chips.itemAt(0).widget().click()
-    pump(app)
-    assert racks.view_rack == "" and len(racks.editor.diagram.plans) == 3
     # name a switch; the model stays visible under the name
     plan = st.result.rack.plans[0]
     sw = next(it for it in plan.items if it.group == "access_switch")
@@ -476,7 +534,3 @@ def test_racks_switch_rename_and_delete(app: QApplication, window) -> None:
     racks.editor.select(plan.key, sw.id)
     pump(app)
     assert not racks.del_item.isVisible()
-    racks.closets.field.setValue(0)
-    st.recompute()
-    pump(app)
-    assert st.site.closets == 0 and len(st.result.rack.plans) == 1 and racks.chips_box.isHidden()

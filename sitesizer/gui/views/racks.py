@@ -1,7 +1,8 @@
 """Racks page: drag & drop cabinet editor with cabinet and device properties.
 
-A row of chips switches between showing every cabinet and a single one; the number of telecom
-closets is entered right here (``SiteInput.closets``). Every change is an undoable edit of ``SiteInput.layout``; the engine re-applies the manual layout
+Cabinets stand in telecom rooms (closets): a row of chips shows every cabinet or only the ones of
+one room, and rooms are added, renamed and removed right here (the room count is
+``SiteInput.closets``). Every change is an undoable edit of ``SiteInput.layout``; the engine re-applies the manual layout
 on top of the automatic one, so DAC lengths, organizers and panels in the BoM follow at once.
 """
 
@@ -25,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.models import SiteResult
-from ...core.passive import PASSIVE_GROUPS
+from ...core.passive import PASSIVE_GROUPS, drop_room
 from ...exporters.diagram import style_from_tokens
 from ...exporters.rack import RackDiagram
 from ...i18n import current, tr
@@ -38,7 +39,6 @@ from ..widgets.controls import (
     FieldRow,
     FlowLayout,
     SpinBox,
-    Stepper,
     button,
     clear_layout,
     hline,
@@ -126,16 +126,16 @@ class RacksView(QWidget):
         super().__init__(parent)
         self.state = state
         self._loading = False
-        self.view_rack = ""
-        """Cabinet shown alone in the editor ("" = all cabinets side by side)."""
-        self._chip_keys: list[tuple[str, str]] = []
+        self.view_room: int | None = None
+        """Telecom room whose cabinets the editor shows (``None`` = every cabinet)."""
+        self._chip_keys: list[tuple[int | None, str]] = []
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(px(12))
 
         bar = QHBoxLayout()
         bar.setSpacing(px(8))
-        add = button(tr("rk.add_rack"), "primary", "plus")
+        add = button(tr("rk.add_rack"), "primary", "plus", tr("rk.add_rack_tip"))
         menu = QMenu(add)
         for size in (24, 42):
             act = QAction(f"{size}U", menu)
@@ -146,14 +146,6 @@ class RacksView(QWidget):
         self.reset_btn = button(tr("rk.reset"), "ghost", "refresh-ccw", tr("rk.reset_tip"))
         self.reset_btn.clicked.connect(self.reset_layout)
         bar.addWidget(self.reset_btn)
-        bar.addSpacing(px(8))
-        bar.addWidget(label(tr("rk.closets"), "muted"))
-        self.closets = Stepper(0, 50, width=120)
-        self.closets.field.setSpecialValueText(tr("ui.rack_size_auto"))
-        self.closets.setToolTip(tr("rk.closets_tip"))
-        self.closets.valueChanged.connect(self.set_closets)
-        bar.addWidget(self.closets)
-        bar.addSpacing(px(8))
         self.hint = label(tr("rk.hint"), "caption", wrap=True)
         bar.addWidget(self.hint, 1)
         zoom_out = icon_button("zoom-out", tr("ui.zoom_out"))
@@ -174,6 +166,9 @@ class RacksView(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(False)
         self.scroll.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        self.empty = label(tr("rk.room_empty"), "muted", wrap=True)
+        self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty.hide()
         self.editor = RackEditor()
         self.editor.moved.connect(self.move_item)
         self.editor.selectionChanged.connect(lambda *_: self._load_side())
@@ -181,6 +176,7 @@ class RacksView(QWidget):
         self.editor.deleteRequested.connect(self.delete_item)
         self.scroll.setWidget(self.editor)
         body.addWidget(self.scroll, 1)
+        body.addWidget(self.empty, 1)
 
         side_scroll = QScrollArea()
         side_scroll.setWidgetResizable(True)
@@ -192,6 +188,23 @@ class RacksView(QWidget):
         side_lay.setSpacing(px(12))
         side_scroll.setWidget(side)
         body.addWidget(side_scroll)
+
+        # ---- telecom room ----------------------------------------------------------------
+        self.room_card = Card(tr("rk.room"), tr("rk.room_sub"))
+        self.room_name = QLineEdit()
+        self.room_name.setClearButtonEnabled(True)
+        self.room_name.editingFinished.connect(lambda: self.rename_room(self.room_name.text()))
+        self.room_card.add(self.room_name)
+        self.room_info = label("", "caption", wrap=True)
+        self.room_card.add(self.room_info)
+        room_row = QHBoxLayout()
+        room_row.setSpacing(px(6))
+        room_row.addStretch(1)
+        self.del_room = button(tr("rk.delete_room"), "danger", "trash-2")
+        self.del_room.clicked.connect(lambda: self.delete_room(self.current_room()))
+        room_row.addWidget(self.del_room)
+        self.room_card.add(room_row)
+        side_lay.addWidget(self.room_card)
 
         # ---- cabinet ---------------------------------------------------------------------
         self.rack_card = Card(tr("rk.rack"), tr("rk.rack_sub"))
@@ -289,9 +302,6 @@ class RacksView(QWidget):
     # result → widgets
     # =====================================================================================
     def on_result(self, r: SiteResult) -> None:
-        self._loading = True
-        self.closets.setValue(r.input.closets)
-        self._loading = False
         self._redraw()
         lines = {line.model: line.qty or 0 for line in r.bom}
         rules = self.state.catalog.rules
@@ -322,44 +332,82 @@ class RacksView(QWidget):
             colors=dict(tk.categories),
             dark=tk.dark,
         )
-        keys = [p.key for p in r.rack.plans]
-        if self.view_rack not in keys:
-            self.view_rack = ""
-        if self.view_rack:
-            diagram.plans = [p for p in diagram.plans if p.key == self.view_rack]
+        if self.view_room is not None and self.view_room >= len(r.rack.rooms):
+            self.view_room = None
+        if self.view_room is not None:
+            diagram.plans = [p for p in diagram.plans if p.room == self.view_room]
         self._load_chips(r)
-        self.editor.set_diagram(diagram if r.rack.plans else None)
+        self.editor.set_diagram(diagram if diagram.plans else None)
+        self.scroll.setVisible(bool(diagram.plans))
+        self.empty.setVisible(not diagram.plans)
         self._load_side()
 
     def _load_chips(self, r: SiteResult) -> None:
-        wanted = [("", tr("rk.all_racks", n=len(r.rack.plans)))] + [(p.key, p.name) for p in r.rack.plans]
+        wanted: list[tuple[int | None, str]] = [(None, tr("rk.all_racks", n=len(r.rack.plans)))]
+        for i, name in enumerate(r.rack.rooms):
+            racks = sum(1 for p in r.rack.plans if p.room == i)
+            wanted.append((i, f"{name} · {current().plural('plural.racks', racks)}"))
         if wanted != self._chip_keys:
             clear_layout(self.chips)
-            for key, text in wanted:
+            for room, text in wanted:
                 chip = Chip(text, checkable=True)
-                chip.setProperty("rack_key", key)
-                chip.clicked.connect(lambda _=False, k=key: self.show_rack(k))
+                chip.setProperty("room", -1 if room is None else room)
+                chip.clicked.connect(lambda _=False, k=room: self.show_room(k))
                 self.chips.addWidget(chip)
+            self.add_room_btn = Chip(tr("rk.add_room"), icon_name="plus")
+            self.add_room_btn.setToolTip(tr("rk.add_room_tip"))
+            self.add_room_btn.clicked.connect(self.add_room)
+            self.chips.addWidget(self.add_room_btn)
             self._chip_keys = wanted
+        shown = -1 if self.view_room is None else self.view_room
         for i in range(self.chips.count()):
-            w = self.chips.itemAt(i).widget()
-            if w is not None:
-                w.setChecked(w.property("rack_key") == self.view_rack)
-        self.chips_box.setVisible(len(r.rack.plans) > 1)
+            item = self.chips.itemAt(i)
+            w = item.widget() if item is not None else None
+            if isinstance(w, Chip) and w.isCheckable():
+                w.setChecked(w.property("room") == shown)
+        self.chips_box.updateGeometry()
 
-    def show_rack(self, key: str) -> None:
-        """Show one cabinet alone ("" = all of them)."""
-        self.view_rack = key
-        if key:
-            self.editor.sel_rack, self.editor.sel_item = key, ""
+    def show_room(self, room: int | None) -> None:
+        """Show the cabinets of one telecom room (``None`` = all of them)."""
+        self.view_room = room
+        r = self.state.result
+        if room is not None and r is not None:
+            first = next((p.key for p in r.rack.plans if p.room == room), "")
+            self.editor.sel_rack, self.editor.sel_item = first, ""
         self._redraw()
         self.scroll.horizontalScrollBar().setValue(0)
         self.scroll.verticalScrollBar().setValue(0)
 
+    def current_room(self) -> int:
+        """The room shown, or else the room of the selected cabinet."""
+        if self.view_room is not None:
+            return self.view_room
+        plan = self.editor.plan(self.editor.sel_rack)
+        return plan.room if plan is not None else 0
+
     def _load_side(self) -> None:
         plan, it = self.editor.selected()
+        r = self.state.result
         self._loading = True
         try:
+            room = self.current_room()
+            if r is not None and room < len(r.rack.rooms):
+                if not self.room_name.hasFocus():
+                    custom = self.state.site.layout.room_names.get(str(room), "")
+                    self.room_name.setText(custom)
+                    self.room_name.setPlaceholderText(tr("rk.name_auto") if custom else r.rack.rooms[room])
+                racks = [p for p in r.rack.plans if p.room == room]
+                self.room_info.setText(
+                    tr(
+                        "rk.room_info",
+                        kind=tr("rk.room_main") if room == 0 else tr("rk.room_remote"),
+                        racks=len(racks),
+                        used=sum(p.used_u for p in racks),
+                    )
+                )
+                self.del_room.setEnabled(room > 0)
+                self.del_room.setToolTip("" if room > 0 else tr("rk.room_main_keep"))
+            self.rack_card.setVisible(plan is not None)
             self.rack_card.setEnabled(plan is not None)
             if plan is not None:
                 props = self.state.site.layout.props.get(plan.key)
@@ -421,6 +469,7 @@ class RacksView(QWidget):
                 ("hidden", []),
                 ("extras", []),
                 ("labels", {}),
+                ("room_names", {}),
             ):
                 lay.setdefault(key, empty)
             fn(lay)
@@ -433,9 +482,48 @@ class RacksView(QWidget):
         rack = self.editor.sel_rack
         self._layout(tr("rk.rack"), lambda lay: lay["props"].setdefault(rack, {}).update({key: value}))
 
-    def set_closets(self, n: int) -> None:
-        if not self._loading:
-            self.state.set_field("closets", int(n), tr("rk.closets"))
+    def _room_count(self) -> int:
+        r = self.state.result
+        return len(r.rack.rooms) if r else 1
+
+    def add_room(self) -> None:
+        """A new telecom room: switches are spread over it and it gets a fibre backbone."""
+        n = self._room_count()
+        self.view_room = n
+        self.editor.sel_rack, self.editor.sel_item = "", ""
+        self.state.set_field("closets", n + 1, tr("rk.add_room"), merge=False)
+
+    def rename_room(self, name: str) -> None:
+        room, name = self.current_room(), name.strip()
+        if self._loading or name == self.state.site.layout.room_names.get(str(room), ""):
+            return
+
+        def fn(lay: dict[str, Any]) -> None:
+            if name:
+                lay["room_names"][str(room)] = name
+            else:
+                lay["room_names"].pop(str(room), None)
+
+        self._layout(tr("rk.room"), fn)
+
+    def delete_room(self, room: int) -> None:
+        r = self.state.result
+        if r is None or room <= 0 or room >= len(r.rack.rooms):
+            return
+        if not confirm(
+            self, tr("rk.delete_room"), tr("rk.delete_room_text", name=r.rack.rooms[room]), tr("ui.delete"), danger=True
+        ):
+            return
+        cabinets = {p.key for p in r.rack.plans if p.room == room}
+        rooms = len(r.rack.rooms)
+
+        def mutate(d: dict[str, Any]) -> None:
+            d["closets"] = rooms - 1
+            drop_room(d.setdefault("layout", {}), room, cabinets)
+
+        self.view_room = None if self.view_room is None else room - 1
+        self.editor.sel_rack, self.editor.sel_item = "", ""
+        self.state.edit(tr("rk.delete_room"), mutate)
 
     def rename_item(self, item_id: str, name: str) -> None:
         name = name.strip()
@@ -539,13 +627,13 @@ class RacksView(QWidget):
             n += 1
         key = f"user-{n}"
 
+        room = self.current_room()
+
         def fn(lay: dict[str, Any]) -> None:
             lay["added"].append(key)
-            lay["props"].setdefault(key, {})["size_u"] = size
+            lay["props"].setdefault(key, {}).update(size_u=size, room=room)
 
         self.editor.sel_rack, self.editor.sel_item = key, ""
-        if self.view_rack:
-            self.view_rack = key
         self._layout(tr("rk.add_rack"), fn)
 
     def delete_rack(self) -> None:

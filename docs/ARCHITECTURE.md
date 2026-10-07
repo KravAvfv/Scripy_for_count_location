@@ -24,7 +24,7 @@ sitesizer/
     icons.py     Lucide SVG icons recoloured per theme
     widgets/     controls (stepper, toggle, segmented, chips, callouts), shell (sidebar, top bar, summary bar),
                  feedback (toasts, checks panel), overlays (dialogs, command palette, tour), diagram views
-    views/       location, racks (drag & drop editor), bom (inline edits), ipplan (VLAN edits), topology, power,
+    views/       location, racks (telecom rooms → cabinets, drag & drop editor), bom (inline edits), ipplan (VLAN edits), topology, power,
                  compare, projects, catalog_view (template import), settings_view, help_view
     widgets/rack_editor.py  interactive cabinet canvas; widgets/export_dialog.py  export choices
     main_window.py, app.py (entry point, logging, crash safety), workers.py (background exports)

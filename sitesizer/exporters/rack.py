@@ -162,6 +162,9 @@ class RackDiagram:
         p.setPen(QColor(s.muted))
         p.setFont(self.f_sub)
         sub = t.t("rack.subtitle", model=plan.model or "—", used=plan.used_u, free=plan.free_u)
+        rooms = self.r.rack.rooms
+        if len(rooms) > 1 and plan.room < len(rooms):
+            sub = f"{rooms[plan.room]} · {sub}"
         p.drawText(
             QRectF(left, y + 22, self.COL_W, 18),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,

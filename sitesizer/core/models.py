@@ -105,6 +105,8 @@ class RackProps(BaseModel):
     floor: int | None = Field(default=None, ge=-10, le=300)
     letter: str | None = None
     name: str | None = None
+    room: int | None = Field(default=None, ge=0, le=49)
+    """Telecom room (closet) of a cabinet added by the user; 0 = the main one."""
 
 
 class RackPos(BaseModel):
@@ -146,11 +148,20 @@ class RackLayout(BaseModel):
     extras: list[RackExtra] = Field(default_factory=list)
     labels: dict[str, str] = Field(default_factory=dict)
     """Item id -> name given by the user (replaces the automatic ``BO123-5B-ASW01``)."""
+    room_names: dict[str, str] = Field(default_factory=dict)
+    """Room index -> name given by the user."""
 
     @property
     def is_empty(self) -> bool:
         return not (
-            self.added or self.removed or self.props or self.positions or self.hidden or self.extras or self.labels
+            self.added
+            or self.removed
+            or self.props
+            or self.positions
+            or self.hidden
+            or self.extras
+            or self.labels
+            or self.room_names
         )
 
 
@@ -187,7 +198,7 @@ class SiteInput(BaseModel):
     rack_size_u: int = Field(default=0, ge=0, le=60)
     """Preferred cabinet size (24 or 42 U); 0 = pick automatically."""
     closets: int = Field(default=0, ge=0, le=50)
-    """Number of telecom closets (main + remote); 0 = derive from the longest cable run."""
+    """Number of telecom rooms (main + remote closets); 0 = derive from the longest cable run."""
     fiber_type: FiberChoice = "auto"
     fiber_backbone_m: int | None = Field(default=None, ge=1, le=100_000)
     """Average fibre run from the main rack to each remote closet; ``None`` = estimate."""
@@ -353,6 +364,8 @@ class RackPlan:
     key: str = ""
     floor: int = 1
     letter: str = "A"
+    room: int = 0
+    """Telecom room (closet) the cabinet stands in: 0 = main (MDF), k = remote IDF-k."""
 
     @property
     def tag(self) -> str:
@@ -426,6 +439,9 @@ class RackSummary:
     rack_size_u: int = 0
     rack_count: int = 1
     idf_count: int = 1
+    """Telecom rooms (main + remote closets)."""
+    rooms: list[str] = field(default_factory=list)
+    """Display name of every telecom room, by index."""
     patch_panels: int = 0
     copper_endpoints: int = 0
     cable_m: int = 0

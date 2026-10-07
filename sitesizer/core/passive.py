@@ -18,8 +18,9 @@ copper and fibre parts are counted. Part numbers come from ``catalog.passive`` (
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .catalog import FiberSpec
 from .models import (
@@ -294,6 +295,7 @@ def plan_passive(
                 size_u=size,
                 model=model_for.get(size, ""),
                 key=key,
+                room=closet.index,
             )
             seq = ([*closet.top, *closet.head] if first else []) + stack_units(sws, pr.panel, panel_u, pr.manager)
             cursor = size
@@ -326,9 +328,17 @@ def plan_passive(
         plan.letter = _letter(i)
 
     # ---- manual layout, names -----------------------------------------------------------
+    rs.rooms = room_names(n_closets, ctx.site.layout, t)
     rs.layout_problems = apply_layout(
-        plans, ctx.site.layout, model_for, ctx.site.rack_size_u, t, {"manager": pr.manager, "panel": pr.panel}
+        plans,
+        ctx.site.layout,
+        model_for,
+        ctx.site.rack_size_u,
+        t,
+        {"manager": pr.manager, "panel": pr.panel},
+        rooms=n_closets,
     )
+    plans.sort(key=lambda p: p.room)  # a room's cabinets side by side (stable: keeps their order)
     if not ctx.site.layout.is_empty:
         rs.layout_problems += top_up_pdus(plans, feeds, pr.pdu_outlets, pr.pdu, set(ctx.site.layout.hidden), t)
     name_items(plans, ctx.site.layout, ctx.site.location_code, t, pr.panel_ports)
@@ -382,6 +392,15 @@ def plan_passive(
     rs.cable_m = ps.cable_m
     rs.cable_boxes = ps.cable_drums
     return rs
+
+
+def room_names(n: int, layout: RackLayout, t: Translator) -> list[str]:
+    """``Комутаційна 1 (MDF)``, ``Комутаційна 2 (IDF-1)``… unless the user named the room."""
+    out = []
+    for i in range(n):
+        role = t.t("rack.mdf") if i == 0 else t.t("rack.idf", n=i)
+        out.append(layout.room_names.get(str(i)) or t.t("rack.room", n=i + 1, role=role))
+    return out
 
 
 def _item(unit: _Unit, u: int) -> RackItem:
@@ -447,6 +466,7 @@ def apply_layout(
     preferred_u: int,
     t: Translator,
     extra_models: dict[str, str] | None = None,
+    rooms: int = 1,
 ) -> list[str]:
     """Apply the user's manual layout to the automatic ``plans`` (in place).
 
@@ -473,7 +493,8 @@ def apply_layout(
             continue
         props = layout.props.get(key)
         size = (props.size_u if props and props.size_u else None) or preferred_u or DEFAULT_USER_RACK_U
-        plan = RackPlan(name="", role="user", size_u=size, model=model_for.get(size, ""), key=key)
+        room = min(props.room or 0, rooms - 1) if props else 0
+        plan = RackPlan(name="", role="user", size_u=size, model=model_for.get(size, ""), key=key, room=room)
         plans.append(plan)
         by_key[key] = plan
     used_letters = {p.letter for p in plans if p.role != "user"}
@@ -646,3 +667,59 @@ def name_items(plans: list[RackPlan], layout: RackLayout, code: str, t: Translat
         for it in plan.items:
             if not it.extra and layout.labels.get(it.id):
                 it.label = layout.labels[it.id]
+
+
+def drop_room(layout: dict[str, Any], room: int, cabinets: set[str]) -> None:
+    """Edit a raw ``RackLayout`` dict after removing telecom room ``room`` (≥ 1).
+
+    ``cabinets`` are the keys of the cabinets standing in that room. Everything that referred to
+    them is dropped (hand-added items go to another cabinet), and the automatic cabinets, fibre
+    panels and names of the rooms after it are renumbered (``idf3-1`` → ``idf2-1``) so that the
+    manual layout keeps pointing at the same things.
+    """
+
+    def key(k: str) -> str | None:
+        m = re.fullmatch(r"idf(\d+)-(\d+)", k)
+        if m:
+            j = int(m.group(1))
+            return None if j == room else f"idf{j - 1 if j > room else j}-{m.group(2)}"
+        return None if k in cabinets else k
+
+    def item(i: str) -> str | None:
+        m = re.match(r"fiber:(\d+):(.*)", i)
+        if m:
+            j = int(m.group(1))
+            return None if j == room else f"fiber:{j - 1 if j > room else j}:{m.group(2)}"
+        m = re.match(r"pdu:(.+):(\d+)$", i)
+        if m:
+            k = key(m.group(1))
+            return None if k is None else f"pdu:{k}:{m.group(2)}"
+        return i
+
+    layout["added"] = [k for k in layout.get("added", []) if k not in cabinets]
+    layout["removed"] = [k2 for k in layout.get("removed", []) if (k2 := key(k))]
+    props = {}
+    for k, v in layout.get("props", {}).items():
+        k2 = key(k)
+        if k2 is None:
+            continue
+        if (v.get("room") or 0) > room:
+            v = {**v, "room": v["room"] - 1}
+        props[k2] = v
+    layout["props"] = props
+    positions = {}
+    for i, pos in layout.get("positions", {}).items():
+        i2, rack = item(i), key(pos.get("rack", ""))
+        if i2 and rack:
+            positions[i2] = {**pos, "rack": rack}
+    layout["positions"] = positions
+    layout["hidden"] = [i2 for i in layout.get("hidden", []) if (i2 := item(i))]
+    for ex in layout.get("extras", []):
+        ex["rack"] = key(ex.get("rack", "")) or ""  # "" = no cabinet: placed in another one
+    layout["labels"] = {i2: v for i, v in layout.get("labels", {}).items() if (i2 := item(i))}
+    names = {}
+    for k, v in layout.get("room_names", {}).items():
+        j = int(k)
+        if j != room:
+            names[str(j - 1 if j > room else j)] = v
+    layout["room_names"] = names

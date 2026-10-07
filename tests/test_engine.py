@@ -516,6 +516,56 @@ def test_closet_count_entered_by_the_user(catalog: Catalog) -> None:
     assert size_site(make_site(sockets=300, closets=0), catalog).rack.idf_count == 1
 
 
+def test_telecom_rooms(catalog: Catalog) -> None:
+    r = size_site(make_site(sockets=200, closets=2), catalog)
+    assert r.rack.rooms == ["Комутаційна 1 (MDF)", "Комутаційна 2 (IDF-1)"]
+    assert [(p.key, p.room) for p in r.rack.plans] == [("mdf-1", 0), ("idf1-1", 1)]
+    # cabinets added by the user stand in the room they were added to, next to its other cabinets
+    layout = {
+        "added": ["user-1", "user-2"],
+        "props": {"user-1": {"room": 1, "size_u": 24}, "user-2": {"room": 7}},
+        "room_names": {"1": "Серверна"},
+    }
+    r2 = size_site(make_site(sockets=200, closets=2, layout=layout), catalog)
+    assert [(p.key, p.room) for p in r2.rack.plans] == [("mdf-1", 0), ("idf1-1", 1), ("user-1", 1), ("user-2", 1)]
+    assert r2.rack.rooms == ["Комутаційна 1 (MDF)", "Серверна"]
+
+
+def test_drop_room_renumbers_the_layout(catalog: Catalog) -> None:
+    from sitesizer.core.passive import drop_room
+
+    layout = {
+        "added": ["user-1", "user-2"],
+        "removed": ["idf1-2", "idf2-2"],
+        "props": {"user-1": {"room": 1}, "user-2": {"room": 2}, "idf2-1": {"size_u": 42}},
+        "positions": {
+            "access_switch:1": {"rack": "idf2-1", "u": 3},
+            "access_switch:2": {"rack": "user-1", "u": 3},
+            "pdu:idf2-1:1": {"rack": "idf2-1", "u": 1},
+        },
+        "hidden": ["pdu:idf1-1:1", "pdu:idf2-1:2", "fiber:1:0:12:1", "fiber:2:1:12:1"],
+        "extras": [{"id": "x1", "rack": "user-1", "u": 5}, {"id": "x2", "rack": "user-2", "u": 5}],
+        "labels": {"pdu:idf2-1:1": "PDU", "access_switch:1": "A1"},
+        "room_names": {"1": "Старий", "2": "Новий"},
+    }
+    drop_room(layout, 1, {"idf1-1", "user-1"})
+    assert layout["added"] == ["user-2"]
+    assert layout["removed"] == ["idf1-2"]
+    assert layout["props"] == {"user-2": {"room": 1}, "idf1-1": {"size_u": 42}}
+    assert layout["positions"] == {
+        "access_switch:1": {"rack": "idf1-1", "u": 3},
+        "pdu:idf1-1:1": {"rack": "idf1-1", "u": 1},
+    }
+    assert layout["hidden"] == ["pdu:idf1-1:2", "fiber:1:1:12:1"]
+    assert [ex["rack"] for ex in layout["extras"]] == ["", "user-2"]
+    assert layout["labels"] == {"pdu:idf1-1:1": "PDU", "access_switch:1": "A1"}
+    assert layout["room_names"] == {"1": "Новий"}
+    # the result still sizes: the device of the removed room lands in another cabinet
+    site = make_site(sockets=200, closets=2, layout=layout)
+    r = size_site(site, catalog)
+    assert any(it.id == "x1" for p in r.rack.plans for it in p.items)
+
+
 def test_rack_items_named_by_the_user(catalog: Catalog) -> None:
     base = size_site(make_site(sockets=96, location_code="BO123"), catalog)
     key = base.rack.plans[0].key

@@ -854,7 +854,7 @@ def _bom_transceivers(
     for plan in rack.plans:
         for it in sorted(plan.items, key=lambda i: -i.u):
             where[it.id] = (plan.key, (it.u + it.top) / 2)
-            if it.group in EDGE_KEYS and plan.role != "idf":
+            if it.group in EDGE_KEYS and plan.room == 0:
                 local_edges.append(it.id)
     short = long = gc = 0
 
