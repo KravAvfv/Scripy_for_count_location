@@ -39,7 +39,7 @@
   "reason.patch_cords": "One patch cord per used port.",
   "reason.cable": "{n} runs × (~{avg} m + {slack} m termination slack) = {m} m → {box} m drums.",
   "reason.cable_managers": "Horizontal cable managers — one per “patch panels + switch” block.",
-  "reason.rack": "{names}: {used}U used in {size}U cabinets, ≥{pct}% kept free for growth. The layout is on the “Power & rack” page and in exports.",
+  "reason.rack": "{names}: {used}U used in {size}U cabinets, ≥{pct}% kept free for growth. The layout can be edited on the Racks page and is included in exports.",
   "reason.rack_idf": "Extra racks for remote IDF closets: {n} (90 m copper limit).",
   "reason.bundle": "{bundle} for the “{tier}” level: {content}",
   "reason.forticare": "{level} support: {sw} switches + {ap} access points.",
