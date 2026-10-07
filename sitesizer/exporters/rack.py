@@ -53,7 +53,8 @@ class RackDiagram:
     """All cabinets of one location side by side (wrapping after ``PER_ROW``)."""
 
     PAD = 28.0
-    U_H = 17.0
+    U_H = 26.0
+    """Tall enough for the device name with its model on a second line."""
     COL_W = 330.0
     RAIL_W = 28.0
     HEAD_H = 46.0
@@ -231,35 +232,49 @@ class RackDiagram:
         fg = _text_on(fill)
         if it.group == "panel":
             self._paint_ports(p, rect, fg)
+        text_rect = rect.adjusted(8, 0, -8, 0)
+        if it.group == "panel":
+            text_rect.setRight(text_rect.right() - text_rect.width() * 0.42 - 4)
+        model = it.model if it.model and it.model not in it.label else ""
+        tag = f"{it.height}U" if it.height > 1 else ""
+        fm_item, fm_model = QFontMetricsF(self.f_item), QFontMetricsF(self.f_model)
+        tag_w = fm_model.horizontalAdvance(tag) + 6 if tag and it.group != "panel" else 0
+        name_rect = text_rect.adjusted(0, 0, -tag_w, 0)
+        muted = QColor(fg)
+        muted.setAlphaF(0.75)
         p.setPen(fg)
         p.setFont(self.f_item)
-        text_rect = rect.adjusted(8, 0, -8, 0)
-        right = it.model if it.model and it.model not in it.label else ""
-        if it.height > 1 and not right:
-            right = f"{it.height}U"
-        fm_model = QFontMetricsF(self.f_model)
-        right_w = min(fm_model.horizontalAdvance(right) + 6, text_rect.width() * 0.5) if right else 0
-        if it.group == "panel":
-            right_w = max(right_w, text_rect.width() * 0.42)
-        label = QFontMetricsF(self.f_item).elidedText(
-            it.label, Qt.TextElideMode.ElideRight, text_rect.width() - right_w - 4
-        )
-        p.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+        if model:
+            # name on top, model right below it, centred as a block in the item
+            block = fm_item.height() + fm_model.height() - 2
+            top = rect.center().y() - block / 2
+            p.drawText(
+                QRectF(name_rect.left(), top, name_rect.width(), fm_item.height()),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                fm_item.elidedText(it.label, Qt.TextElideMode.ElideRight, name_rect.width()),
+            )
+            p.setPen(muted)
+            p.setFont(self.f_model)
+            p.drawText(
+                QRectF(name_rect.left(), top + fm_item.height() - 2, name_rect.width(), fm_model.height()),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                fm_model.elidedText(model, Qt.TextElideMode.ElideRight, name_rect.width()),
+            )
+        else:
+            p.drawText(
+                name_rect,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                fm_item.elidedText(it.label, Qt.TextElideMode.ElideRight, name_rect.width()),
+            )
+        if tag_w:
+            p.setPen(muted)
+            p.setFont(self.f_model)
+            p.drawText(text_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, tag)
         if it.manual and self.mark_manual:
             pin = QRectF(rect.right() - 7, rect.top() + 3, 4, 4)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor("#E0A030"))
             p.drawEllipse(pin)
-        if right and it.group != "panel":
-            c = QColor(fg)
-            c.setAlphaF(0.75)
-            p.setPen(c)
-            p.setFont(self.f_model)
-            p.drawText(
-                text_rect,
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                fm_model.elidedText(right, Qt.TextElideMode.ElideRight, right_w),
-            )
 
     def _paint_ports(self, p: QPainter, rect: QRectF, fg: QColor) -> None:
         """24 small port squares on the right side of a patch panel."""

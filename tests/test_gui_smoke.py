@@ -409,3 +409,74 @@ def test_settings_and_catalog_move_over_from_the_old_name(tmp_path: Path) -> Non
     assert not migrate_legacy_data(settings, legacy, new_dir)
     assert (new_dir / "catalog.json").read_text(encoding="utf-8") == '{"x": 2}'
     assert settings.value("app/settings_json") == '{"theme": "light"}'
+
+
+def test_racks_switch_rename_and_delete(app: QApplication, window) -> None:
+    st = window.state
+    racks = window.racks
+    st.edit("t", lambda d: d.update(sockets=96, mode="extended"))
+    st.recompute()
+    window.navigate("racks")
+    pump(app)
+    assert racks.chips_box.isHidden()  # a single cabinet: nothing to switch between
+    # the number of closets is entered on the racks page and in the location form
+    racks.closets.field.setValue(3)
+    pump(app)
+    st.recompute()
+    pump(app)
+    assert st.site.closets == 3 and len(st.result.rack.plans) == 3
+    assert window.location.closets.value() == 3
+    assert not racks.chips_box.isHidden() and racks.chips.count() == 4  # "all" + 3 cabinets
+    assert len(racks.editor.diagram.plans) == 3
+    # switch to the second cabinet: only it is drawn and selected
+    second = st.result.rack.plans[1]
+    racks.chips.itemAt(2).widget().click()
+    pump(app)
+    assert racks.view_rack == second.key
+    assert [p.key for p in racks.editor.diagram.plans] == [second.key]
+    assert racks.editor.sel_rack == second.key and racks.chips.itemAt(2).widget().isChecked()
+    racks.chips.itemAt(0).widget().click()
+    pump(app)
+    assert racks.view_rack == "" and len(racks.editor.diagram.plans) == 3
+    # name a switch; the model stays visible under the name
+    plan = st.result.rack.plans[0]
+    sw = next(it for it in plan.items if it.group == "access_switch")
+    racks.editor.select(plan.key, sw.id)
+    pump(app)
+    racks.item_name.setText("Комутатор холу")
+    racks.item_name.editingFinished.emit()
+    st.recompute()
+    pump(app)
+    assert st.site.layout.labels == {sw.id: "Комутатор холу"}
+    assert racks.editor.item(sw.id).label == "Комутатор холу"
+    assert racks.item_title.text() == "Комутатор холу" and racks.item_model.text() == sw.model
+    racks.item_name.setText("")
+    racks.item_name.editingFinished.emit()
+    st.recompute()
+    pump(app)
+    assert st.site.layout.labels == {} and racks.editor.item(sw.id).label == sw.label
+    # an added device can be renamed and deleted (it leaves the bill of materials too)
+    racks.editor.select(plan.key)
+    dev_id = racks.add_extra("device", 30, 1, "FS-148F", "NVR")
+    st.recompute()
+    pump(app)
+    assert racks.editor.sel_item == dev_id and racks.del_item.isVisible()
+    racks.item_name.setText("Відеосервер")
+    racks.item_name.editingFinished.emit()
+    st.recompute()
+    pump(app)
+    assert st.site.layout.extras[0].label == "Відеосервер"
+    assert any(line.group == "rack_device" for line in st.result.bom)
+    racks.del_item.click()
+    st.recompute()
+    pump(app)
+    assert not st.site.layout.extras and racks.editor.item(dev_id) is None
+    assert not any(line.group == "rack_device" for line in st.result.bom)
+    # active equipment cannot be deleted
+    racks.editor.select(plan.key, sw.id)
+    pump(app)
+    assert not racks.del_item.isVisible()
+    racks.closets.field.setValue(0)
+    st.recompute()
+    pump(app)
+    assert st.site.closets == 0 and len(st.result.rack.plans) == 1 and racks.chips_box.isHidden()

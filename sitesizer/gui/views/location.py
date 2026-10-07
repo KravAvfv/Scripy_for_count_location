@@ -371,6 +371,10 @@ class LocationView(QWidget):
             lambda v: self.state.set_field("rack_size_u", int(v), tr("ui.rack_size"), merge=False)
         )
         arch.add(FieldRow(tr("ui.rack_size"), self.rack_size, "", tr("help.rack_size")))
+        self.closets = Stepper(0, 50, width=140)
+        self.closets.field.setSpecialValueText(tr("ui.rack_size_auto"))
+        self.closets.valueChanged.connect(lambda v: self.state.set_field("closets", int(v), tr("rk.closets")))
+        arch.add(FieldRow(tr("rk.closets"), self.closets, tr("rk.closets_caption"), tr("rk.closets_tip")))
         f.addWidget(arch)
 
         # --- mode -----------------------------------------------------------------------
@@ -587,6 +591,7 @@ class LocationView(QWidget):
             self.max_run.setValue(s.max_cable_run_m or 0)
             self.avg_run.setValue(s.avg_cable_run_m or cat.rules.avg_cable_run_m_default)
             self.rack_size.setValue(str(s.rack_size_u if s.rack_size_u in (24, 42) else 0), animate=True)
+            self.closets.setValue(s.closets)
             self.fiber.setValue(s.fiber_type, animate=True)
             self.backbone.setValue(s.fiber_backbone_m or 0)
             if not self.base_net.hasFocus():

@@ -1,6 +1,7 @@
 """Racks page: drag & drop cabinet editor with cabinet and device properties.
 
-Every change is an undoable edit of ``SiteInput.layout``; the engine re-applies the manual layout
+A row of chips switches between showing every cabinet and a single one; the number of telecom
+closets is entered right here (``SiteInput.closets``). Every change is an undoable edit of ``SiteInput.layout``; the engine re-applies the manual layout
 on top of the automatic one, so DAC lengths, organizers and panels in the BoM follow at once.
 """
 
@@ -31,7 +32,20 @@ from ...i18n import current, tr
 from .. import icons
 from ..state import AppState
 from ..theme import theme_manager, tokens
-from ..widgets.controls import Card, FieldRow, SpinBox, button, hline, icon_button, label, px
+from ..widgets.controls import (
+    Card,
+    Chip,
+    FieldRow,
+    FlowLayout,
+    SpinBox,
+    Stepper,
+    button,
+    clear_layout,
+    hline,
+    icon_button,
+    label,
+    px,
+)
 from ..widgets.overlays import confirm
 from ..widgets.rack_editor import RackEditor
 
@@ -112,6 +126,9 @@ class RacksView(QWidget):
         super().__init__(parent)
         self.state = state
         self._loading = False
+        self.view_rack = ""
+        """Cabinet shown alone in the editor ("" = all cabinets side by side)."""
+        self._chip_keys: list[tuple[str, str]] = []
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(px(12))
@@ -129,6 +146,14 @@ class RacksView(QWidget):
         self.reset_btn = button(tr("rk.reset"), "ghost", "refresh-ccw", tr("rk.reset_tip"))
         self.reset_btn.clicked.connect(self.reset_layout)
         bar.addWidget(self.reset_btn)
+        bar.addSpacing(px(8))
+        bar.addWidget(label(tr("rk.closets"), "muted"))
+        self.closets = Stepper(0, 50, width=120)
+        self.closets.field.setSpecialValueText(tr("ui.rack_size_auto"))
+        self.closets.setToolTip(tr("rk.closets_tip"))
+        self.closets.valueChanged.connect(self.set_closets)
+        bar.addWidget(self.closets)
+        bar.addSpacing(px(8))
         self.hint = label(tr("rk.hint"), "caption", wrap=True)
         bar.addWidget(self.hint, 1)
         zoom_out = icon_button("zoom-out", tr("ui.zoom_out"))
@@ -138,6 +163,10 @@ class RacksView(QWidget):
         bar.addWidget(zoom_out)
         bar.addWidget(zoom_in)
         root.addLayout(bar)
+
+        self.chips_box = QWidget()
+        self.chips = FlowLayout(self.chips_box, spacing=6)
+        root.addWidget(self.chips_box)
 
         body = QHBoxLayout()
         body.setSpacing(px(16))
@@ -215,6 +244,13 @@ class RacksView(QWidget):
         self.item_card = Card(tr("rk.item"), "")
         self.item_title = label("", "subtitle", wrap=True)
         self.item_card.add(self.item_title)
+        self.item_model = label("", "muted", wrap=True, selectable=True)
+        self.item_card.add(self.item_model)
+        self.item_name = QLineEdit()
+        self.item_name.setPlaceholderText(tr("rk.name_auto"))
+        self.item_name.setClearButtonEnabled(True)
+        self.item_name.editingFinished.connect(lambda: self.rename_item(self.editor.sel_item, self.item_name.text()))
+        self.item_card.add(FieldRow(tr("rk.item_name"), self.item_name))
         self.item_info = label("", "muted", wrap=True)
         self.item_card.add(self.item_info)
         row = QHBoxLayout()
@@ -229,7 +265,7 @@ class RacksView(QWidget):
         self.auto_btn = button(tr("rk.item_auto"), "ghost", "refresh-ccw")
         self.auto_btn.clicked.connect(lambda: self.reset_item(self.editor.sel_item))
         row.addWidget(self.auto_btn)
-        self.del_item = icon_button("trash-2", tr("rk.item_delete"), "error")
+        self.del_item = button(tr("ui.delete"), "danger", "trash-2", tr("rk.item_delete"))
         self.del_item.clicked.connect(lambda: self.delete_item(self.editor.sel_item))
         row.addWidget(self.del_item)
         self.item_card.add(row)
@@ -253,6 +289,9 @@ class RacksView(QWidget):
     # result → widgets
     # =====================================================================================
     def on_result(self, r: SiteResult) -> None:
+        self._loading = True
+        self.closets.setValue(r.input.closets)
+        self._loading = False
         self._redraw()
         lines = {line.model: line.qty or 0 for line in r.bom}
         rules = self.state.catalog.rules
@@ -283,8 +322,39 @@ class RacksView(QWidget):
             colors=dict(tk.categories),
             dark=tk.dark,
         )
+        keys = [p.key for p in r.rack.plans]
+        if self.view_rack not in keys:
+            self.view_rack = ""
+        if self.view_rack:
+            diagram.plans = [p for p in diagram.plans if p.key == self.view_rack]
+        self._load_chips(r)
         self.editor.set_diagram(diagram if r.rack.plans else None)
         self._load_side()
+
+    def _load_chips(self, r: SiteResult) -> None:
+        wanted = [("", tr("rk.all_racks", n=len(r.rack.plans)))] + [(p.key, p.name) for p in r.rack.plans]
+        if wanted != self._chip_keys:
+            clear_layout(self.chips)
+            for key, text in wanted:
+                chip = Chip(text, checkable=True)
+                chip.setProperty("rack_key", key)
+                chip.clicked.connect(lambda _=False, k=key: self.show_rack(k))
+                self.chips.addWidget(chip)
+            self._chip_keys = wanted
+        for i in range(self.chips.count()):
+            w = self.chips.itemAt(i).widget()
+            if w is not None:
+                w.setChecked(w.property("rack_key") == self.view_rack)
+        self.chips_box.setVisible(len(r.rack.plans) > 1)
+
+    def show_rack(self, key: str) -> None:
+        """Show one cabinet alone ("" = all of them)."""
+        self.view_rack = key
+        if key:
+            self.editor.sel_rack, self.editor.sel_item = key, ""
+        self._redraw()
+        self.scroll.horizontalScrollBar().setValue(0)
+        self.scroll.verticalScrollBar().setValue(0)
 
     def _load_side(self) -> None:
         plan, it = self.editor.selected()
@@ -307,17 +377,35 @@ class RacksView(QWidget):
                 self.rack_info.setText(
                     tr("rk.rack_info", name=plan.name, used=plan.used_u, free=plan.free_u, model=plan.model or "—")
                 )
-                self.del_rack.setEnabled(len(self.editor.diagram.plans) > 1 if self.editor.diagram else False)
+                self.del_rack.setEnabled(self._rack_count() > 1)
             self.item_card.setVisible(it is not None)
             if it is not None:
                 span = f"U{it.u}" if it.height == 1 else f"U{it.u}–U{it.top}"
-                self.item_title.setText(it.label + (f" ({it.model})" if it.model and it.model not in it.label else ""))
+                self.item_title.setText(it.label)
+                self.item_model.setText(it.model)
+                self.item_model.setVisible(bool(it.model))
+                if not self.item_name.hasFocus():
+                    custom = self._custom_label(it.id)
+                    self.item_name.setText(custom)
+                    self.item_name.setPlaceholderText(tr("rk.name_auto") if custom else it.label)
                 state = tr("rk.item_manual") if it.manual else tr("rk.item_auto_placed")
                 self.item_info.setText(f"{span} · {it.height}U · {state}")
                 self.auto_btn.setVisible(it.manual and not it.extra)
                 self.del_item.setVisible(it.extra or it.group in PASSIVE_GROUPS)
         finally:
             self._loading = False
+
+    def _rack_count(self) -> int:
+        r = self.state.result
+        return len(r.rack.plans) if r else 0
+
+    def _custom_label(self, item_id: str) -> str:
+        """The name the user gave this item ("" = automatic)."""
+        lay = self.state.site.layout
+        ex = next((e for e in lay.extras if e.id == item_id), None)
+        if ex is not None:
+            return ex.label
+        return lay.labels.get(item_id, "")
 
     # =====================================================================================
     # edits (all undoable through AppState.edit)
@@ -332,6 +420,7 @@ class RacksView(QWidget):
                 ("positions", {}),
                 ("hidden", []),
                 ("extras", []),
+                ("labels", {}),
             ):
                 lay.setdefault(key, empty)
             fn(lay)
@@ -343,6 +432,27 @@ class RacksView(QWidget):
             return
         rack = self.editor.sel_rack
         self._layout(tr("rk.rack"), lambda lay: lay["props"].setdefault(rack, {}).update({key: value}))
+
+    def set_closets(self, n: int) -> None:
+        if not self._loading:
+            self.state.set_field("closets", int(n), tr("rk.closets"))
+
+    def rename_item(self, item_id: str, name: str) -> None:
+        name = name.strip()
+        if self._loading or not item_id or self.editor.item(item_id) is None or name == self._custom_label(item_id):
+            return
+
+        def fn(lay: dict[str, Any]) -> None:
+            for ex in lay["extras"]:
+                if ex["id"] == item_id:
+                    ex["label"] = name
+                    return
+            if name:
+                lay["labels"][item_id] = name
+            else:
+                lay["labels"].pop(item_id, None)
+
+        self._layout(tr("rk.item_name"), fn)
 
     def move_item(self, item_id: str, rack: str, u: int) -> None:
         def fn(lay: dict[str, Any]) -> None:
@@ -383,6 +493,7 @@ class RacksView(QWidget):
             if len(lay["extras"]) == before and item_id not in lay["hidden"]:
                 lay["hidden"].append(item_id)
             lay["positions"].pop(item_id, None)
+            lay["labels"].pop(item_id, None)
 
         self.editor.sel_item = ""
         self._layout(tr("rk.item_delete"), fn)
@@ -433,6 +544,8 @@ class RacksView(QWidget):
             lay["props"].setdefault(key, {})["size_u"] = size
 
         self.editor.sel_rack, self.editor.sel_item = key, ""
+        if self.view_rack:
+            self.view_rack = key
         self._layout(tr("rk.add_rack"), fn)
 
     def delete_rack(self) -> None:
@@ -490,7 +603,7 @@ class RacksView(QWidget):
                 sub.addAction(a)
         menu.addSeparator()
         a = QAction(icons.icon("trash-2", "error", 16), tr("rk.delete_rack"), menu)
-        a.setEnabled(bool(self.editor.diagram and len(self.editor.diagram.plans) > 1))
+        a.setEnabled(self._rack_count() > 1)
         a.triggered.connect(self.delete_rack)
         menu.addAction(a)
         menu.exec(pos)

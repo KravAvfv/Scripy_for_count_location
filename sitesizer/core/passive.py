@@ -154,12 +154,14 @@ def plan_passive(
 
     # ---- closets ------------------------------------------------------------------------
     run = ctx.site.max_cable_run_m
-    n_closets = max(1, math.ceil(run / r.copper_max_m)) if run else 1
+    n_closets = ctx.site.closets or (max(1, math.ceil(run / r.copper_max_m)) if run else 1)
     rs.idf_count = n_closets
     closets = [_Closet(i) for i in range(n_closets)]
     if n_closets > 1:
+        # without a cable run every remote closet is assumed one copper reach further away
         ps.backbone_m = [
-            ctx.site.fiber_backbone_m or max(1, round(k * (run or 0) / n_closets)) for k in range(1, n_closets)
+            ctx.site.fiber_backbone_m or max(1, round(k * run / n_closets) if run else k * r.copper_max_m)
+            for k in range(1, n_closets)
         ]
     links_per_switch = core.uplinks_per_switch if core.count else 1
 
@@ -264,8 +266,8 @@ def plan_passive(
 
     plans: list[RackPlan] = []
     for closet in closets:
-        if not (closet.switches or closet.top or closet.head or closet.bottom):
-            continue
+        if not (closet.switches or closet.top or closet.head or closet.bottom or ctx.site.closets):
+            continue  # an empty closet still gets a cabinet when the user asked for that many
         need = math.ceil(cabinet_u(closet, closet.switches, True) * (1 + r.rack_spare_ratio))
         size = _pick_size(ctx.site.rack_size_u, need, sizes)
         usable = max(1, size - math.floor(size * r.rack_spare_ratio / (1 + r.rack_spare_ratio)))
@@ -641,3 +643,6 @@ def name_items(plans: list[RackPlan], layout: RackLayout, code: str, t: Translat
                 it.label = t.t("rack.manager")
             elif it.group == "panel" and not it.label:
                 it.label = t.t("rack.panel", n="", ports=panel_ports)
+        for it in plan.items:
+            if not it.extra and layout.labels.get(it.id):
+                it.label = layout.labels[it.id]

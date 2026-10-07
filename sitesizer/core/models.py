@@ -144,10 +144,14 @@ class RackLayout(BaseModel):
     hidden: list[str] = Field(default_factory=list)
     """Automatic passive items removed by the user."""
     extras: list[RackExtra] = Field(default_factory=list)
+    labels: dict[str, str] = Field(default_factory=dict)
+    """Item id -> name given by the user (replaces the automatic ``BO123-5B-ASW01``)."""
 
     @property
     def is_empty(self) -> bool:
-        return not (self.added or self.removed or self.props or self.positions or self.hidden or self.extras)
+        return not (
+            self.added or self.removed or self.props or self.positions or self.hidden or self.extras or self.labels
+        )
 
 
 class SiteInput(BaseModel):
@@ -182,6 +186,8 @@ class SiteInput(BaseModel):
     avg_cable_run_m: int | None = Field(default=None, ge=1, le=10_000)
     rack_size_u: int = Field(default=0, ge=0, le=60)
     """Preferred cabinet size (24 or 42 U); 0 = pick automatically."""
+    closets: int = Field(default=0, ge=0, le=50)
+    """Number of telecom closets (main + remote); 0 = derive from the longest cable run."""
     fiber_type: FiberChoice = "auto"
     fiber_backbone_m: int | None = Field(default=None, ge=1, le=100_000)
     """Average fibre run from the main rack to each remote closet; ``None`` = estimate."""

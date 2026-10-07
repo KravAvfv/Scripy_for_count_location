@@ -498,6 +498,41 @@ def test_fibre_backbone_to_idf(catalog: Catalog) -> None:
     assert sr.qty == ps.fiber_links * 2
 
 
+def test_closet_count_entered_by_the_user(catalog: Catalog) -> None:
+    r = size_site(make_site(mode="extended", sockets=300, closets=3), catalog)
+    assert r.rack.idf_count == 3
+    roles = [p.role for p in r.rack.plans]
+    assert roles.count("mdf") == 1 and roles.count("idf") == 2
+    # no cable run given: each remote closet is estimated one copper reach further
+    assert r.rack.passive.backbone_m == [90, 180] and r.rack.passive.fiber_links > 0
+    # the entered number wins over the cable run
+    r2 = size_site(make_site(mode="extended", sockets=300, max_cable_run_m=200, closets=2), catalog)
+    assert r2.rack.idf_count == 2
+    # more closets than switches: the empty ones still get a cabinet to switch to
+    r3 = size_site(make_site(sockets=48, closets=3), catalog)
+    assert [p.role for p in r3.rack.plans] == ["mdf", "idf", "idf"]
+    assert r3.rack.plans[2].items == []
+    # 0 = automatic, as before
+    assert size_site(make_site(sockets=300, closets=0), catalog).rack.idf_count == 1
+
+
+def test_rack_items_named_by_the_user(catalog: Catalog) -> None:
+    base = size_site(make_site(sockets=96, location_code="BO123"), catalog)
+    key = base.rack.plans[0].key
+    layout = {
+        "labels": {"access_switch:2": "Комутатор 2 поверх", "firewall:1": ""},
+        "extras": [{"id": "x1", "kind": "device", "rack": key, "u": 30, "model": "FS-148F", "label": "Мій"}],
+    }
+    r = size_site(make_site(sockets=96, location_code="BO123", layout=layout), catalog)
+    items = {it.id: it for it in r.rack.plans[0].items}
+    assert items["access_switch:2"].label == "Комутатор 2 поверх"
+    assert items["access_switch:2"].model == "FS-148F"
+    assert items["access_switch:1"].label == "BO123-1A-ASW01"  # the others keep their automatic names
+    assert items["firewall:1"].label.startswith("BO123-1A-FW")  # an empty name = automatic
+    assert items["x1"].label == "Мій"
+    assert not make_site(layout={"labels": {"a": "b"}}).layout.is_empty
+
+
 def test_long_backbone_switches_to_single_mode(catalog: Catalog) -> None:
     r = size_site(make_site(mode="extended", sockets=200, max_cable_run_m=150, fiber_backbone_m=900), catalog)
     assert r.rack.passive.fiber_type == "os2"
