@@ -24,19 +24,24 @@ The UI is Ukrainian by default, with a full English version (Settings → Langua
 `Ctrl+K` — палітра команд, `Ctrl+S` — зберегти проєкт, `F1` — довідка з поясненням логіки.
 Ціни й коди 1С: **Каталог → Імпорт шаблону Excel** (ваш файл «Слаботрумка»).
 
-## Оновлення до нової версії (Windows)
+## Встановлення (Windows 10/11)
 
-У папці проєкту (PowerShell):
+1. Встановіть [Python 3.12+](https://www.python.org/downloads/) (під час встановлення позначте
+   **«Add python.exe to PATH»**) і [Git for Windows](https://git-scm.com/download/win).
+2. Відкрийте PowerShell у папці, куди хочете поставити програму, і виконайте:
 
-```powershell
-git pull
-powershell -ExecutionPolicy Bypass -File .\build.ps1
-```
+   ```powershell
+   git clone https://github.com/KravAvfv/Scripy_for_count_location.git LocalCount
+   cd LocalCount
+   powershell -ExecutionPolicy Bypass -File .\build.ps1
+   ```
 
-Скрипт проганяє тести і збирає новий `dist\LocalCount.exe`. Закрийте програму перед збіркою; ярлик на робочому
-столі має вказувати на `dist\LocalCount.exe` (старий `SiteSizer.exe` більше не оновлюється). Каталог і
-налаштування зберігаються в `%APPDATA%\LocalCount\LocalCount\` і при оновленні не губляться.
-Перше встановлення на новий ноутбук — див. розділ «Windows 11: get the app on another laptop» нижче.
+   Скрипт сам створить віртуальне середовище, встановить залежності, прожене тести і збере
+   `dist\LocalCount.exe` (кілька хвилин).
+3. Запустіть `dist\LocalCount.exe`. Для зручності — правою кнопкою → «Надіслати → Робочий стіл (створити ярлик)».
+
+Коли вийде нова версія: у тій самій папці `git pull`, потім знову `.\build.ps1` (програму перед цим закрийте).
+Ваш каталог і налаштування зберігаються окремо, в `%APPDATA%\LocalCount\LocalCount\`, і не губляться.
 
 ## Features
 
@@ -114,15 +119,9 @@ A site JSON uses the same fields as the GUI: `sockets`, `cameras`, `ap_groups` (
 `mode` (`quick`/`extended`), `fortios_version`, `inspected_mbps`, `max_cable_run_m`, `location_code`,
 `location_id`, `floors`, `ip.base_network`, `bom.overrides`, `layout`, …
 
-## Windows 11: get the app on another laptop
+## Run from source
 
 ```powershell
-# 1. Install Python 3.12+ from python.org (tick "Add python.exe to PATH") and Git for Windows.
-git clone https://github.com/KravAvfv/Scripy_for_count_location.git LocalCount
-cd LocalCount
-# 2. Build the .exe (creates .venv, installs deps, runs tests, writes dist\LocalCount.exe):
-powershell -ExecutionPolicy Bypass -File .\build.ps1
-# or just run from source:
 py -3 -m venv .venv; .\.venv\Scripts\pip install -r requirements.txt; .\.venv\Scripts\python -m sitesizer
 ```
 
@@ -150,7 +149,7 @@ python tools\screenshots.py docs\screenshots            # regenerate screenshots
 - [docs/CATALOG.md](docs/CATALOG.md) — how to edit models, tiers and rules.
 - [docs/RESEARCH.md](docs/RESEARCH.md) — datasheet findings, discrepancies from the whiteboard notes, sources.
 
-User data (catalog edits, settings, logs) lives in `%APPDATA%\LocalCount\LocalCount\` (moved over automatically from the old `%APPDATA%\SiteSizer\SiteSizer\` on the first start); the log rotates at 1 MB.
+User data (catalog edits, settings, logs) lives in `%APPDATA%\LocalCount\LocalCount\`; the log rotates at 1 MB.
 
 ## Decisions made with the network engineer
 
