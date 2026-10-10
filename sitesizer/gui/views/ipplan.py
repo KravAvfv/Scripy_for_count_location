@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from ...core.models import IpSegmentResult, SiteResult
 from ...i18n import current, tr
 from .. import icons
+from ..lazy import when_shown
 from ..state import AppState
 from ..theme import tokens
 from ..widgets.controls import Callout, Card, Chip, FieldRow, FlowLayout, OptionalIntEdit, button, label, px
@@ -201,7 +202,7 @@ class IpPlanView(QWidget):
         self.footer = label("", "caption", wrap=True)
         root.addWidget(self.footer)
 
-        state.resultChanged.connect(self.on_result)
+        state.resultChanged.connect(when_shown(self, self.on_result))
         state.siteChanged.connect(self._load_inputs)
         state.catalogChanged.connect(self._load_inputs)
         self._load_inputs()

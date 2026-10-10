@@ -158,8 +158,13 @@ class ChecksPanel(QWidget):
         self.lay.setContentsMargins(0, 0, 0, 0)
         self.lay.setSpacing(px(8))
         self._widgets: list[QWidget] = []
+        self._shown: list[tuple[str, str, str, str]] | None = None
 
-    def set_checks(self, checks: list[Check]) -> None:
+    def set_checks(self, checks: list[Check], force: bool = False) -> None:
+        key = [(c.severity.value, c.message, c.hint, c.action) for c in checks]
+        if key == self._shown and not force:
+            return  # same findings: keep the widgets (rebuilding them on every keystroke is slow)
+        self._shown = key
         for w in self._widgets:
             w.hide()
             w.setParent(None)

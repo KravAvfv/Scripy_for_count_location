@@ -28,6 +28,7 @@ from ...core.sizing import addon_enabled, ap_model_for
 from ...exporters.diagram import SiteDiagram, style_from_tokens
 from ...i18n import current, tr
 from .. import icons
+from ..lazy import when_shown
 from ..state import AppState
 from ..theme import theme_manager, tokens
 from ..widgets.controls import (
@@ -354,6 +355,7 @@ class LocationView(QWidget):
         self._loading = False
         self._zone_rows: list[ZoneRow] = []
         self._single_column = False
+        self._tier_shown: int | None = None
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -384,8 +386,9 @@ class LocationView(QWidget):
         self._build_form()
         self._build_preview()
         self.load_from_site()
-        state.siteChanged.connect(self.load_from_site)
-        state.resultChanged.connect(self.on_result)
+        # event filters run last-installed first: on show the inputs reload before the result
+        state.resultChanged.connect(when_shown(self, self.on_result))
+        state.siteChanged.connect(when_shown(self, self.load_from_site))
         state.catalogChanged.connect(self._rebuild_zone_rows)
         theme_manager.changed.connect(self._on_theme)
 
@@ -770,7 +773,8 @@ class LocationView(QWidget):
             tier = cat.tier(s.tier)
             t = current()
             self.tier_desc.setText(f"{t.pick(tier.description)}. {tr('ui.sla')}: {t.pick(tier.sla)}")
-            self._fill_tier_effects()
+            if self._tier_shown != s.tier:
+                self._fill_tier_effects()
             suggested = tier.dual_psu
             effective = s.redundant_psu if s.redundant_psu is not None else suggested
             self.psu.setChecked(bool(effective))
@@ -825,6 +829,7 @@ class LocationView(QWidget):
             self._loading = False
 
     def _fill_tier_effects(self) -> None:
+        self._tier_shown = self.state.site.tier
         clear_layout(self.tier_effects)
         tier = self.state.catalog.tier(self.state.site.tier)
         t = current()
@@ -1190,6 +1195,7 @@ class LocationView(QWidget):
             tile.retint()
         if self.state.result:
             self.on_result(self.state.result)
+            self.checks.set_checks(self.state.result.checks, force=True)
         self._fill_tier_effects()
 
     # =====================================================================================

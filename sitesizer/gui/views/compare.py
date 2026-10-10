@@ -22,6 +22,7 @@ from ...core.models import SiteInput, SiteResult
 from ...core.pricing import format_money
 from ...core.sizing import size_site
 from ...i18n import current, tr
+from ..lazy import when_shown
 from ..state import AppState
 from ..theme import theme_manager, tokens
 from ..widgets.controls import Card, FieldRow, SegmentedControl, ToggleRow, label, px
@@ -176,7 +177,7 @@ class CompareView(QWidget):
         root.addWidget(label(tr("cmp.legend"), "caption"))
 
         state.projectChanged.connect(self._fill_combos)
-        state.resultChanged.connect(self._on_result)
+        state.resultChanged.connect(when_shown(self, self._on_result))
         state.siteChanged.connect(self._fill_combos)
         self._fill_combos()
         self._default_variant()

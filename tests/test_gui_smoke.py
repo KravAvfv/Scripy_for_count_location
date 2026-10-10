@@ -212,6 +212,8 @@ def test_catalog_edit_applies(app: QApplication, window) -> None:
     pump(app)
     line = window.state.result.lines("access_switch")[0]
     assert line.unit_price == 12345.0 and line.code == "000084545"
+    window.navigate("bom")  # hidden pages refresh when they are shown
+    pump(app)
     group = window.bom.proxy.index(0, 0)
     assert window.bom.proxy.index(0, COL_TOTAL, group).data(LINE_ROLE) is not None
     bad = cv.models.setData(cv.models.index(keys.index("FS-148F-FPOE"), column("cat.col.ports")), "-5")
@@ -248,6 +250,7 @@ def test_catalog_add_model(app: QApplication, window) -> None:
     assert cv.insert_model("NVR-32", new_model("accessory", rack_units=2, power_w=60))
     st = window.state
     st.set_field("sockets", 48, merge=False)
+    window.navigate("racks")
     pump(app)
     window.racks.add_extra("device", 30, 2, "NVR-32")
     pump(app)
@@ -479,7 +482,11 @@ def test_racks_rooms_rename_and_delete(app: QApplication, window, monkeypatch: p
     assert st.site.closets == 2 and st.result.rack.rooms[1] == "Комутаційна 2 (IDF-1)"
     assert racks.view_room == 1
     assert [p.room for p in racks.editor.diagram.plans] == [1]
+    window.navigate("location")
+    pump(app)
     assert window.location.closets.value() == 2
+    window.navigate("racks")
+    pump(app)
     # add two cabinets to that room, then look at it and at everything
     racks.add_rack(42)
     settle()

@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QWidget
 
 from ...exporters.diagram import Diagram, ProjectDiagram, SiteDiagram, style_from_tokens
 from ...i18n import tr
+from ..lazy import when_shown
 from ..state import AppState
 from ..theme import theme_manager, tokens
 from ..widgets.controls import SegmentedControl, button, icon_button, label, px, vline
@@ -61,8 +62,8 @@ class TopologyView(QWidget):
         self.zoom_in.clicked.connect(lambda: self.canvas.zoom_by(1.2))
         self.fit_btn.clicked.connect(self.canvas.fit)
         self.canvas.zoomChanged.connect(lambda z: self.zoom_label.setText(f"{round(z * 100)}%"))
-        state.resultChanged.connect(self._on_result)
-        state.projectChanged.connect(self.refresh)
+        state.resultChanged.connect(when_shown(self, self._on_result))
+        state.projectChanged.connect(when_shown(self, self.refresh))
         theme_manager.changed.connect(self._on_theme)
 
     def _on_theme(self) -> None:

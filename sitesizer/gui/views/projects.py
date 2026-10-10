@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...i18n import current, tr
+from ..lazy import when_shown
 from ..state import AppState
 from ..theme import tokens
 from ..widgets.controls import Card, FieldRow, Pill, button, clear_layout, icon_button, label, px
@@ -169,7 +170,7 @@ class ProjectsView(QWidget):
         right.addStretch(1)
 
         state.projectChanged.connect(self.refresh)
-        state.resultChanged.connect(self._on_result)
+        state.resultChanged.connect(when_shown(self, self._on_result))
         state.settingsChanged.connect(self._refresh_recent)
         self.refresh()
         self._refresh_recent()

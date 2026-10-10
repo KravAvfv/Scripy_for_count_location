@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QScrollArea, QVBoxLayout
 
 from ...core.models import SiteResult
 from ...i18n import current, tr
+from ..lazy import when_shown
 from ..state import AppState
 from ..theme import theme_manager, tokens
 from ..widgets.controls import Card, clear_layout, hline, label, px
@@ -101,7 +102,7 @@ class PowerView(QWidget):
 
         page.addStretch(1)
 
-        state.resultChanged.connect(self.on_result)
+        state.resultChanged.connect(when_shown(self, self.on_result))
         if state.result:
             self.on_result(state.result)
 

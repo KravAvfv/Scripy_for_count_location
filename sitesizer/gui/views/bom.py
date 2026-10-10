@@ -61,6 +61,7 @@ from ...core.pricing import format_money, summarize_prices
 from ...core.report import BOM_GROUP_ORDER, bom_tsv
 from ...i18n import current, tr
 from .. import icons
+from ..lazy import when_shown
 from ..state import AppState
 from ..theme import theme_manager, tokens
 from ..widgets.controls import (
@@ -620,7 +621,7 @@ class BomView(QWidget):
         root.addWidget(self.totals)
 
         self._expanded = True
-        state.resultChanged.connect(self.on_result)
+        state.resultChanged.connect(when_shown(self, self.on_result))
         state.settingsChanged.connect(self._on_settings)
         theme_manager.changed.connect(self.tree.viewport().update)
         if state.result:

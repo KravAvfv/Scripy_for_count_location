@@ -31,6 +31,7 @@ from ...exporters.diagram import style_from_tokens
 from ...exporters.rack import RackDiagram
 from ...i18n import current, tr
 from .. import icons
+from ..lazy import when_shown
 from ..state import AppState
 from ..theme import theme_manager, tokens
 from ..widgets.controls import (
@@ -317,7 +318,7 @@ class RacksView(QWidget):
         side_lay.addWidget(self.sum_card)
         side_lay.addStretch(1)
 
-        state.resultChanged.connect(self.on_result)
+        state.resultChanged.connect(when_shown(self, self.on_result))
         theme_manager.changed.connect(self._redraw)
         if state.result:
             self.on_result(state.result)
