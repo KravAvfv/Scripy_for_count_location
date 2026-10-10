@@ -381,6 +381,12 @@ QFrame#Card, QWidget#Card {{
     background: {t.surface}; border: 1px solid {t.border}; border-radius: {r_card}px;
 }}
 QFrame#SoftCard {{ background: {t.surface_alt}; border: none; border-radius: {r_card}px; }}
+QLabel#RoomBadge {{
+    background: {t.primary}; color: {t.primary_text}; border-radius: {px(12)}px;
+    font-size: {px(ty.caption)}px; font-weight: 700;
+}}
+QLabel#PortLoad {{ color: {t.text_faint}; font-size: {px(ty.caption)}px; }}
+QLabel#PortLoad[full="true"] {{ color: {t.warning}; font-weight: 600; }}
 QFrame#Divider {{ background: {t.border}; max-height: 1px; min-height: 1px; border: none; }}
 QFrame#VDivider {{ background: {t.border}; max-width: 1px; min-width: 1px; border: none; }}
 QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}

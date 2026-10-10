@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMenu,
     QScrollArea,
@@ -155,8 +156,7 @@ class RacksView(QWidget):
         self.reset_btn = button(tr("rk.reset"), "ghost", "refresh-ccw", tr("rk.reset_tip"))
         self.reset_btn.clicked.connect(self.reset_layout)
         bar.addWidget(self.reset_btn)
-        self.hint = label(tr("rk.hint"), "caption", wrap=True)
-        bar.addWidget(self.hint, 1)
+        bar.addStretch(1)
         zoom_out = icon_button("zoom-out", tr("ui.zoom_out"))
         zoom_out.clicked.connect(lambda: self.editor.set_zoom(self.editor.zoom / 1.15))
         zoom_in = icon_button("zoom-in", tr("ui.zoom_in"))
@@ -168,6 +168,15 @@ class RacksView(QWidget):
         self.chips_box = QWidget()
         self.chips = FlowLayout(self.chips_box, spacing=6)
         root.addWidget(self.chips_box)
+        # how to work with the cabinets: one quiet line under the rooms, not squeezed between buttons
+        hint_row = QHBoxLayout()
+        hint_row.setSpacing(px(6))
+        self.hint_icon = QLabel()
+        self.hint_icon.setPixmap(icons.pixmap("info", px(14), "text_faint"))
+        self.hint = label(tr("rk.hint"), "faint", wrap=True)
+        hint_row.addWidget(self.hint_icon, 0, Qt.AlignmentFlag.AlignTop)
+        hint_row.addWidget(self.hint, 1)
+        root.addLayout(hint_row)
 
         body = QHBoxLayout()
         body.setSpacing(px(16))
@@ -320,6 +329,7 @@ class RacksView(QWidget):
 
         state.resultChanged.connect(when_shown(self, self.on_result))
         theme_manager.changed.connect(self._redraw)
+        theme_manager.changed.connect(lambda: self.hint_icon.setPixmap(icons.pixmap("info", px(14), "text_faint")))
         if state.result:
             self.on_result(state.result)
 

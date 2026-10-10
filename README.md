@@ -10,27 +10,40 @@ The UI is Ukrainian by default, with a full English version (Settings → Langua
 
 ## Швидкий старт (для колег)
 
-1. Запустіть `LocalCount.exe`.
+1. Запустіть `LocalCount.exe` (Windows) або `LocalCount.app` (Mac, див. нижче).
 2. **Локація і поверхи:** проєкт — це одна локація, а кожен запис у боковій панелі «Поверхи» — поверх
    (`+` додає наступний). Код (напр. `BO123`), ID (другий октет, напр. `57` → `10.57.x.x`), рівень і IP-план
    спільні для всіх поверхів; на кожному поверсі — свої розетки, камери, зони Wi-Fi і шафи.
    **Фаєрвол один на локацію:** він рахується на комутатори всіх поверхів і стоїть на поверсі з перемикачем
    «Фаєрвол на цьому поверсі». Інші поверхи з'єднуються з ним оптичною патч-панеллю.
+   **Кінцеві пристрої вводяться на кожну комутаційну:** поле «Комутаційних» задає їх кількість, і для кожної —
+   Ethernet-розетки, камери, **Ajax, СКУД та «Інше»** (вони займають порти відеосвічів VSW). Wi-Fi зона
+   вказує, з якої комутаційної живиться. Світчі комутаційної стоять у її шафах. У блоці комутаційної видно,
+   **які світчі в ній стоять** і скільки портів зайнято; модель кожної ролі можна **замінити**, і специфікація,
+   живлення та шафи перерахуються.
 3. **Шафи:** шафи стоять у комутаційних кімнатах. Перемикач угорі показує «Усі шафи» або шафи однієї
    кімнати; «+ Комутаційна» додає кімнату (комутатори розподіляються й на неї, оптика рахується сама),
    у картці кімнати її можна перейменувати чи видалити. «Додати шафу» додає шафу у вибрану кімнату.
-   Пристрої перетягуються мишею; **Ctrl+клік** виділяє кілька й вони перетягуються разом (Ctrl+A — уся шафа).
+   Пристрої перетягуються мишею; **кинути пристрій на інший — вони поміняються місцями** (синя підсвітка ⇄).
+   **Ctrl+клік** виділяє кілька й вони перетягуються разом (Ctrl+A — уся шафа).
    Пристрою можна дати власну назву. **Видалити можна будь-що** (Delete): фаєрвол, комутатори, ДБЖ, ПП.
    Специфікація будується від того, що лишилося в шафах, а «Повернути видалене» поверне все назад.
    **Ctrl+C** копіює назви вибраних пристроїв (кожна з нового рядка), «Копіювати назви» — усі пристрої шаф.
    Стандарт шафи: Wi-Fi комутатор — 1 ПП + 1 органайзер; інші — 2 ПП + 2 органайзери (ПП · органайзер ·
    комутатор · органайзер · ПП); оптична ПП — 1 органайзер, по одній на кожному кінці лінку
-   (до фаєрвола з іншого поверху та між шафами однієї комутаційної). DAC: 1 м — один на 2 комутатори
+   (до фаєрвола з іншого поверху та між шафами однієї комутаційної). Оптика Corning: до шафи з фаєрволом —
+   кабель на **24 волокна** (24-волоконна ПП), між іншими шафами — на **12 або 6** (Розширений режим →
+   «Волокон між шафами»). DAC: 1 м — один на 2 комутатори
    поверху, 3 м — один на 10 (10 комутаторів → 5 + 1). Розетки в специфікацію не додаються.
 4. **IP-план** будується сам з ID локації; номери, назви й маски VLAN змінюються подвійним кліком.
 5. **Специфікація:** «Уся локація» — сума поверхів; на «Цей поверх» можна змінити кількість або ціну
-   (подвійний клік) і додати роботи.
-6. **Експорт (`Ctrl+E`)** — уся локація: «Слаботрумка», схема шаф по поверхах, IP, ціни, PDF, картинки.
+   (подвійний клік) і додати роботи. Права кнопка → «Копіювати найменування / моделі / коди», `Ctrl+C` —
+   найменування вибраного рядка. В IP-плані `Ctrl+C` копіює вибрані рядки.
+6. **Експорт (`Ctrl+E`)** — уся локація: «Слаботрумка» (лише позиції, яких більше нуля), схема шаф по поверхах,
+   IP, ціни, PDF, картинки.
+
+Колесо миші лише гортає сторінку і ніколи не змінює числа чи списки: значення вписуються з клавіатури або
+кнопками `−`/`+` (стрілки ↑/↓ теж працюють).
 
 ### Пасивка для готових шаф
 
@@ -68,6 +81,47 @@ python passive_count.py                                    # запитає ша
 Коли вийде нова версія: у тій самій папці `git pull`, потім знову `.\build.ps1` (програму перед цим закрийте).
 Ваш каталог і налаштування зберігаються окремо, в `%APPDATA%\LocalCount\LocalCount\`, і не губляться.
 
+## Встановлення (MacBook, macOS 12+, Apple Silicon або Intel)
+
+**1. Python і Git.** Відкрийте «Термінал» (Cmd+Пробіл → «Terminal»):
+
+```bash
+xcode-select --install          # Git і інструменти розробника (якщо ще не стоять)
+```
+
+Python 3.11+ поставте з [python.org](https://www.python.org/downloads/macos/) (macOS 64-bit universal2
+installer) **або** через [Homebrew](https://brew.sh): `brew install python@3.12`. Вбудований у macOS
+`python3` (3.9) не підходить.
+
+**2. Завантажте програму:**
+
+```bash
+cd ~/Documents
+git clone https://github.com/KravAvfv/Scripy_for_count_location.git LocalCount
+cd LocalCount
+```
+
+**3а. Найпростіше — запуск без збирання.** Двічі клацніть `start_mac.command` у Finder (або в Терміналі:
+`./start_mac.command`). Перший запуск сам створить `.venv` і поставить бібліотеки (~2 хв, потрібен інтернет),
+наступні — відразу відкривають програму. Якщо macOS пише «не вдалося перевірити розробника»: правою
+кнопкою по файлу → «Відкрити» → «Відкрити».
+
+**3б. Або зберіть справжній `LocalCount.app`:**
+
+```bash
+./build_mac.sh                  # тести + збирання, ~5 хв
+open dist/LocalCount.app
+```
+
+Перетягніть `dist/LocalCount.app` у «Програми» (Applications). Застосунок не підписаний Apple, тому якщо
+macOS його блокує: правою кнопкою → «Відкрити», або `xattr -cr /Applications/LocalCount.app`.
+Без Mac під рукою: GitHub → **Actions → Build LocalCount → Run workflow** збирає `LocalCount-mac-arm64`
+(M1–M4), `LocalCount-mac-x86_64` (Intel) і Windows `.exe` — архіви з'являються внизу сторінки запуску.
+
+**Оновлення:** `git pull`, потім знову `./start_mac.command` (він сам доставить нові бібліотеки) або
+`./build_mac.sh`. Налаштування й каталог лежать у `~/Library/Application Support/LocalCount/` і не губляться.
+На Mac гарячі клавіші ті самі, тільки з `⌘` замість `Ctrl` (`⌘K`, `⌘S`, `⌘E`…).
+
 ## Features
 
 **v2 (company workflow):** site code / location ID / floors · cabinets in the house pattern
@@ -97,6 +151,9 @@ import (1C codes, names, two prices) · datasheet links · no customer justifica
   PNG/SVG, a *Racks* sheet in Excel (table + picture) and a section in the PDF.
 - **Extended mode** — VLAN plan carved from a base network (gateway + DHCP pool), transceivers/DAC, cabling,
   rack elevation and size, UPS sizing with the real PoE load, licences, spares, FortiManager/FortiAnalyzer.
+- **Telecom rooms** — sockets, cameras, Ajax, access control and other devices per room (the last three take
+  video switch ports); each room's switches stand in its cabinets; the switch model of every role can be replaced
+  per room. Fibre: 24-fibre Corning cable to the firewall cabinet, 12 or 6 fibres between other cabinets.
 - **Floors of one location** — a project is one location and its entries are floors (own sockets, cameras,
   Wi-Fi, cabinets); code, ID, tier and IP plan are shared. One firewall (and core) per location, sized for every
   floor and placed on the firewall floor; other floors get an optical patch panel to it. The specification and
@@ -160,13 +217,14 @@ py -3 -m venv .venv; .\.venv\Scripts\pip install -r requirements.txt; .\.venv\Sc
 ```
 
 The build uses PyInstaller with `packaging/sitesizer.spec` (one file, windowed, app icon and Windows version info;
-unused Qt modules are excluded). On Linux/macOS use `./build.sh`.
+unused Qt modules are excluded). On Linux use `./build.sh`; on a Mac `./build_mac.sh` builds `LocalCount.app`
+(see the Mac section above). `.github/workflows/build.yml` builds both on GitHub when started by hand.
 
 ## Development
 
 ```powershell
 pip install -r requirements-dev.txt
-$env:QT_QPA_PLATFORM="offscreen"; python -m pytest      # 160+ tests: engine, golden, IP, exporters, template import, GUI
+$env:QT_QPA_PLATFORM="offscreen"; python -m pytest      # 190+ tests: engine, golden, IP, exporters, template import, GUI
 ruff check sitesizer tests; ruff format sitesizer tests
 mypy sitesizer
 python tools\screenshots.py docs\screenshots            # regenerate screenshots (light + dark)
@@ -196,7 +254,9 @@ User data (catalog edits, settings, logs) lives in `%APPDATA%\LocalCount\LocalCo
 
 - Some catalog values come from third-party sources only (FS-448E family, FS-1024E power) and are flagged
   🟡 in the app and in RESEARCH.md. Confirm them on support.fortinet.com before quoting.
-- Each switch category uses one model for the whole site (no mixed FS-124G + FS-624F in the same category).
+- The switch model can be replaced per telecom room; within one room a role uses one model.
+- The 6- and 24-fibre Corning cable part numbers (`006…`, `024…`) follow Corning's numbering scheme and are not
+  verified against a datasheet — check them with the distributor (or import your template).
 - PDF tables can break between pages in the middle of a long row.
 - Moving a switch between the main room and a remote closet (IDF) by hand does not re-plan the fibre backbone;
   fibre is sized from the automatic closets.
@@ -204,5 +264,5 @@ User data (catalog edits, settings, logs) lives in `%APPDATA%\LocalCount\LocalCo
   (Catalog → Import Excel template) to make codes and prices authoritative.
 - FortiSwitch 448E / 1024E have no stand-alone datasheet on fortinet.com any more; their links point to the
   FortiSwitch ordering guide.
-- The Windows `.exe` has to be built on Windows (`build.ps1`). The PyInstaller spec was validated by building
-  and launching a Linux binary.
+- The Windows `.exe` has to be built on Windows (`build.ps1`) and the Mac app on a Mac (`build_mac.sh`), or both
+  by the GitHub workflow. The PyInstaller spec was validated by building and launching a Linux binary.

@@ -1496,14 +1496,16 @@ def _general_checks(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
 
     if ctx.site.reserve:
         ctx.check(Severity.INFO, "RESERVE", "check.reserve", "", "", pct=round((ctx.counts.reserve_factor - 1) * 100))
-    if rack.idf_count > 1:
+    run = ctx.site.max_cable_run_m
+    if rack.idf_count > 1 and run and run > ctx.rules.copper_max_m and not ctx.site.closets:
+        # only when the rooms were derived from the cable run; rooms the user entered need no warning
         ctx.check(
             Severity.WARNING,
             "IDF",
             "check.idf",
             "check.idf_hint",
             "rack",
-            run=ctx.site.max_cable_run_m,
+            run=run,
             limit=ctx.rules.copper_max_m,
             n=t.plural("plural.closets", rack.idf_count),
         )

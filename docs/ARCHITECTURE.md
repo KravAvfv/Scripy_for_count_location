@@ -23,6 +23,7 @@ sitesizer/
     pdf.py       QPdfWriter + QTextDocument report, paginated with header/footer
   gui/         PySide6 widgets only — no business rules
     state.py     AppState: project, current site, debounced recompute, undo stack, settings
+    lazy.py      when_shown(): hidden pages refresh when they are shown (keeps typing fast)
     theme.py     design tokens (light/dark), type scale, generated QSS, palette
     icons.py     Lucide SVG icons recoloured per theme
     widgets/     controls (stepper, toggle, segmented, chips, callouts), shell (sidebar, top bar, summary bar),
@@ -98,7 +99,10 @@ user edit ─► AppState.edit() ─► QUndoCommand (mergeable per field) ─�
 
 ## Racks and manual layout (core/passive.py)
 
-1. Switches are assigned to closets (MDF + IDFs when the longest run exceeds 90 m).
+1. Switches are assigned to closets. With endpoints entered per telecom room (`SiteInput.rooms`, Wi-Fi zones
+   with `room`) every room is sized on its own (`CategoryResult.per_room`) and its switches stand in its own
+   cabinets, with the model chosen for that room (`RoomInput.models`); otherwise they are spread over the
+   closets (MDF + IDFs when the longest run exceeds 90 m). Ajax / СКУД / other devices take video switch ports.
 2. Each closet is laid out top-down: fibre panels (ODF), FortiGate/core, then the house pattern
    `organizer · panels · organizer · switch · organizer · panels …` (a 48-port switch gets one panel above
    and one below), PDUs and UPS at the bottom; cabinets are split and balanced by switches.
@@ -106,7 +110,9 @@ user edit ─► AppState.edit() ─► QUndoCommand (mergeable per field) ─�
    the user (exact unit), hidden passive items and extra organizers/panels/shelves. Automatic items that collide
    with a manual one move to the nearest free slot; conflicts become `RACK_LAYOUT` checks.
 4. Names are assigned top-down per cabinet: `<code>-<floor><letter>-ASW01`, `ПП №1`, `ПП №V1`, `ПП Wi-Fi`.
-5. Uplinks are matched to the final positions: ≤ `dac_short_max_u` apart in one cabinet → 1 m DAC,
+5. Fibre: a link that ends at the firewall's cabinet (or goes to the firewall floor) is a `fiber_fw_fibers`
+   (24) cable with 24-fibre housings, any other one a `fiber_rack_fibers` (12 or 6) cable.
+6. Uplinks are matched to the final positions: ≤ `dac_short_max_u` apart in one cabinet → 1 m DAC,
    otherwise 3 m; remote closets use fibre.
 
 Every item has a stable id (`access_switch:3`, `panel:access_switch:3:1`, `org:…`, `firewall:1`) so manual

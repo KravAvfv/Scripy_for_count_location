@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.models import ADDON_KEYS, SiteResult
-from ...core.passive import drop_room, drop_room_inputs
+from ...core.passive import ROLE_CODES, drop_room, drop_room_inputs
 from ...core.presets import load_presets
 from ...core.sizing import addon_enabled, ap_model_for
 from ...exporters.diagram import SiteDiagram, style_from_tokens
@@ -196,7 +196,7 @@ class RoomBlock(QFrame):
         self.badge.setObjectName("RoomBadge")
         self.badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.badge.setFixedSize(px(24), px(24))
-        self.title = label("", "section")
+        self.title = label("", "subtitle")
         self.sub = label("", "faint")
         head.addWidget(self.badge)
         head.addWidget(self.title)
@@ -209,27 +209,21 @@ class RoomBlock(QFrame):
         grid = QGridLayout()
         grid.setHorizontalSpacing(px(14))
         grid.setVerticalSpacing(px(6))
+        self.grid = grid
+        self._cells: list[QHBoxLayout] = []
+        self._columns = 2
         self.fields: dict[str, Stepper] = {}
-        spots = {
-            "sockets": (0, 0),
-            "cameras": (0, 1),
-            "ajax": (1, 0),
-            "skud": (1, 1),
-            "other": (2, 0),
-        }
         for key in ROOM_FIELDS:
             st = Stepper(0, 1_000_000, width=124)
             st.setToolTip(tr(f"ui.room_{key}_tip"))
             st.valueChanged.connect(lambda v, k=key: self.changed.emit(self.index, k, int(v)))
             self.fields[key] = st
-            row, col = spots[key]
             cell = QHBoxLayout()
             cell.setSpacing(px(8))
             cell.addWidget(label(tr(f"ui.room_{key}")), 1)
             cell.addWidget(st)
-            grid.addLayout(cell, row, col)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
+            self._cells.append(cell)
+        self._place_cells()
         lay.addLayout(grid)
         self.vsw_note = label(tr("ui.room_vsw_note"), "faint", wrap=True)
         lay.addWidget(self.vsw_note)
@@ -244,6 +238,7 @@ class RoomBlock(QFrame):
         self.combos: dict[str, QComboBox] = {}
         self.counts: dict[str, QLabel] = {}
         self.rows: dict[str, QWidget] = {}
+        self.loads: dict[str, QLabel] = {}
         t = current()
         switches = state.catalog.switches()
         tk = tokens()
@@ -256,9 +251,10 @@ class RoomBlock(QFrame):
             dot.setFixedSize(px(8), px(8))
             dot.setStyleSheet(f"background: {tk.categories.get(key, tk.text_faint)}; border-radius: {px(4)}px;")
             rl.addWidget(dot)
-            rl.addWidget(
-                label(t.pick(state.catalog.categories[key].short or state.catalog.categories[key].label), "muted")
-            )
+            cat_def = state.catalog.categories[key]
+            role = label(f"{t.pick(cat_def.short or cat_def.label)} · {ROLE_CODES[key]}", "muted")
+            role.setMinimumWidth(px(96))
+            rl.addWidget(role)
             combo = QComboBox()
             combo.setAccessibleName(tr("ui.room_model"))
             combo.setToolTip(tr("ui.room_model_tip"))
@@ -271,6 +267,10 @@ class RoomBlock(QFrame):
             combo.view().setMinimumWidth(px(460))
             combo.currentIndexChanged.connect(lambda _i, k=key: self._emit_model(k))
             rl.addWidget(combo, 1)
+            load = QLabel()
+            load.setObjectName("PortLoad")
+            rl.addWidget(load)
+            self.loads[key] = load
             n = label("", None)
             n.setMinimumWidth(px(34))
             n.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -279,6 +279,21 @@ class RoomBlock(QFrame):
             self.sw_box.addWidget(row)
             self.combos[key], self.counts[key], self.rows[key] = combo, n, row
         self._loading = False
+
+    def _place_cells(self) -> None:
+        for cell in self._cells:
+            self.grid.removeItem(cell)
+        for i, cell in enumerate(self._cells):
+            self.grid.addLayout(cell, i // self._columns, i % self._columns)
+        for c in range(2):
+            self.grid.setColumnStretch(c, 1 if c < self._columns else 0)
+
+    def resizeEvent(self, e: QResizeEvent) -> None:
+        super().resizeEvent(e)
+        columns = 1 if self.width() < px(560) else 2
+        if columns != self._columns:
+            self._columns = columns
+            self._place_cells()
 
     def load(self, title: str, values: dict[str, int], models: dict[str, str], show_title: bool) -> None:
         self._loading = True
@@ -294,9 +309,22 @@ class RoomBlock(QFrame):
             combo.setCurrentIndex(j if j > 0 else 0)
         self._loading = False
 
-    def set_switches(self, auto: dict[str, str], placed: dict[str, dict[str, int]], summary: str) -> None:
-        """``auto``: calculated model per category; ``placed``: category -> {model: switches in this room}."""
+    def set_switches(
+        self,
+        auto: dict[str, str],
+        placed: dict[str, dict[str, int]],
+        summary: str,
+        ports: dict[str, tuple[int, int]] | None = None,
+    ) -> None:
+        """``auto``: calculated model per category; ``placed``: category -> {model: switches in this room};
+        ``ports``: category -> (ports in use, ports of the switches standing here)."""
         self._loading = True
+        for key, load in self.loads.items():
+            used, cap = (ports or {}).get(key, (0, 0))
+            load.setText(tr("ui.room_ports", used=used, cap=cap) if cap else "")
+            load.setProperty("full", "true" if cap and used / cap > 0.9 else "false")
+            load.style().unpolish(load)
+            load.style().polish(load)
         any_row = False
         for key in SWITCH_KEYS:
             here = placed.get(key, {})
@@ -919,13 +947,22 @@ class LocationView(QWidget):
                 if it.group in SWITCH_KEYS and not it.extra:
                     by = placed.setdefault(plan.room, {}).setdefault(it.group, {})
                     by[it.model] = by.get(it.model, 0) + 1
-        auto = {k: result.categories[k].model or self.state.catalog.categories[k].base for k in SWITCH_KEYS}
+        cats = self.state.catalog.categories
+        auto = {k: result.categories[k].model or cats[k].base for k in SWITCH_KEYS}
+        rooms = result.counts.rooms
         for i, block in enumerate(self._room_blocks):
             here = placed.get(i, {})
             total = sum(n for by in here.values() for n in by.values())
             racks = sum(1 for p in result.rack.plans if p.room == i)
             summary = tr("ui.room_summary", sw=total, racks=racks) if total or racks else ""
-            block.set_switches(auto, here, summary)
+            ports: dict[str, tuple[int, int]] = {}
+            if i < len(rooms):
+                rc = rooms[i]
+                used = {"access_switch": rc.sockets, "camera_switch": rc.cameras + rc.vsw_extra, "wifi_switch": rc.aps}
+                for key in SWITCH_KEYS:
+                    n = sum(here.get(key, {}).values())
+                    ports[key] = (used[key], n * cats[key].endpoints_per_switch)
+            block.set_switches(auto, here, summary, ports)
 
     def _fold_floor_counts(self, d: dict[str, Any]) -> None:
         """Older files keep the main room's sockets/cameras on the floor: move them into ``rooms[0]``."""
