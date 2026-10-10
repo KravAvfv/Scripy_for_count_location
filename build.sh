@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a single-file LocalCount binary on Linux/macOS (Windows: use build.ps1).
+# Build a single-file LocalCount binary on Linux (macOS: build_mac.sh, Windows: build.ps1).
 set -euo pipefail
 cd "$(dirname "$0")"
 [ -d .venv ] || python3 -m venv .venv

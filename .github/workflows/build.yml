@@ -1,0 +1,41 @@
+# Builds LocalCount for macOS (.app) and Windows (.exe) on GitHub. Started by hand only:
+# GitHub → Actions → "Build LocalCount" → Run workflow. The files appear under "Artifacts".
+name: Build LocalCount
+
+on:
+  workflow_dispatch:
+
+jobs:
+  mac:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-14   # Apple Silicon (M1…M4)
+            arch: arm64
+          - runner: macos-13   # Intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: PYTHON=python ./build_mac.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LocalCount-mac-${{ matrix.arch }}
+          path: dist/LocalCount-mac.zip
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: .\build.ps1
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LocalCount-windows
+          path: dist/LocalCount.exe

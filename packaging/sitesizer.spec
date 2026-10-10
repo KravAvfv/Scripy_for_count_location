@@ -1,4 +1,4 @@
-# PyInstaller spec — single-file, windowed LocalCount build.
+# PyInstaller spec — windowed LocalCount build: one .exe on Windows/Linux, LocalCount.app on macOS.
 # Usage (from the repo root):  pyinstaller --noconfirm --clean packaging/sitesizer.spec
 # The build scripts (build.ps1 / build.sh) wrap this and regenerate the icon + version info.
 
@@ -42,18 +42,55 @@ a = Analysis(  # noqa: F821
 pyz = PYZ(a.pure)  # noqa: F821
 
 is_win = sys.platform == "win32"
-exe = EXE(  # noqa: F821
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.datas,
-    [],
-    name="LocalCount",
-    debug=False,
-    strip=False,
-    upx=False,
-    console=False,
-    icon=str(ROOT / "packaging" / "sitesizer.ico") if is_win else None,
-    version=str(ROOT / "packaging" / "version_info.txt") if is_win else None,
-)
+is_mac = sys.platform == "darwin"
+
+if is_mac:
+    # macOS: a regular LocalCount.app bundle (a one-file windowed binary is not a proper app there)
+    exe = EXE(  # noqa: F821
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name="LocalCount",
+        debug=False,
+        strip=False,
+        upx=False,
+        console=False,
+        argv_emulation=False,
+    )
+    coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="LocalCount")  # noqa: F821
+    app = BUNDLE(  # noqa: F821
+        coll,
+        name="LocalCount.app",
+        icon=str(ROOT / "packaging" / "sitesizer.icns"),
+        bundle_identifier="ua.localcount.app",
+        version=__version__,
+        info_plist={
+            "CFBundleName": "LocalCount",
+            "CFBundleDisplayName": "LocalCount",
+            "CFBundleShortVersionString": __version__,
+            "NSHighResolutionCapable": True,
+            "NSRequiresAquaSystemAppearance": False,  # follows the system dark mode
+            "LSMinimumSystemVersion": "12.0",
+            "CFBundleDocumentTypes": [
+                {"CFBundleTypeName": "LocalCount project", "CFBundleTypeRole": "Editor",
+                 "CFBundleTypeExtensions": ["json"], "LSHandlerRank": "Alternate"}
+            ],
+        },
+    )
+else:
+    exe = EXE(  # noqa: F821
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.datas,
+        [],
+        name="LocalCount",
+        debug=False,
+        strip=False,
+        upx=False,
+        console=False,
+        icon=str(ROOT / "packaging" / "sitesizer.ico") if is_win else None,
+        version=str(ROOT / "packaging" / "version_info.txt") if is_win else None,
+    )
 print(f"LocalCount {__version__} spec loaded")

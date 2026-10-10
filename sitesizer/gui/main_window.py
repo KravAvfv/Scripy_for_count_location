@@ -26,7 +26,7 @@ from ..core.presets import load_presets
 from ..core.pricing import summarize_prices
 from ..core.project import PROJECT_SUFFIX, ProjectError
 from ..core.report import bom_csv, default_export_name, result_to_dict, safe_filename
-from ..i18n import current, tr
+from ..i18n import IS_MAC, current, keys, tr
 from . import icons
 from .state import AppState
 from .theme import theme_manager, tokens
@@ -123,8 +123,8 @@ class MainWindow(QMainWindow):
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)
         self.topbar = TopBar()
-        self.undo_btn = icon_button("undo-2", tr("ui.undo") + "  (Ctrl+Z)")
-        self.redo_btn = icon_button("redo-2", tr("ui.redo") + "  (Ctrl+Y)")
+        self.undo_btn = icon_button("undo-2", tr("ui.undo") + keys("  (Ctrl+Z)"))
+        self.redo_btn = icon_button("redo-2", tr("ui.redo") + keys("  (Ctrl+Shift+Z)" if IS_MAC else "  (Ctrl+Y)"))
         self.undo_btn.clicked.connect(self.state.undo.undo)
         self.redo_btn.clicked.connect(self.state.undo.redo)
         self.undo_btn.setEnabled(False)
@@ -133,7 +133,7 @@ class MainWindow(QMainWindow):
         self.palette_btn.clicked.connect(self.open_palette)
         self.theme_btn = icon_button("moon", tr("ui.toggle_theme"))
         self.theme_btn.clicked.connect(self.toggle_theme)
-        self.save_btn = icon_button("save", tr("ui.save") + "  (Ctrl+S)")
+        self.save_btn = icon_button("save", tr("ui.save") + keys("  (Ctrl+S)"))
         self.save_btn.clicked.connect(self.save)
         self.export_btn = button(tr("ui.export"), "primary", "download")
         self.export_btn.setMenu(self._export_menu())
@@ -214,7 +214,7 @@ class MainWindow(QMainWindow):
             if icon_name is None:
                 m.addSeparator()
                 continue
-            act = QAction(icons.icon(icon_name, size=16), f"{text}\t{sc}" if sc else text, m)
+            act = QAction(icons.icon(icon_name, size=16), f"{text}\t{keys(sc)}" if sc else text, m)
             act.triggered.connect(fn)
             m.addAction(act)
         return m

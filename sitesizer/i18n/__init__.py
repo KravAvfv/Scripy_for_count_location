@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import sys
 from collections.abc import Mapping
 from functools import cache
 from pathlib import Path
@@ -22,6 +24,25 @@ log = logging.getLogger(__name__)
 SUPPORTED_LANGUAGES = ("uk", "en")
 DEFAULT_LANGUAGE = "uk"
 _DIR = Path(__file__).resolve().parent
+
+
+IS_MAC = sys.platform == "darwin"
+
+
+def keys(text: str, mac: bool = IS_MAC) -> str:
+    """Shortcut names as the platform shows them: on a Mac ``Ctrl+Shift+C`` reads ``⇧⌘C``.
+
+    Qt already maps the Ctrl shortcuts to Cmd on macOS; only the text needs it.
+    """
+    if not mac or "Ctrl" not in text:
+        return text
+
+    def mods(m: re.Match[str]) -> str:
+        extra, word = m.group(1), m.group(2)
+        out = ("⌥" if "Alt+" in extra else "") + ("⇧" if "Shift+" in extra else "") + "⌘"
+        return out + ("+" if word else "")  # "⌘+click", but "⌘K"
+
+    return re.sub(r"Ctrl\+((?:Shift\+|Alt\+)*)(?=(\w\w)?)", mods, text)
 
 
 @cache
@@ -69,10 +90,10 @@ class Translator:
         if isinstance(raw, list):
             raw = raw[-1]
         try:
-            return str(raw).format(**kwargs)
+            return keys(str(raw).format(**kwargs))
         except (KeyError, IndexError, ValueError):
             log.exception("i18n: bad format for key '%s'", key)
-            return str(raw)
+            return keys(str(raw))
 
     def plural(self, key: str, n: float, **kwargs: Any) -> str:
         """Translate a plural key; ``{n}`` is available in the template."""

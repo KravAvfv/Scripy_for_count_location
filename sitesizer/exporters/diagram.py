@@ -29,7 +29,7 @@ from ..core.catalog import Catalog
 from ..core.models import SiteResult
 from ..i18n import Translator
 
-FONT_FAMILIES = ["Inter", "Segoe UI Variable Text", "Segoe UI", "Noto Sans", "Arial"]
+FONT_FAMILIES = ["Inter", "Segoe UI Variable Text", "Segoe UI", "SF Pro Text", "Helvetica Neue", "Noto Sans", "Arial"]
 
 
 @dataclass(frozen=True)

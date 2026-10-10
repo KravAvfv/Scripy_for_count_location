@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 FONT_FAMILY = "Inter"
-FALLBACK_FAMILIES = ["Segoe UI Variable Text", "Segoe UI", "Noto Sans", "Arial"]
+FALLBACK_FAMILIES = ["Segoe UI Variable Text", "Segoe UI", "SF Pro Text", "Helvetica Neue", "Noto Sans", "Arial"]
 
 
 @dataclass(frozen=True)

@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...i18n import tr
+from ...i18n import keys, tr
 from .. import icons
 from ..theme import tokens
 from .controls import button, label, px
@@ -213,7 +213,9 @@ class CommandPalette(QDialog):
                 scored.append((s, c))
         scored.sort(key=lambda x: x[0])
         for _s, c in scored[:40]:
-            it = QListWidgetItem(icons.icon(c.icon, size=16), c.title + (f"     {c.shortcut}" if c.shortcut else ""))
+            it = QListWidgetItem(
+                icons.icon(c.icon, size=16), c.title + (f"     {keys(c.shortcut)}" if c.shortcut else "")
+            )
             it.setData(Qt.ItemDataRole.UserRole, c)
             it.setToolTip(c.group)
             self.list.addItem(it)

@@ -1,4 +1,4 @@
-"""Render the LocalCount brand mark to packaging/sitesizer.ico and .png (multi-size)."""
+"""Render the LocalCount brand mark to packaging/sitesizer.ico (Windows), .icns (macOS) and .png."""
 
 from __future__ import annotations
 
@@ -37,13 +37,17 @@ def main() -> None:
 
     sizes = [16, 24, 32, 48, 64, 128, 256]
     blobs = []
-    for s in sizes:
+
+    def png(size: int) -> bytes:
         data = QByteArray()
         buf = QBuffer(data)
         buf.open(QIODevice.OpenModeFlag.WriteOnly)
-        render(s).save(buf, "PNG")  # type: ignore[call-overload]
+        render(size).save(buf, "PNG")  # type: ignore[call-overload]
         buf.close()
-        blobs.append(bytes(data.data()))
+        return bytes(data.data())
+
+    for s in sizes:
+        blobs.append(png(s))
     head = BytesIO()
     head.write(struct.pack("<HHH", 0, 1, len(sizes)))
     offset = 6 + 16 * len(sizes)
@@ -51,6 +55,15 @@ def main() -> None:
         head.write(struct.pack("<BBBBHHII", s % 256, s % 256, 0, 0, 1, 32, len(blob), offset))
         offset += len(blob)
     (out / "sitesizer.ico").write_bytes(head.getvalue() + b"".join(blobs))
+    # macOS .icns: PNG images under their type codes (16…1024 px, Retina variants included)
+    icns_types = [
+        ("icp4", 16), ("icp5", 32), ("icp6", 64), ("ic07", 128), ("ic08", 256), ("ic09", 512),
+        ("ic10", 1024), ("ic11", 32), ("ic12", 64), ("ic13", 256), ("ic14", 512),
+    ]  # fmt: skip
+    chunks = b"".join(
+        code.encode() + struct.pack(">I", len(blob) + 8) + blob for code, blob in ((c, png(n)) for c, n in icns_types)
+    )
+    (out / "sitesizer.icns").write_bytes(b"icns" + struct.pack(">I", len(chunks) + 8) + chunks)
     print("icons written to", out)
 
 
