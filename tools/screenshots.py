@@ -20,7 +20,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 def demo_project():
     """One location (BO123) with three floors; the firewall stands on the 7th."""
-    from sitesizer.core.models import ApGroup, SiteInput
+    from sitesizer.core.models import ApGroup, RoomInput, SiteInput
     from sitesizer.core.project import Project
 
     project = Project(name="BO123 — офіс", customer="ТОВ «Приклад»", author="Мережевий інженер")
@@ -32,6 +32,19 @@ def demo_project():
     ]
     for n, sockets, cameras, aps, fw in floors:
         site = SiteInput(name=f"{n} поверх", floor=n, sockets=sockets, cameras=cameras, ap_groups=aps, **common)
+        if fw:
+            # the firewall floor has two telecom rooms, each with its own endpoints
+            site = site.model_copy(
+                update={
+                    "sockets": 0,
+                    "cameras": 0,
+                    "closets": 2,
+                    "rooms": [
+                        RoomInput(sockets=100, cameras=12, ajax=2, skud=4),
+                        RoomInput(sockets=50, other=3),
+                    ],
+                }
+            )
         project.add_site(site, is_hub=fw)
     return project
 

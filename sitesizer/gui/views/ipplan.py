@@ -7,7 +7,7 @@ import uuid
 from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, QPoint, Qt
-from PySide6.QtGui import QAction, QColor
+from PySide6.QtGui import QAction, QColor, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
@@ -186,6 +186,10 @@ class IpPlanView(QWidget):
         )
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._context)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        copy_sc = QShortcut(QKeySequence.StandardKey.Copy, self.table)
+        copy_sc.setContext(Qt.ShortcutContext.WidgetShortcut)
+        copy_sc.activated.connect(self.copy_selection)
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Interactive)
@@ -320,10 +324,31 @@ class IpPlanView(QWidget):
             a.triggered.connect(lambda _=False, c=col: self.table.edit(idx.siblingAtColumn(c)))
             menu.addAction(a)
         menu.addSeparator()
+        a = QAction(icons.icon("copy", size=16), tr("bom.copy_cell"), menu)
+        a.triggered.connect(lambda: self.copy_selection(idx))
+        menu.addAction(a)
         a = QAction(icons.icon("trash-2", "error", 16), tr("ui.ip_remove"), menu)
         a.triggered.connect(lambda: self.remove_vlan(seg))
         menu.addAction(a)
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def copy_selection(self, fallback: QModelIndex | None = None) -> None:
+        """Selected rows to the clipboard as tab-separated text (pastes into Excel as a table)."""
+        rows = sorted({i.row() for i in self.table.selectionModel().selectedIndexes()})
+        if not rows and fallback is not None and fallback.isValid():
+            rows = [fallback.row()]
+        cols = [c for c in range(self.model.columnCount()) if not self.table.isColumnHidden(c)]
+        lines = [
+            "\t".join(str(self.model.index(r, c).data(Qt.ItemDataRole.DisplayRole) or "") for c in cols) for r in rows
+        ]
+        if not lines:
+            return
+        if len(rows) == 1 and fallback is not None and fallback.isValid():
+            text = str(fallback.data(Qt.ItemDataRole.DisplayRole) or "")
+        else:
+            text = "\n".join(lines)
+        QGuiApplication.clipboard().setText(text)
+        self.state.message.emit("success", tr("ui.copied_n", n=len(lines) if len(lines) > 1 else text[:60]))
 
     # ---- result --------------------------------------------------------------------------
     def on_result(self, result: SiteResult) -> None:

@@ -95,7 +95,7 @@ def size_location(
             "switches": r.edge_switch_count + r.core.count,
             "aps": r.counts.aps,
             "sockets": r.counts.sockets,
-            "cameras": r.counts.cameras,
+            "cameras": r.counts.cameras + r.counts.vsw_extra,
             "wifi": r.counts.wifi_clients or r.counts.aps * wifi_default,
         }
         for k, v in tot.items():
@@ -168,6 +168,10 @@ def combine(floors: list[tuple[str, SiteResult]], fw_result: SiteResult, n_floor
     for r in results:
         counts.sockets += r.counts.sockets
         counts.cameras += r.counts.cameras
+        counts.vsw_extra += r.counts.vsw_extra
+        counts.ajax += r.counts.ajax
+        counts.skud += r.counts.skud
+        counts.other += r.counts.other
         counts.aps += r.counts.aps
         counts.ap_groups += r.counts.ap_groups
         if r.counts.wifi_clients:
@@ -179,6 +183,12 @@ def combine(floors: list[tuple[str, SiteResult]], fw_result: SiteResult, n_floor
         merged.count = sum(r.categories[key].count for r in results)
         merged.endpoints = sum(r.categories[key].endpoints for r in results)
         merged.poe_load_w = sum(r.categories[key].poe_load_w for r in results)
+        merged.per_room = None
+        merged.models = {}
+        for r in results:
+            cr = r.categories[key]
+            for m, n in (cr.models or ({cr.model: cr.count} if cr.count else {})).items():
+                merged.models[m] = merged.models.get(m, 0) + n
         if not merged.model:
             merged.model = next((r.categories[key].model for r in results if r.categories[key].model), "")
         categories[key] = merged

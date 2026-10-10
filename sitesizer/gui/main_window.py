@@ -41,7 +41,7 @@ from .views.projects import ProjectsView
 from .views.racks import RacksView
 from .views.settings_view import SettingsView
 from .views.topology import TopologyView
-from .widgets.controls import button, icon_button, px, refresh_icons
+from .widgets.controls import button, icon_button, install_wheel_guard, px, refresh_icons
 from .widgets.feedback import ToastHost
 from .widgets.overlays import Command, CommandPalette, TourOverlay, TourStep, ask_save, confirm, prompt_text
 from .widgets.shell import NAV_BOTTOM, NAV_MAIN, Sidebar, SummaryBar, TopBar
@@ -55,6 +55,7 @@ PAGES = [k for k, _i, _t in NAV_MAIN + NAV_BOTTOM]
 class MainWindow(QMainWindow):
     def __init__(self, state: AppState) -> None:
         super().__init__()
+        install_wheel_guard()
         self.state = state
         self.current_page = "location"
         self.setMinimumSize(QSize(px(1024), px(680)))
@@ -478,7 +479,7 @@ class MainWindow(QMainWindow):
             return
         catalog, lang, opts = self.state.catalog, self.state.settings.language, self._report_options()
         if choices["xlsx"]:
-            xopts = {**opts, "sheets": choices["sheets"], "only_used": choices["only_used"]}
+            xopts = {**opts, "sheets": choices["sheets"], "only_used": True}
             if choices.get("split", True):
                 self._run_export_many(
                     lambda: export_xlsx_split(result, out_dir, base, catalog=catalog, lang=lang, options=xopts)
@@ -746,7 +747,9 @@ class MainWindow(QMainWindow):
 
         steps = [
             TourStep(lambda: loc.preset_box, tr("tour.1.title"), tr("tour.1.text"), lambda: reveal(loc.preset_box)),
-            TourStep(lambda: loc.sockets_row, tr("tour.2.title"), tr("tour.2.text"), lambda: reveal(loc.sockets_row)),
+            TourStep(
+                lambda: loc.endpoints_card, tr("tour.2.title"), tr("tour.2.text"), lambda: reveal(loc.endpoints_card)
+            ),
             TourStep(
                 lambda: loc.tier_card, tr("tour.3.title"), tr("tour.3.text"), lambda: reveal(loc.tier.parentWidget())
             ),

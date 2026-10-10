@@ -26,8 +26,10 @@ from PySide6.QtGui import (
     QDesktopServices,
     QFont,
     QFontMetrics,
+    QKeySequence,
     QPainter,
     QPen,
+    QShortcut,
     QStandardItem,
     QStandardItemModel,
 )
@@ -594,6 +596,9 @@ class BomView(QWidget):
         self.tree.setAccessibleName(tr("nav.bom"))
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._context)
+        copy_sc = QShortcut(QKeySequence.StandardKey.Copy, self.tree)
+        copy_sc.setContext(Qt.ShortcutContext.WidgetShortcut)
+        copy_sc.activated.connect(self.copy_current)
         header = self.tree.header()
         header.setStretchLastSection(False)
         header.setSectionsMovable(False)
@@ -810,6 +815,17 @@ class BomView(QWidget):
                 a = QAction(icons.icon("trash-2", "error", 16), tr("ui.bom_remove"), menu)
                 a.triggered.connect(lambda: self.remove_custom(line))
                 menu.addAction(a)
+            menu.addSeparator()
+            name = f"{line.model} — {line.description}" if line.description else line.model
+            for key, text in (
+                ("bom.copy_names", name),
+                ("bom.copy_models", line.model),
+                ("bom.copy_codes", line.code),
+            ):
+                if text:
+                    a = QAction(icons.icon("copy", size=16), tr(key), menu)
+                    a.triggered.connect(lambda _=False, v=text: self._copy_text(v))
+                    menu.addAction(a)
             dev = self.state.catalog.models.get(line.model)
             if dev is not None and dev.datasheet:
                 url = dev.datasheet
@@ -870,6 +886,17 @@ class BomView(QWidget):
         else:
             self.tree.collapseAll()
         self.expand_btn.setText(tr("ui.collapse_all") if self._expanded else tr("ui.expand_all"))
+
+    def _copy_text(self, text: str) -> None:
+        QApplication.clipboard().setText(text)
+        self.state.message.emit("success", tr("ui.copied_n", n=text if len(text) < 60 else text[:57] + "…"))
+
+    def copy_current(self) -> None:
+        """Ctrl+C in the table: the name of the selected line."""
+        idx = self.tree.currentIndex()
+        line: BomLine | None = idx.siblingAtColumn(0).data(LINE_ROLE) if idx.isValid() else None
+        if line is not None:
+            self._copy_text(f"{line.model} — {line.description}" if line.description else line.model)
 
     def copy_to_clipboard(self) -> None:
         result = self.shown()

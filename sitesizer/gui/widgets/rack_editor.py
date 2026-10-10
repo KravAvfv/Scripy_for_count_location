@@ -2,7 +2,8 @@
 
 Paints the same :class:`~sitesizer.exporters.rack.RackDiagram` as the exports and adds selection
 (Ctrl+click adds devices of the same cabinet, Ctrl+A selects the whole cabinet), a drag ghost
-(green = fits, red = blocked) that moves every selected device together, and keyboard moves.
+(green = fits, red = blocked) that moves every selected device together, swapping two devices by
+dropping one onto the other (blue ⇄), and keyboard moves.
 It never edits the layout itself; it emits signals that the racks page turns into undoable edits
 of ``SiteInput.layout``.
 """
@@ -33,6 +34,8 @@ class RackEditor(QWidget):
     deleteManyRequested = Signal(list)
     copyRequested = Signal(list)
     """Item ids whose names should go to the clipboard."""
+    swapped = Signal(list)
+    """[(item id, cabinet key, new lowest unit), (other id, …)] — a device dropped onto another one."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -47,6 +50,8 @@ class RackEditor(QWidget):
         self._drag: RackItem | None = None
         self._grab_offset = 0
         self._ghost: tuple[RackPlan, int, bool] | None = None
+        self._swap: tuple[RackItem, RackPlan, int, int] | None = None
+        """(the other device, its cabinet, new unit of the dragged one, new unit of the other one)."""
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -68,6 +73,7 @@ class RackEditor(QWidget):
                 self.sel_items = []
         self._drag = None
         self._ghost = None
+        self._swap = None
         self.updateGeometry()
         self.adjustSize()
         self.update()
@@ -141,6 +147,24 @@ class RackEditor(QWidget):
                     return False
         return True
 
+    def swap_units(self, src: RackPlan, a: RackItem, dst: RackPlan, b: RackItem) -> tuple[int, int] | None:
+        """Where ``a`` and ``b`` go when they trade places (tops aligned, else bottoms), or ``None``."""
+        if a is b:
+            return None
+
+        def free(plan: RackPlan, u: int, h: int) -> bool:
+            if u < 1 or u + h - 1 > plan.size_u:
+                return False
+            return not any(o is not a and o is not b and o.u <= u + h - 1 and u <= o.top for o in plan.items)
+
+        for ua, ub in ((b.top - a.height + 1, a.top - b.height + 1), (b.u, a.u)):
+            # in one cabinet the two must not land on each other either
+            if src is dst and ua <= ub + b.height - 1 and ub <= ua + a.height - 1:
+                continue
+            if free(dst, ua, a.height) and free(src, ub, b.height):
+                return ua, ub
+        return None
+
     # ---- geometry ------------------------------------------------------------------------
     def _to_diagram(self, pos: QPointF) -> QPointF:
         return QPointF(pos.x() / self.zoom, pos.y() / self.zoom)
@@ -181,7 +205,23 @@ class RackEditor(QWidget):
                 p.setBrush(fill)
                 p.drawRoundedRect(self.diagram.unit_rect(plan, x, y, sel.u, sel.height), 3, 3)
             p.setBrush(Qt.BrushStyle.NoBrush)
-        if self._drag is not None and self._ghost is not None:
+        if self._drag is not None and self._swap is not None:
+            other, oplan, ua, ub = self._swap
+            src = self.plan(self.sel_rack)
+            color = QColor(t.primary)
+            fill = QColor(color)
+            fill.setAlphaF(0.20)
+            for plan_, u_, h_ in ((oplan, ua, self._drag.height), (src, ub, other.height)):
+                if plan_ is None:
+                    continue
+                x, y = self._origin(plan_)
+                rect = self.diagram.unit_rect(plan_, x, y, u_, h_)
+                p.setPen(QPen(color, 2, Qt.PenStyle.DashLine))
+                p.setBrush(fill)
+                p.drawRoundedRect(rect, 3, 3)
+                p.setPen(color)
+                p.drawText(rect.adjusted(8, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, "⇄")
+        elif self._drag is not None and self._ghost is not None:
             gplan, gu, ok = self._ghost
             x, y = self._origin(gplan)
             color = QColor(t.success if ok else t.error)
@@ -246,8 +286,23 @@ class RackEditor(QWidget):
         ):
             self._drag = self.item(self.sel_item)
         if self._drag is not None:
-            plan, _item, u, header = self.diagram.hit(pos)
+            plan, under, u, header = self.diagram.hit(pos)
             src = self.plan(self.sel_rack)
+            self._swap = None
+            if (
+                plan is not None
+                and under is not None
+                and src is not None
+                and under is not self._drag
+                and len(self._drag_group()) == 1
+            ):
+                units = self.swap_units(src, self._drag, plan, under)
+                if units is not None:
+                    self._swap = (under, plan, *units)
+                    self._ghost = None
+                    self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                    self.update()
+                    return
             if plan is not None and not header and src is not None:
                 target = max(1, u - self._grab_offset)
                 ok = self.group_fits(src, self._drag_group(), target - self._drag.u, plan)
@@ -272,13 +327,19 @@ class RackEditor(QWidget):
         return group if any(it is self._drag for it in group) else [self._drag]
 
     def mouseReleaseEvent(self, e: QMouseEvent) -> None:
-        drag, ghost = self._drag, self._ghost
+        drag, ghost, swap = self._drag, self._ghost, self._swap
         group = self._drag_group()
         self._press = None
         self._drag = None
         self._ghost = None
+        self._swap = None
         self.setCursor(Qt.CursorShape.ArrowCursor)
-        if drag is not None and ghost is not None:
+        if drag is not None and swap is not None:
+            other, oplan, ua, ub = swap
+            src = self.sel_rack
+            self.sel_rack = oplan.key
+            self.swapped.emit([(drag.id, oplan.key, ua), (other.id, src, ub)])
+        elif drag is not None and ghost is not None:
             plan, u, ok = ghost
             if ok and (plan.key != self.sel_rack or u != drag.u):
                 self.sel_rack = plan.key

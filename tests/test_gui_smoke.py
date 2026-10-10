@@ -61,16 +61,16 @@ def test_typing_updates_result_and_undo(app: QApplication, window) -> None:
     loc.sockets.field.selectAll()
     QTest.keyClicks(loc.sockets.field, "100")
     pump(app)
-    assert st.site.sockets == 100
+    assert st.site.total_sockets == 100
     assert st.result is not None and st.result.categories["access_switch"].count == 3
     assert window.summary.sw.value.text() == str(st.result.total_switches)
     st.undo.undo()
     pump(app)
-    assert st.site.sockets == 0
+    assert st.site.total_sockets == 0
     assert loc.sockets.value() == 0
     st.undo.redo()
     pump(app)
-    assert st.site.sockets == 100
+    assert st.site.total_sockets == 100
 
 
 def test_zones_presets_and_tier(app: QApplication, window) -> None:
@@ -314,6 +314,35 @@ def test_rack_editor_drag_and_drop(app: QApplication, window) -> None:
     assert st.site.layout.added == [] and not st.site.layout.extras
 
 
+def test_rack_editor_swap_devices(app: QApplication, window) -> None:
+    """Dropping a device onto another one swaps the two."""
+    st = window.state
+    st.edit("t", lambda d: d.update(sockets=96, cameras=10))
+    st.recompute()
+    window.navigate("racks")
+    pump(app)
+    editor = window.racks.editor
+
+    def unit(item_id: str) -> int:
+        return next(it.u for p in st.result.rack.plans for it in p.items if it.id == item_id)
+
+    a, b = "access_switch:1", "camera_switch:1"
+    ua, ub = unit(a), unit(b)
+    ra, rb = editor.item_rect_in_widget(a), editor.item_rect_in_widget(b)
+    assert ra is not None and rb is not None
+    _mouse(editor, "press", ra.center())
+    _mouse(editor, "move", ra.center() + (rb.center() - ra.center()) / 2)
+    _mouse(editor, "move", rb.center())
+    assert editor._swap is not None
+    _mouse(editor, "release", rb.center())
+    pump(app)
+    assert (unit(a), unit(b)) == (ub, ua)
+    assert not st.result.rack.layout_problems
+    st.undo.undo()
+    pump(app)
+    assert (unit(a), unit(b)) == (ua, ub)
+
+
 def test_bom_inline_edit_and_custom_line(app: QApplication, window) -> None:
     from PySide6.QtWidgets import QSpinBox
 
@@ -369,7 +398,6 @@ def test_export_dialog_choices(app: QApplication, window, tmp_path: Path, monkey
     def fake_exec(self) -> int:
         self.sheets["prices"].setChecked(False)
         self.sheets["inputs"].setChecked(False)
-        self.only_used.setChecked(True)
         self.pdf.setChecked(True)
         self.folder.setText(str(tmp_path))
         self.name.setText("out")

@@ -7,6 +7,7 @@ i18n tables, so the same engine serves the GUI, the CLI and the exporters.
 
 from __future__ import annotations
 
+import copy
 import logging
 import math
 from dataclasses import dataclass, field
@@ -26,6 +27,7 @@ from .models import (
     IpPlan,
     PowerSummary,
     RackSummary,
+    RoomCounts,
     Severity,
     SiteInput,
     SiteResult,
@@ -61,7 +63,7 @@ def apply_reserve(site: SiteInput, catalog: Catalog) -> EffectiveCounts:
     clients = site.wifi_clients_expected
     if clients:
         clients = scale(clients)
-    return EffectiveCounts(
+    out = EffectiveCounts(
         sockets=scale(site.sockets),
         cameras=scale(site.cameras),
         aps=sum(g.qty for g in groups),
@@ -69,6 +71,27 @@ def apply_reserve(site: SiteInput, catalog: Catalog) -> EffectiveCounts:
         wifi_clients=clients or None,
         reserve_factor=factor,
     )
+    if site.per_room:
+        # every room is scaled on its own: its switches stand in its own cabinets
+        n = site.room_count()
+        out.sockets = out.cameras = 0
+        for i in range(n):
+            r = site.room(i)
+            rc = RoomCounts(
+                sockets=scale(r.sockets),
+                cameras=scale(r.cameras),
+                vsw_extra=scale(r.vsw_extra),
+                ap_groups=[g for g in groups if min(g.room, n - 1) == i],
+            )
+            rc.aps = sum(g.qty for g in rc.ap_groups)
+            out.rooms.append(rc)
+            out.sockets += rc.sockets
+            out.cameras += rc.cameras
+            out.vsw_extra += rc.vsw_extra
+            out.ajax += scale(r.ajax)
+            out.skud += scale(r.skud)
+            out.other += scale(r.other)
+    return out
 
 
 def ap_model_for(group: ApGroup, catalog: Catalog) -> str:
@@ -161,9 +184,59 @@ def apply_count_override(ctx: _Ctx, key: str, model: str, count: int) -> int:
 
 
 def _override_count(ctx: _Ctx, res: CategoryResult) -> None:
+    before = res.count
     res.count = apply_count_override(ctx, res.key, res.model, res.count)
+    if res.per_room is not None and res.count != before:
+        # a hand-typed total: the main room gets the extra switches, the last rooms lose them
+        per = list(res.per_room)
+        diff = res.count - before
+        if diff > 0:
+            per[0] += diff
+        for i in range(len(per) - 1, -1, -1):
+            if diff >= 0:
+                break
+            take = min(per[i], -diff)
+            per[i] -= take
+            diff += take
+        res.per_room = per
     if res.count and res.poe_load_w:
         res.poe_per_switch_w = res.poe_load_w / res.count
+
+
+def room_model(site: SiteInput, catalog: Catalog, key: str, room: int, default: str) -> str:
+    """The switch model of category ``key`` in telecom room ``room`` (the user's choice, if valid)."""
+    if room < len(site.rooms):
+        chosen = site.rooms[room].models.get(key, "")
+        dev = catalog.models.get(chosen)
+        if dev is not None and dev.kind == "switch":
+            return chosen
+    return default
+
+
+def _split_rooms(ctx: _Ctx, res: CategoryResult, endpoints: list[int], loads: list[float] | None, label: str) -> None:
+    """Switches per room: enough ports for the room's endpoints and enough PoE for its load."""
+    per_switch = res.endpoints_per_switch
+    res.room_models = [room_model(ctx.site, ctx.catalog, res.key, i, res.model) for i in range(len(endpoints))]
+    per = [ceil_div(n, per_switch) for n in endpoints]
+    before = sum(per)
+    if loads is not None and ctx.rules.poe_autoscale:
+        for i, load in enumerate(loads):
+            dev = ctx.catalog.models.get(res.room_models[i])
+            if dev and dev.poe and dev.poe.budget_w:
+                per[i] = max(per[i], ceil_div(load, dev.poe.budget_w))
+    res.per_room = per
+    res.count = sum(per)
+    if res.count > before:
+        ctx.check(
+            Severity.INFO,
+            "POE_AUTOSCALE",
+            "check.poe_autoscale",
+            "",
+            res.key,
+            cat=label,
+            before=before,
+            after=res.count,
+        )
 
 
 def _variant_note(ctx: _Ctx, dev: Device, premium: bool) -> str:
@@ -275,7 +348,17 @@ def size_wifi(ctx: _Ctx) -> CategoryResult:
                 premium=cat.premium,
             )
 
-    if dev.poe and dev.poe.budget_w and ctx.rules.poe_autoscale:
+    if ctx.counts.rooms:
+        loads = [
+            sum(
+                g.qty * ap.ap.power_w
+                for g in rc.ap_groups
+                if (ap := ctx.catalog.models.get(ap_model_for(g, ctx.catalog))) and ap.ap
+            )
+            for rc in ctx.counts.rooms
+        ]
+        _split_rooms(ctx, res, [rc.aps for rc in ctx.counts.rooms], loads, label)
+    elif dev.poe and dev.poe.budget_w and ctx.rules.poe_autoscale:
         needed = ceil_div(load, dev.poe.budget_w)
         if needed > res.count:
             ctx.check(
@@ -302,7 +385,11 @@ def size_access(ctx: _Ctx) -> CategoryResult:
     if ctx.counts.sockets <= 0:
         return res
     res.count = ceil_div(ctx.counts.sockets, cat.endpoints_per_switch)
+    if ctx.counts.rooms:
+        res.count = sum(ceil_div(rc.sockets, cat.endpoints_per_switch) for rc in ctx.counts.rooms)
     res.model, res.premium = pick_variant(cat, res.count, ctx)
+    if ctx.counts.rooms:
+        _split_rooms(ctx, res, [rc.sockets for rc in ctx.counts.rooms], None, ctx.t.pick(cat.label))
     _override_count(ctx, res)
     return res
 
@@ -314,17 +401,26 @@ def camera_watts(ctx: _Ctx) -> float:
 
 def size_cameras(ctx: _Ctx) -> CategoryResult:
     cat = ctx.catalog.categories["camera_switch"]
-    res = CategoryResult(
-        key="camera_switch", endpoints=ctx.counts.cameras, endpoints_per_switch=cat.endpoints_per_switch
-    )
-    if ctx.counts.cameras <= 0:
+    ports = ctx.counts.cameras + ctx.counts.vsw_extra
+    res = CategoryResult(key="camera_switch", endpoints=ports, endpoints_per_switch=cat.endpoints_per_switch)
+    if ports <= 0:
         return res
-    res.count = ceil_div(ctx.counts.cameras, cat.endpoints_per_switch)
+    res.count = ceil_div(ports, cat.endpoints_per_switch)
+    if ctx.counts.rooms:
+        res.count = sum(ceil_div(rc.cameras + rc.vsw_extra, cat.endpoints_per_switch) for rc in ctx.counts.rooms)
     res.model, res.premium = pick_variant(cat, res.count, ctx)
     res.poe_load_w = ctx.counts.cameras * camera_watts(ctx)
     dev = ctx.catalog.device(res.model)
     label = ctx.t.pick(cat.label)
-    if dev.poe and dev.poe.budget_w and ctx.rules.poe_autoscale:
+    if ctx.counts.rooms:
+        _split_rooms(
+            ctx,
+            res,
+            [rc.cameras + rc.vsw_extra for rc in ctx.counts.rooms],
+            [rc.cameras * camera_watts(ctx) for rc in ctx.counts.rooms],
+            label,
+        )
+    elif dev.poe and dev.poe.budget_w and ctx.rules.poe_autoscale:
         needed = ceil_div(res.poe_load_w, dev.poe.budget_w)
         if needed > res.count:
             ctx.check(
@@ -512,7 +608,7 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk", floor: FloorC
             tier_label=t.pick(tier.label),
         )
 
-    if counts.sockets == 0 and counts.cameras == 0 and counts.aps == 0:
+    if counts.sockets == 0 and counts.cameras == 0 and counts.aps == 0 and counts.vsw_extra == 0:
         ctx.check(Severity.INFO, "NO_INPUT", "check.no_input")
 
     categories = {
@@ -757,6 +853,9 @@ def _bom_equipment(
             )
         )
 
+    for res in categories.values():
+        _split_by_model(ctx, bom, res)
+
     if core.count:
         edge_total = sum(c.count for c in categories.values())
         if ctx.tier.core_redundant:
@@ -800,6 +899,24 @@ def _bom_equipment(
                 tags=tags,
             )
         )
+
+
+def _split_by_model(ctx: _Ctx, bom: list[BomLine], res: CategoryResult) -> None:
+    """One line per model when some telecom rooms use another switch model than the calculated one."""
+    if not res.models or set(res.models) == {res.model}:
+        return
+    idx = next((i for i, line in enumerate(bom) if line.group == res.key), None)
+    if idx is None:
+        return
+    base = bom.pop(idx)
+    for k, (model, n) in enumerate(sorted(res.models.items(), key=lambda kv: kv[0] != res.model)):
+        line = copy.deepcopy(base)
+        line.model, line.qty = model, n
+        if model != res.model:
+            line.reason = ctx.t.t("reason.room_model", model=model, auto=res.model)
+            line.details = []
+            line.tags = [tg for tg in line.tags if tg != "auto"] + ["manual"]
+        bom.insert(idx + k, line)
 
 
 def _bom_tier_lines(
@@ -969,7 +1086,7 @@ def _bom_custom(ctx: _Ctx, bom: list[BomLine]) -> None:
 
 def _bom_cabling(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
     t, pr, ps = ctx.t, ctx.catalog.passive, rack.passive
-    if ps.copper_links <= 0 and ps.fiber_links <= 0 and ps.housings_12 <= 0:
+    if ps.copper_links <= 0 and ps.fiber_links <= 0 and ps.housings_12 + ps.housings_24 <= 0:
         return
     avg = ctx.site.avg_cable_run_m or ctx.rules.avg_cable_run_m_default
     copper = t.t("cat.copper")
@@ -1024,7 +1141,7 @@ def _bom_cabling(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
     add("cabling", copper, pr.manager, ps.managers, t.t("reason.cable_managers"))
 
     fspec = ctx.catalog.passive.fiber.get(ps.fiber_type)
-    if (ps.fiber_links or ps.housings_12) and fspec is not None:
+    if (ps.fiber_links or ps.housing_models) and fspec is not None:
         fiber = t.t("cat.fiber")
         flabel = t.pick(fspec.label)
         choice = (
@@ -1032,22 +1149,32 @@ def _bom_cabling(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
             if ps.fiber_auto
             else t.t("detail.fiber_manual", type=flabel)
         )
-        add(
-            "fiber",
-            fiber,
-            fspec.cable,
-            ps.fiber_m,
-            t.t(
-                "reason.fiber_cable_links",
-                links=ps.fiber_links,
-                f=fspec.cable_fibers,
-                type=flabel,
-                slack=pr.fiber_slack_m,
-                m=ps.fiber_m,
-            ),
-            [choice],
-        )
-        add("fiber", fiber, fspec.housing_12, ps.housings_12, t.t("reason.odf", n=ps.housings_12))
+        sizes = {fspec.cable_for(n): n for n in sorted({*fspec.cables, fspec.cable_fibers})}
+        for cable, metres in ps.cable_models.items():
+            add(
+                "fiber",
+                fiber,
+                cable,
+                metres,
+                t.t(
+                    "reason.fiber_cable_links",
+                    links=ps.cable_links.get(cable, 0),
+                    f=sizes.get(cable, fspec.cable_fibers),
+                    type=flabel,
+                    slack=pr.fiber_slack_m,
+                    m=metres,
+                ),
+                [
+                    choice,
+                    t.t(
+                        "detail.fiber_sizes",
+                        fw=ctx.site.fiber_fw_fibers or pr.fiber_fw_fibers,
+                        rack=ctx.site.fiber_rack_fibers or pr.fiber_rack_fibers,
+                    ),
+                ],
+            )
+        for model, n in ps.housing_models.items():
+            add("fiber", fiber, model, n, t.t("reason.odf", n=n))
         add("fiber", fiber, pr.splice_protector, ps.splices, t.t("reason.splices", n=ps.splices))
         add("fiber", fiber, fspec.cord, ps.fiber_cords, t.t("reason.fiber_cords_odf", n=ps.fiber_cords))
 
@@ -1199,14 +1326,23 @@ def _counts_from_racks(
     Returns True when anything changed.
     """
     placed: dict[str, int] = {}
+    models: dict[str, dict[str, int]] = {}
     for plan in rack.plans:
         for it in plan.items:
             placed[it.group] = placed.get(it.group, 0) + 1
+            if not it.extra:
+                by = models.setdefault(it.group, {})
+                by[it.model] = by.get(it.model, 0) + 1
     changed = False
     for res in (*categories.values(), core):
         n = placed.get(res.key, 0)
         if n < res.count:
             res.count = n
+            changed = True
+        res.models = {m: k for m, k in models.get(res.key, {}).items() if m} if res.count else {}
+        if sum(res.models.values()) != res.count:
+            res.models = {res.model: res.count} if res.count else {}
+        if set(res.models) != {res.model} and res.models:
             changed = True
     if fw is not None and fw.fits:
         n = placed.get("firewall", 0)
@@ -1230,11 +1366,12 @@ def compute_power(
     )
     eq = 0.0
     for res in (*categories.values(), core):
-        if res.count and res.model in ctx.catalog.models:
-            dev = ctx.catalog.device(res.model)
-            w = (dev.power_base_w or 0) * res.count
-            eq += w
-            ps.breakdown.append((res.model, res.count, w))
+        for model, n in (res.models or {res.model: res.count}).items():
+            if n and model in ctx.catalog.models:
+                dev = ctx.catalog.device(model)
+                w = (dev.power_base_w or 0) * n
+                eq += w
+                ps.breakdown.append((model, n, w))
     if fw and fw.fits:
         dev = ctx.catalog.device(fw.model)
         w = (dev.power_max_w or dev.power_base_w or 0) * fw.count
@@ -1435,7 +1572,7 @@ def build_ip_plan(ctx: _Ctx, total_switches: int, fw: FirewallChoice | None) -> 
         "sockets": counts.sockets + ctx.other("sockets"),
         "wifi": wifi_hosts + ctx.other("wifi"),
         "guest": ctx.site.guest_clients,
-        "cameras": counts.cameras + ctx.other("cameras"),
+        "cameras": counts.cameras + counts.vsw_extra + ctx.other("cameras"),
         "iot": ctx.site.iot_devices,
         "mgmt": total_switches
         + fw_count

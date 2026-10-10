@@ -267,6 +267,8 @@ class FiberSpec(_Strict):
     cable: str
     """Cable sold per metre (12 fibres)."""
     cable_fibers: int = Field(default=12, gt=0)
+    cables: dict[int, str] = Field(default_factory=dict)
+    """Fibres -> cable of that size (6, 12, 24…); ``cable`` is used when a size is missing."""
     housing_12: str
     housing_24: str
     cord: str
@@ -274,6 +276,13 @@ class FiberSpec(_Strict):
     transceiver: str
     max_10g_m: int = Field(default=400, gt=0)
     """Longest 10G link this fibre supports with ``transceiver``."""
+
+    def cable_for(self, fibers: int) -> str:
+        return self.cables.get(fibers) or self.cable
+
+    def housing_for(self, fibers: int) -> str:
+        """A 24-fibre housing for more than 12 fibres, a 12-fibre one otherwise."""
+        return self.housing_24 if fibers > 12 and self.housing_24 else self.housing_12
 
 
 class PassiveRules(_Strict):
@@ -311,6 +320,10 @@ class PassiveRules(_Strict):
     fiber_spare_ratio: float = Field(default=1.0, ge=0, le=10)
     """Spare fibres on top of the ones in use (1.0 = twice as many)."""
     fiber_slack_m: int = Field(default=20, ge=0)
+    fiber_fw_fibers: int = Field(default=24, gt=0)
+    """Fibres of a cable that ends at the firewall cabinet."""
+    fiber_rack_fibers: int = Field(default=12, gt=0)
+    """Fibres of a cable between two other cabinets (12 or 6)."""
     splice_protector: str = "HSP-45S100-1"
     pdu: str = "PDU-8-C13"
     pdu_outlets: int = Field(default=8, gt=0)
@@ -378,6 +391,9 @@ class Catalog(_Strict):
     # ---- convenience -------------------------------------------------------------------
     def device(self, model: str) -> Device:
         return self.models[model]
+
+    def switches(self) -> dict[str, Device]:
+        return {k: v for k, v in self.models.items() if v.kind == "switch"}
 
     def aps(self) -> dict[str, Device]:
         return {k: v for k, v in self.models.items() if v.kind == "ap"}

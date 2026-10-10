@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -162,6 +163,8 @@ def plan_passive(
     # ---- closets ------------------------------------------------------------------------
     run = ctx.site.max_cable_run_m
     n_closets = ctx.site.closets or (max(1, math.ceil(run / r.copper_max_m)) if run else 1)
+    if ctx.site.per_room:
+        n_closets = ctx.site.room_count()
     rs.idf_count = n_closets
     closets = [_Closet(i) for i in range(n_closets)]
     if n_closets > 1:
@@ -179,6 +182,15 @@ def plan_passive(
             continue
         ports = cat.categories[key].endpoints_per_switch if key in cat.categories else pr.panel_ports
         panels = pr.panels_per_switch.get(key, _ceil_div(ports, pr.panel_ports))
+        if res.per_room is not None:
+            # every room's switches stand in its own cabinets (numbered on, room after room)
+            n = 0
+            for ci, count in enumerate(res.per_room[:n_closets]):
+                model = res.room_models[ci] if ci < len(res.room_models) else res.model
+                for _ in range(count):
+                    n += 1
+                    closets[ci].switches.append(_Switch(f"{key}:{n}", key, model, units(model), panels))
+            continue
         for i in range(res.count):
             ci = min(range(n_closets), key=lambda k: (load[k], k))
             load[ci] += 1
@@ -331,8 +343,21 @@ def plan_passive(
     )
     plans.sort(key=lambda p: p.room)  # a room's cabinets side by side (stable: keeps their order)
     links: list[tuple[str, str]] = []
-    if odf_model:
-        links, problems = link_cabinets(plans, ctx.site.layout, fctx, odf_model, odf_u, pr.manager, t)
+    fibers: dict[tuple[str, str], int] = {}
+    if odf_model and fspec is not None:
+        fw_fibers = ctx.site.fiber_fw_fibers or pr.fiber_fw_fibers
+        rack_fibers = ctx.site.fiber_rack_fibers or pr.fiber_rack_fibers
+        links, problems, fibers = link_cabinets(
+            plans,
+            ctx.site.layout,
+            fctx,
+            fspec.housing_for,
+            odf_u,
+            pr.manager,
+            t,
+            fw_fibers=fw_fibers,
+            rack_fibers=rack_fibers,
+        )
         rs.layout_problems += problems
     if not ctx.site.layout.is_empty:
         rs.layout_problems += top_up_pdus(plans, feeds, pr.pdu_outlets, pr.pdu, set(ctx.site.layout.hidden), t)
@@ -349,7 +374,11 @@ def plan_passive(
             elif it.group == "manager" and it.model:
                 ps.managers += 1
             elif it.group == "fiber" and it.model:
-                ps.housings_12 += 1
+                ps.housing_models[it.model] = ps.housing_models.get(it.model, 0) + 1
+                if fspec is not None and it.model == fspec.housing_24:
+                    ps.housings_24 += 1
+                else:
+                    ps.housings_12 += 1
 
     # ---- fibre: one 12-fibre cable per link, counted on the side that uplinks -----------
     if fspec is not None:
@@ -366,18 +395,27 @@ def plan_passive(
                     length = pr.fiber_cabinet_m
                 else:
                     length = ps.backbone_m[room - 1] if 0 < room <= len(ps.backbone_m) else r.copper_max_m
+            n = fibers.get((child, parent), fspec.cable_fibers)
+            cable = fspec.cable_for(n)
             ps.fiber_links += 1
             ps.fiber_cables += 1
-            ps.fiber_cores += fspec.cable_fibers
+            ps.fiber_cores += n
             ps.fiber_m += length + pr.fiber_slack_m
-        ps.fiber_ends = ps.housings_12
-        ps.splices = ps.housings_12 * fspec.cable_fibers
-        ps.fiber_cords = ps.housings_12
+            ps.cable_models[cable] = ps.cable_models.get(cable, 0) + length + pr.fiber_slack_m
+            ps.cable_links[cable] = ps.cable_links.get(cable, 0) + 1
+        housings = ps.housings_12 + ps.housings_24
+        ps.fiber_ends = housings
+        # every fibre of a cable is spliced at each of its ends (a hand-added ODF: a 12-fibre one)
+        ends = {f"odf:{a}:{b}": n for (a, b), n in fibers.items()} | {f"odf:{b}:{a}": n for (a, b), n in fibers.items()}
+        ps.splices = sum(
+            ends.get(it.id, fspec.cable_fibers) for p in plans for it in p.items if it.group == "fiber" and it.model
+        )
+        ps.fiber_cords = housings
 
     # ---- copper -------------------------------------------------------------------------
     counts = ctx.counts
     ps.sockets = counts.sockets
-    ps.device_links = counts.cameras + counts.aps
+    ps.device_links = counts.cameras + counts.vsw_extra + counts.aps
     ps.copper_links = ps.sockets + ps.device_links
     avg = ctx.site.avg_cable_run_m or r.avg_cable_run_m_default
     ps.cable_m = ps.copper_links * (avg + pr.cable_slack_m)
@@ -466,26 +504,38 @@ def link_cabinets(
     plans: list[RackPlan],
     layout: RackLayout,
     fctx: FloorContext | None,
-    model: str,
+    housing: Callable[[int], str],
     height: int,
     manager_model: str,
     t: Translator,
-) -> tuple[list[tuple[str, str]], list[str]]:
+    fw_fibers: int = 24,
+    rack_fibers: int = 12,
+) -> tuple[list[tuple[str, str]], list[str], dict[tuple[str, str], int]]:
     """Put an ODF (+ organizer) at both ends of every fibre link of the final cabinets.
 
-    Automatic ODFs whose link no longer exists (a cabinet was removed or emptied) are dropped;
-    missing ones go to the highest free units. ODFs the user deleted stay deleted. Returns the
-    (child, parent) links and the placement problems.
+    A link that ends at the firewall's cabinet (or goes to the firewall floor) is a
+    ``fw_fibers`` cable, any other one a ``rack_fibers`` cable; ``housing(fibres)`` gives the
+    ODF for it. Automatic ODFs whose link no longer exists (a cabinet was removed or emptied)
+    are dropped; missing ones go to the highest free units. ODFs the user deleted stay deleted.
+    Returns the (child, parent) links, the placement problems and the fibres of every link.
     """
     problems: list[str] = []
     cabinets = [(p.key, p.room, any(it.group in POWERED_GROUPS for it in p.items)) for p in plans]
     pairs = cabinet_link_pairs(cabinets, fctx)
     by_key = {p.key: p for p in plans}
+    fw_racks = {p.key for p in plans if any(it.group == "firewall" for it in p.items)}
+    fibers = {
+        (a, b): fw_fibers if (b in ("fw",) or b.startswith("floor") or a in fw_racks or b in fw_racks) else rack_fibers
+        for a, b in pairs
+    }
     ends: list[tuple[str, str]] = []
+    end_fibers: dict[tuple[str, str], int] = {}
     for a, b in pairs:
         ends.append((a, b))
+        end_fibers[(a, b)] = fibers[(a, b)]
         if b in by_key:
             ends.append((b, a))
+            end_fibers[(b, a)] = fibers[(a, b)]
     want_ids = {f"odf:{k}:{peer}" for k, peer in ends} | {f"org:odf:{k}:{peer}" for k, peer in ends}
     for plan in plans:
         plan.items = [
@@ -507,8 +557,10 @@ def link_cabinets(
             to = tags.get(peer, peer)
         odf_id, org_id = f"odf:{key}:{peer}", f"org:odf:{key}:{peer}"
         label = t.t("rack.odf", to=to)
+        model = housing(end_fibers[(key, peer)])
         for it in (it for p in plans for it in p.items if it.id == odf_id):
             it.label = label
+            it.model = model
         for item_id, h, group, m, lab in (
             (odf_id, height, "fiber", model, label),
             (org_id, 1, "manager", manager_model, ""),
@@ -520,7 +572,7 @@ def link_cabinets(
                 problems.append(t.t("check.rack_no_space", item=lab or t.t("rack.manager")))
                 continue
             plan.items.append(RackItem(u=slot, height=h, label=lab, group=group, model=m, id=item_id))
-    return pairs, problems
+    return pairs, problems, fibers
 
 
 def room_names(n: int, layout: RackLayout, t: Translator) -> list[str]:
@@ -856,3 +908,19 @@ def drop_room(layout: dict[str, Any], room: int, cabinets: set[str]) -> None:
         if j != room:
             names[str(j - 1 if j > room else j)] = v
     layout["room_names"] = names
+
+
+def drop_room_inputs(site: dict[str, Any], room: int) -> None:
+    """Edit a raw ``SiteInput`` dict after removing telecom room ``room`` (≥ 1): its endpoints and
+    Wi-Fi zones go away, the rooms after it move up by one."""
+    rooms = site.get("rooms") or []
+    if room < len(rooms):
+        rooms.pop(room)
+    site["rooms"] = rooms
+    groups = []
+    for g in site.get("ap_groups") or []:
+        r = g.get("room") or 0
+        if r == room:
+            continue
+        groups.append({**g, "room": r - 1 if r > room else r})
+    site["ap_groups"] = groups

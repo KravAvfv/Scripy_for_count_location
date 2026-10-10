@@ -62,11 +62,15 @@ def test_xlsx_spec_matches_template(tmp_path: Path, catalog: Catalog) -> None:
     assert (
         ws.cell(row=row, column=6).value == f"=D{row}*E{row}" and ws.cell(row=row, column=8).value == f"=D{row}*G{row}"
     )
-    unused = next(r for name, r in rows.items() if name and name.startswith("FS-648F —"))
-    assert ws.cell(row=unused, column=4).value == 0  # every template item is listed, 0 when unused
-    only = load_workbook(
-        export_xlsx(r, tmp_path / "o.xlsx", catalog=catalog, options={"sheets": ["spec"], "only_used": True})
+    # unused template items are left out: a zero row is only noise
+    assert not any(name and name.startswith("FS-648F —") for name in rows)
+    full = load_workbook(
+        export_xlsx(r, tmp_path / "f.xlsx", catalog=catalog, options={"sheets": ["spec"], "only_used": False})
     )["Слаботрумка"]
+    names = {full.cell(row=i, column=2).value: i for i in range(5, full.max_row + 1)}
+    unused = next(i for name, i in names.items() if name and name.startswith("FS-648F —"))
+    assert full.cell(row=unused, column=4).value == 0
+    only = ws
     assert all(
         (only.cell(row=i, column=4).value or 0) > 0
         for i in range(5, only.max_row + 1)

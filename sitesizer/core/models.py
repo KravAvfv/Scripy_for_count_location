@@ -29,6 +29,33 @@ class ApGroup(BaseModel):
     clients_per_ap: int | None = Field(default=None, ge=0, le=1000)
     name: str = ""
     """Optional free-text zone name (e.g. "Склад, ряд A")."""
+    room: int = Field(default=0, ge=0, le=49)
+    """Telecom room whose Wi-Fi switch serves the zone's APs (0 = the main one)."""
+
+
+VSW_EXTRA_KEYS = ("ajax", "skud", "other")
+"""Devices besides cameras that take a port of a video (VSW) switch."""
+
+
+class RoomInput(BaseModel):
+    """Endpoints served by one telecom room (closet) and the switch models chosen for it."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    sockets: int = Field(default=0, ge=0, le=1_000_000)
+    cameras: int = Field(default=0, ge=0, le=1_000_000)
+    ajax: int = Field(default=0, ge=0, le=100_000)
+    """Ajax hubs / alarm panels (a port of the video switch each)."""
+    skud: int = Field(default=0, ge=0, le=100_000)
+    """Access control (СКУД) controllers (a port of the video switch each)."""
+    other: int = Field(default=0, ge=0, le=100_000)
+    """Any other devices on the video switch."""
+    models: dict[str, str] = Field(default_factory=dict)
+    """Switch category (``access_switch``…) -> model used in this room instead of the calculated one."""
+
+    @property
+    def vsw_extra(self) -> int:
+        return self.ajax + self.skud + self.other
 
 
 class CustomSegment(BaseModel):
@@ -181,7 +208,10 @@ class SiteInput(BaseModel):
     """Floor number of this entry: cabinet tags and device names (``BO123-5B-ASW01``) start with it."""
     mode: Mode = "quick"
     sockets: int = Field(default=0, ge=0, le=1_000_000)
+    """Sockets of the main telecom room on top of ``rooms[0]`` (older files keep them here)."""
     cameras: int = Field(default=0, ge=0, le=1_000_000)
+    rooms: list[RoomInput] = Field(default_factory=list)
+    """Endpoints per telecom room; empty = everything is entered for the floor (older files)."""
     ap_groups: list[ApGroup] = Field(default_factory=list)
     tier: int = Field(default=3, ge=1, le=4)
     aggregation: Aggregation = "auto"
@@ -205,6 +235,10 @@ class SiteInput(BaseModel):
     fiber_type: FiberChoice = "auto"
     fiber_backbone_m: int | None = Field(default=None, ge=1, le=100_000)
     """Average fibre run from the main rack to each remote closet; ``None`` = estimate."""
+    fiber_fw_fibers: int | None = Field(default=None, ge=1, le=288)
+    """Fibres of a cable towards the firewall cabinet; ``None`` = catalog default (24)."""
+    fiber_rack_fibers: int | None = Field(default=None, ge=1, le=288)
+    """Fibres of a cable between other cabinets; ``None`` = catalog default (12)."""
     guest_clients: int = Field(default=0, ge=0)
     iot_devices: int = Field(default=0, ge=0)
     addons: dict[str, bool | None] = Field(default_factory=dict)
@@ -230,6 +264,35 @@ class SiteInput(BaseModel):
     @property
     def total_aps_raw(self) -> int:
         return sum(g.qty for g in self.ap_groups)
+
+    @property
+    def per_room(self) -> bool:
+        """Endpoints are entered per telecom room (switches stand in the room that serves them)."""
+        return bool(self.rooms) or self.closets > 1 or any(g.room for g in self.ap_groups)
+
+    def room_count(self) -> int:
+        """Telecom rooms the user works with (at least one); 0 closets = as many as entered."""
+        used = max([len(self.rooms), *(g.room + 1 for g in self.ap_groups)], default=1)
+        return max(1, self.closets or used)
+
+    def room(self, i: int) -> RoomInput:
+        """Endpoints of room ``i``; the floor-level sockets/cameras belong to the main room."""
+        r = self.rooms[i] if i < len(self.rooms) else RoomInput()
+        if i == 0 and (self.sockets or self.cameras):
+            r = r.model_copy(update={"sockets": r.sockets + self.sockets, "cameras": r.cameras + self.cameras})
+        return r
+
+    @property
+    def total_sockets(self) -> int:
+        return self.sockets + sum(r.sockets for r in self.rooms)
+
+    @property
+    def total_cameras(self) -> int:
+        return self.cameras + sum(r.cameras for r in self.rooms)
+
+    @property
+    def total_vsw_extra(self) -> int:
+        return sum(r.vsw_extra for r in self.rooms)
 
 
 class Severity(StrEnum):
@@ -320,6 +383,12 @@ class CategoryResult:
     model: str = ""
     endpoints: int = 0
     endpoints_per_switch: int = 0
+    per_room: list[int] | None = None
+    """Switches per telecom room (``None`` = spread over the rooms evenly, older behaviour)."""
+    room_models: list[str] = field(default_factory=list)
+    """Model per telecom room (empty entries = ``model``)."""
+    models: dict[str, int] = field(default_factory=dict)
+    """Model -> switches of that model actually in the cabinets (filled after the layout)."""
     premium: bool = False
     upgraded_for_bt: bool = False
     poe_load_w: float = 0.0
@@ -445,6 +514,12 @@ class PassiveSummary:
     housings_12: int = 0
     """Optical patch panels (one at each end of a fibre link)."""
     housings_24: int = 0
+    housing_models: dict[str, int] = field(default_factory=dict)
+    """Optical patch panel model -> how many stand in the cabinets."""
+    cable_models: dict[str, int] = field(default_factory=dict)
+    """Fibre cable model -> metres."""
+    cable_links: dict[str, int] = field(default_factory=dict)
+    """Fibre cable model -> links."""
     fiber_ends: int = 0
     """Fibre link ends in this floor's cabinets (one transceiver and one cord each)."""
     fiber_cords: int = 0
@@ -522,6 +597,22 @@ class EffectiveCounts:
     ap_groups: list[ApGroup] = field(default_factory=list)
     wifi_clients: int | None = None
     reserve_factor: float = 1.0
+    vsw_extra: int = 0
+    """Ajax, СКУД and other devices on the video switches."""
+    ajax: int = 0
+    skud: int = 0
+    other: int = 0
+    rooms: list[RoomCounts] = field(default_factory=list)
+    """Per telecom room (only when the endpoints are entered per room)."""
+
+
+@dataclass
+class RoomCounts:
+    sockets: int = 0
+    cameras: int = 0
+    vsw_extra: int = 0
+    aps: int = 0
+    ap_groups: list[ApGroup] = field(default_factory=list)
 
 
 @dataclass

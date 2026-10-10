@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.models import SiteResult
-from ...core.passive import POWERED_GROUPS, drop_room
+from ...core.passive import POWERED_GROUPS, drop_room, drop_room_inputs
 from ...exporters.diagram import style_from_tokens
 from ...exporters.rack import RackDiagram
 from ...i18n import current, tr
@@ -182,6 +182,7 @@ class RacksView(QWidget):
         self.editor.movedMany.connect(self.move_items)
         self.editor.deleteManyRequested.connect(self.delete_items)
         self.editor.copyRequested.connect(lambda ids: self.copy_names(ids or None))
+        self.editor.swapped.connect(self.swap_items)
         self.editor.selectionChanged.connect(lambda *_: self._load_side())
         self.editor.contextRequested.connect(self._context)
         self.editor.deleteRequested.connect(self.delete_item)
@@ -557,6 +558,7 @@ class RacksView(QWidget):
         def mutate(d: dict[str, Any]) -> None:
             d["closets"] = rooms - 1
             drop_room(d.setdefault("layout", {}), room, cabinets)
+            drop_room_inputs(d, room)
 
         self.view_room = None if self.view_room is None else room - 1
         self.editor.sel_rack, self.editor.sel_item = "", ""
@@ -605,6 +607,12 @@ class RacksView(QWidget):
             self.editor.sel_rack = moves[0][1]
             self.editor.sel_items = [m[0] for m in moves]
         self._layout(tr("rk.moved"), fn)
+
+    def swap_items(self, moves: list[tuple[str, str, int]]) -> None:
+        """Two devices trade places (one dropped onto the other): one undoable edit."""
+        self.move_items(moves)
+        self.editor.sel_rack, self.editor.sel_item = moves[0][1], moves[0][0]
+        self.editor.sel_items = [moves[0][0]]
 
     def copy_names(self, ids: list[str] | None = None) -> None:
         """Names to the clipboard, one per line: the given items, or every device in the cabinets shown."""

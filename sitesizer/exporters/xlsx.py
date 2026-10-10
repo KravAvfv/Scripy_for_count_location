@@ -155,7 +155,7 @@ def export_xlsx(
 
     ``options``: ``sheets`` (subset of :data:`SHEETS`), ``diagram`` (the network diagram under the
     cabinets, on by default), ``only_used`` (drop zero rows from the
-    specification), ``project``, ``customer``, ``author``, ``company``, ``discount_pct``, ``vat_pct``.
+    specification, on by default), ``project``, ``customer``, ``author``, ``company``, ``discount_pct``, ``vat_pct``.
     """
     from ..core.catalog import load_default_catalog
 
@@ -232,7 +232,7 @@ def _spec_sheet(ws: Worksheet, result: SiteResult, catalog: Catalog, t: Translat
     _header(ws, row, cols)
     row += 1
     first = row
-    for section, rows in spec_sections(result, catalog, t, bool(opts.get("only_used"))):
+    for section, rows in spec_sections(result, catalog, t, bool(opts.get("only_used", True))):
         cell = ws.cell(row=row, column=1, value=t.t(f"section.{section}"))
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=len(cols))
         cell.font = Font(name=FONT, size=10, bold=True, italic=True)

@@ -35,6 +35,9 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QAbstractSpinBox,
+    QApplication,
+    QComboBox,
     QDoubleSpinBox,
     QFrame,
     QHBoxLayout,
@@ -226,13 +229,39 @@ class InfoTip(QLabel):
 
 
 class _NoWheelMixin:
-    """Ignore the mouse wheel unless the field has focus (no accidental edits while scrolling)."""
+    """The mouse wheel never changes a number: it scrolls the page (type the value or use ± / arrows)."""
 
     def wheelEvent(self, event: QWheelEvent) -> None:
-        if self.hasFocus():  # type: ignore[attr-defined]
-            super().wheelEvent(event)  # type: ignore[misc]
-        else:
-            event.ignore()
+        event.ignore()
+
+
+class WheelGuard(QObject):
+    """Application-wide: the wheel over a number field or a closed drop-down scrolls the page instead.
+
+    Qt changes the value of a spin box or a combo box under the cursor, which silently edits
+    inputs while the user scrolls a long form.
+    """
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Wheel and isinstance(obj, (QAbstractSpinBox, QComboBox)):
+            parent = obj.parentWidget()
+            while parent is not None and isinstance(parent, (QAbstractSpinBox, QComboBox)):
+                parent = parent.parentWidget()
+            if parent is not None:
+                QApplication.sendEvent(parent, event)
+            return True
+        return False
+
+
+_wheel_guard: WheelGuard | None = None
+
+
+def install_wheel_guard() -> None:
+    global _wheel_guard
+    app = QApplication.instance()
+    if app is not None and _wheel_guard is None:
+        _wheel_guard = WheelGuard(app)
+        app.installEventFilter(_wheel_guard)
 
 
 class SpinBox(_NoWheelMixin, QSpinBox):

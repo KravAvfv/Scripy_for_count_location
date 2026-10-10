@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.models import ADDON_KEYS, SiteResult
+from ...core.passive import drop_room, drop_room_inputs
 from ...core.presets import load_presets
 from ...core.sizing import addon_enabled, ap_model_for
 from ...exporters.diagram import SiteDiagram, style_from_tokens
@@ -49,6 +50,7 @@ from ..widgets.controls import (
 )
 from ..widgets.diagram_view import DiagramPreview
 from ..widgets.feedback import ChecksPanel
+from ..widgets.overlays import confirm
 
 FORTIOS_CHOICES = ["7.2.11", "7.4.8", "7.6.0", "7.6.4", "8.0.0"]
 
@@ -63,6 +65,7 @@ class ZoneRow(QFrame):
         super().__init__(parent)
         self.index = index
         self.state = state
+        self._loading = False
         self.setObjectName("SoftCard")
         grid = QGridLayout(self)
         grid.setContentsMargins(px(10), px(8), px(8), px(8))
@@ -94,12 +97,22 @@ class ZoneRow(QFrame):
         self.name = QLineEdit()
         self.name.setPlaceholderText(tr("ui.zone_name_ph"))
         self.name.setMaximumWidth(px(220))
+        self.room = QComboBox()
+        self.room.setAccessibleName(tr("ui.zone_room"))
+        self.room.setToolTip(tr("ui.zone_room_tip"))
+        self.room_label = label(tr("ui.zone_room"), "caption")
+        room_row = QHBoxLayout()
+        room_row.setSpacing(px(8))
+        room_row.addWidget(self.room_label)
+        room_row.addWidget(self.room, 1)
         grid.addWidget(self.zone, 0, 0)
         grid.addWidget(self.qty, 0, 1)
         grid.addWidget(self.remove, 0, 2)
         grid.addWidget(self.model, 1, 0)
         grid.addWidget(self.name, 1, 1, 1, 2)
+        grid.addLayout(room_row, 2, 0, 1, 3)
         grid.setColumnStretch(0, 1)
+        self.room.currentIndexChanged.connect(self._emit)
         self.zone.currentIndexChanged.connect(self._emit)
         self.model.currentIndexChanged.connect(self._emit)
         self.qty.valueChanged.connect(self._emit_qty)
@@ -117,9 +130,25 @@ class ZoneRow(QFrame):
         j = self.model.findData(group.get("model"))
         self.model.setCurrentIndex(j if j > 0 else 0)
         self.qty.setValue(int(group.get("qty", 0)))
+        self.room.setCurrentIndex(min(int(group.get("room") or 0), max(0, self.room.count() - 1)))
         if not self.name.hasFocus():
             self.name.setText(group.get("name", ""))
         self._loading = False
+
+    def set_rooms(self, titles: list[str]) -> None:
+        """Telecom rooms the zone can be served from (hidden with a single room)."""
+        current = [self.room.itemText(i) for i in range(self.room.count())]
+        if current != titles:
+            was = self._loading
+            self._loading = True
+            keep = self.room.currentIndex()
+            self.room.clear()
+            self.room.addItems(titles)
+            self.room.setCurrentIndex(min(max(keep, 0), len(titles) - 1))
+            self._loading = was
+        many = len(titles) > 1
+        self.room.setVisible(many)
+        self.room_label.setVisible(many)
 
     def data(self) -> dict[str, Any]:
         return {
@@ -127,6 +156,7 @@ class ZoneRow(QFrame):
             "model": self.model.currentData(),
             "qty": self.qty.value(),
             "name": self.name.text().strip(),
+            "room": max(0, self.room.currentIndex()),
         }
 
     def _emit(self) -> None:
@@ -136,6 +166,154 @@ class ZoneRow(QFrame):
     def _emit_qty(self, _v: int) -> None:
         if not self._loading:
             self.changed.emit(self.index, self.data())
+
+
+ROOM_FIELDS = ("sockets", "cameras", "ajax", "skud", "other")
+SWITCH_KEYS = ("access_switch", "camera_switch", "wifi_switch")
+
+
+class RoomBlock(QFrame):
+    """One telecom room: its endpoints and the switch models standing in it."""
+
+    changed = Signal(int, str, int)
+    """(room, field, value)"""
+    modelChanged = Signal(int, str, object)
+    """(room, switch category, model or None = calculated)"""
+    removed = Signal(int)
+
+    def __init__(self, index: int, state: AppState, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.index = index
+        self.state = state
+        self.setObjectName("SoftCard")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(px(14), px(10), px(10), px(12))
+        lay.setSpacing(px(8))
+        head = QHBoxLayout()
+        head.setSpacing(px(8))
+        self.badge = QLabel()
+        self.badge.setObjectName("RoomBadge")
+        self.badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.badge.setFixedSize(px(24), px(24))
+        self.title = label("", "section")
+        self.sub = label("", "faint")
+        head.addWidget(self.badge)
+        head.addWidget(self.title)
+        head.addWidget(self.sub, 1)
+        self.remove = icon_button("trash-2", tr("ui.room_remove"), size=16)
+        self.remove.clicked.connect(lambda: self.removed.emit(self.index))
+        head.addWidget(self.remove)
+        lay.addLayout(head)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(px(14))
+        grid.setVerticalSpacing(px(6))
+        self.fields: dict[str, Stepper] = {}
+        spots = {
+            "sockets": (0, 0),
+            "cameras": (0, 1),
+            "ajax": (1, 0),
+            "skud": (1, 1),
+            "other": (2, 0),
+        }
+        for key in ROOM_FIELDS:
+            st = Stepper(0, 1_000_000, width=124)
+            st.setToolTip(tr(f"ui.room_{key}_tip"))
+            st.valueChanged.connect(lambda v, k=key: self.changed.emit(self.index, k, int(v)))
+            self.fields[key] = st
+            row, col = spots[key]
+            cell = QHBoxLayout()
+            cell.setSpacing(px(8))
+            cell.addWidget(label(tr(f"ui.room_{key}")), 1)
+            cell.addWidget(st)
+            grid.addLayout(cell, row, col)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        lay.addLayout(grid)
+        self.vsw_note = label(tr("ui.room_vsw_note"), "faint", wrap=True)
+        lay.addWidget(self.vsw_note)
+
+        self.sw_title = label(tr("ui.room_switches"), "caption")
+        lay.addWidget(self.sw_title)
+        self.sw_box = QVBoxLayout()
+        self.sw_box.setSpacing(px(4))
+        lay.addLayout(self.sw_box)
+        self.sw_empty = label(tr("ui.room_switches_none"), "faint")
+        lay.addWidget(self.sw_empty)
+        self.combos: dict[str, QComboBox] = {}
+        self.counts: dict[str, QLabel] = {}
+        self.rows: dict[str, QWidget] = {}
+        t = current()
+        switches = state.catalog.switches()
+        tk = tokens()
+        for key in SWITCH_KEYS:
+            row = QWidget()
+            rl = QHBoxLayout(row)
+            rl.setContentsMargins(0, 0, 0, 0)
+            rl.setSpacing(px(8))
+            dot = QLabel()
+            dot.setFixedSize(px(8), px(8))
+            dot.setStyleSheet(f"background: {tk.categories.get(key, tk.text_faint)}; border-radius: {px(4)}px;")
+            rl.addWidget(dot)
+            rl.addWidget(
+                label(t.pick(state.catalog.categories[key].short or state.catalog.categories[key].label), "muted")
+            )
+            combo = QComboBox()
+            combo.setAccessibleName(tr("ui.room_model"))
+            combo.setToolTip(tr("ui.room_model_tip"))
+            combo.addItem("", None)
+            for model, dev in switches.items():
+                combo.addItem(f"{model} — {t.pick(dev.name)}", model)
+            combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            combo.setMinimumContentsLength(12)
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.view().setMinimumWidth(px(460))
+            combo.currentIndexChanged.connect(lambda _i, k=key: self._emit_model(k))
+            rl.addWidget(combo, 1)
+            n = label("", None)
+            n.setMinimumWidth(px(34))
+            n.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            n.setStyleSheet("font-weight: 600;")
+            rl.addWidget(n)
+            self.sw_box.addWidget(row)
+            self.combos[key], self.counts[key], self.rows[key] = combo, n, row
+        self._loading = False
+
+    def load(self, title: str, values: dict[str, int], models: dict[str, str], show_title: bool) -> None:
+        self._loading = True
+        self.badge.setText(str(self.index + 1))
+        self.badge.setVisible(show_title)
+        self.title.setText(title)
+        self.title.setVisible(show_title)
+        self.remove.setVisible(show_title and self.index > 0)
+        for key, st in self.fields.items():
+            st.setValue(int(values.get(key, 0)))
+        for key, combo in self.combos.items():
+            j = combo.findData(models.get(key))
+            combo.setCurrentIndex(j if j > 0 else 0)
+        self._loading = False
+
+    def set_switches(self, auto: dict[str, str], placed: dict[str, dict[str, int]], summary: str) -> None:
+        """``auto``: calculated model per category; ``placed``: category -> {model: switches in this room}."""
+        self._loading = True
+        any_row = False
+        for key in SWITCH_KEYS:
+            here = placed.get(key, {})
+            combo = self.combos[key]
+            combo.setItemText(0, tr("ui.room_model_auto", model=auto.get(key) or "—"))
+            visible = bool(here) or combo.currentIndex() > 0
+            self.rows[key].setVisible(visible)
+            any_row = any_row or visible
+            self.counts[key].setText(f"× {sum(here.values())}" if here else "× 0")
+            extra = [m for m in here if m != (combo.currentData() or auto.get(key))]
+            self.counts[key].setToolTip(", ".join(f"{m} × {n}" for m, n in here.items()) if extra else "")
+        self.sw_empty.setVisible(not any_row)
+        self.sub.setText(summary)
+        self._loading = False
+
+    def _emit_model(self, key: str) -> None:
+        if not self._loading:
+            self.modelChanged.emit(self.index, key, self.combos[key].currentData())
 
 
 class MetricTile(QFrame):
@@ -275,17 +453,24 @@ class LocationView(QWidget):
         f.addWidget(ident)
         self.ident_card = ident
 
-        # --- endpoints ------------------------------------------------------------------
+        # --- endpoints, per telecom room ----------------------------------------------
         ep = Card(tr("ui.endpoints"), tr("ui.endpoints_sub"))
-        self.sockets = Stepper(0, 1_000_000, width=140)
-        self.sockets.valueChanged.connect(lambda v: self.state.set_field("sockets", v, tr("ui.sockets")))
-        self.sockets_row = FieldRow(tr("ui.sockets"), self.sockets, "", tr("help.sockets"))
-        self.cameras = Stepper(0, 1_000_000, width=140)
-        self.cameras.valueChanged.connect(lambda v: self.state.set_field("cameras", v, tr("ui.cameras")))
-        self.cameras_row = FieldRow(tr("ui.cameras"), self.cameras, "", tr("help.cameras"))
-        ep.add(self.sockets_row)
-        ep.add(self.cameras_row)
+        rooms_head = QHBoxLayout()
+        rooms_head.setSpacing(px(8))
+        self.room_count = Stepper(0, 50, width=124)
+        self.room_count.field.setSpecialValueText(tr("ui.rack_size_auto"))
+        self.room_count.setToolTip(tr("rk.closets_tip"))
+        self.room_count.valueChanged.connect(self._on_room_count)
+        assert ep.header is not None
+        rooms_head.addWidget(label(tr("ui.rooms"), "caption"))
+        rooms_head.addWidget(self.room_count)
+        ep.header.addLayout(rooms_head)
+        self.rooms_box = QVBoxLayout()
+        self.rooms_box.setSpacing(px(10))
+        ep.add(self.rooms_box)
+        self._room_blocks: list[RoomBlock] = []
         f.addWidget(ep)
+        self.endpoints_card = ep
 
         # --- Wi-Fi zones ----------------------------------------------------------------
         self.wifi_card = Card(tr("ui.wifi"), tr("ui.wifi_sub"))
@@ -373,10 +558,6 @@ class LocationView(QWidget):
             lambda v: self.state.set_field("rack_size_u", int(v), tr("ui.rack_size"), merge=False)
         )
         arch.add(FieldRow(tr("ui.rack_size"), self.rack_size, "", tr("help.rack_size")))
-        self.closets = Stepper(0, 50, width=140)
-        self.closets.field.setSpecialValueText(tr("ui.rack_size_auto"))
-        self.closets.valueChanged.connect(lambda v: self.state.set_field("closets", int(v), tr("rk.closets")))
-        arch.add(FieldRow(tr("rk.closets"), self.closets, tr("rk.closets_caption"), tr("rk.closets_tip")))
         f.addWidget(arch)
 
         # --- mode -----------------------------------------------------------------------
@@ -447,6 +628,16 @@ class LocationView(QWidget):
             lambda v: self.state.set_field("fiber_type", v, tr("ui.fiber_type"), merge=False)
         )
         e.add(FieldRow(tr("ui.fiber_type"), self.fiber, tr("ui.fiber_caption"), tr("help.fiber")))
+        self.fiber_fw = SegmentedControl([("12", "12"), ("24", "24")], ["", ""], expand=False, compact=True)
+        self.fiber_fw.valueChanged.connect(
+            lambda v: self.state.set_field("fiber_fw_fibers", int(v), tr("ui.fiber_fw"), merge=False)
+        )
+        e.add(FieldRow(tr("ui.fiber_fw"), self.fiber_fw, tr("ui.fiber_fw_caption"), tr("help.fiber")))
+        self.fiber_rack = SegmentedControl([("6", "6"), ("12", "12")], ["", ""], expand=False, compact=True)
+        self.fiber_rack.valueChanged.connect(
+            lambda v: self.state.set_field("fiber_rack_fibers", int(v), tr("ui.fiber_rack"), merge=False)
+        )
+        e.add(FieldRow(tr("ui.fiber_rack"), self.fiber_rack, tr("ui.fiber_rack_caption"), tr("help.fiber")))
         self.backbone = Stepper(0, 100_000, step=10, suffix=tr("ui.unit_m"), width=140)
         self.backbone.valueChanged.connect(
             lambda v: self.state.set_field("fiber_backbone_m", v or None, tr("ui.fiber_backbone"))
@@ -573,8 +764,7 @@ class LocationView(QWidget):
             self.fw_here.setEnabled(len(self.state.project.sites) > 1 and not is_fw)
             self.mode.setValue(s.mode, animate=True)
             self.mode_caption.setText(tr("ui.mode_quick_tip") if s.mode == "quick" else tr("ui.mode_extended_tip"))
-            self.sockets.setValue(s.sockets)
-            self.cameras.setValue(s.cameras)
+            self._sync_rooms()
             self._sync_zones([g.model_dump() for g in s.ap_groups])
             self.tier.setValue(s.tier, animate=True)
             tier = cat.tier(s.tier)
@@ -615,8 +805,10 @@ class LocationView(QWidget):
             self.max_run.setValue(s.max_cable_run_m or 0)
             self.avg_run.setValue(s.avg_cable_run_m or cat.rules.avg_cable_run_m_default)
             self.rack_size.setValue(str(s.rack_size_u if s.rack_size_u in (24, 42) else 0), animate=True)
-            self.closets.setValue(s.closets)
             self.fiber.setValue(s.fiber_type, animate=True)
+            pr = cat.passive
+            self.fiber_fw.setValue(str(s.fiber_fw_fibers or pr.fiber_fw_fibers), animate=True)
+            self.fiber_rack.setValue(str(s.fiber_rack_fibers or pr.fiber_rack_fibers), animate=True)
             self.backbone.setValue(s.fiber_backbone_m or 0)
             if not self.base_net.hasFocus():
                 self.base_net.setText(s.ip.base_network)
@@ -666,6 +858,159 @@ class LocationView(QWidget):
             self.tier_effects.addWidget(w, i // 2, i % 2)
             del row
 
+    # ---- telecom rooms ---------------------------------------------------------------------
+    @property
+    def sockets(self) -> Stepper:
+        return self._room_blocks[0].fields["sockets"]
+
+    @property
+    def cameras(self) -> Stepper:
+        return self._room_blocks[0].fields["cameras"]
+
+    @property
+    def closets(self) -> Stepper:
+        return self.room_count
+
+    def _room_titles(self) -> list[str]:
+        s = self.state.site
+        r = self.state.result
+        n = s.room_count()
+        names = list(r.rack.rooms) if r is not None and r.input is s else []
+        return [
+            names[i]
+            if i < len(names)
+            else tr("rack.room", n=i + 1, role=tr("rack.mdf") if i == 0 else tr("rack.idf", n=i))
+            for i in range(n)
+        ]
+
+    def _sync_rooms(self) -> None:
+        s = self.state.site
+        n = s.room_count()
+        self.room_count.setValue(s.closets)
+        while len(self._room_blocks) > n:
+            self._room_blocks.pop().deleteLater()
+        while len(self._room_blocks) < n:
+            block = RoomBlock(len(self._room_blocks), self.state)
+            block.changed.connect(self._on_room_field)
+            block.modelChanged.connect(self._on_room_model)
+            block.removed.connect(self._on_room_removed)
+            self.rooms_box.addWidget(block)
+            self._room_blocks.append(block)
+        titles = self._room_titles()
+        for i, block in enumerate(self._room_blocks):
+            room = s.room(i)
+            block.load(titles[i], room.model_dump(), dict(room.models), n > 1)
+        for row in self._zone_rows:
+            row.set_rooms(titles)
+        if self.state.result is not None:
+            self._fill_room_switches(self.state.result)
+
+    def _fill_room_switches(self, result: SiteResult) -> None:
+        if result.input is not self.state.site:
+            return
+        placed: dict[int, dict[str, dict[str, int]]] = {}
+        for plan in result.rack.plans:
+            for it in plan.items:
+                if it.group in SWITCH_KEYS and not it.extra:
+                    by = placed.setdefault(plan.room, {}).setdefault(it.group, {})
+                    by[it.model] = by.get(it.model, 0) + 1
+        auto = {k: result.categories[k].model or self.state.catalog.categories[k].base for k in SWITCH_KEYS}
+        for i, block in enumerate(self._room_blocks):
+            here = placed.get(i, {})
+            total = sum(n for by in here.values() for n in by.values())
+            racks = sum(1 for p in result.rack.plans if p.room == i)
+            summary = tr("ui.room_summary", sw=total, racks=racks) if total or racks else ""
+            block.set_switches(auto, here, summary)
+
+    def _fold_floor_counts(self, d: dict[str, Any]) -> None:
+        """Older files keep the main room's sockets/cameras on the floor: move them into ``rooms[0]``."""
+        rooms = d.setdefault("rooms", [])
+        if not rooms:
+            rooms.append({})
+        for key in ("sockets", "cameras"):
+            if d.get(key):
+                rooms[0][key] = int(rooms[0].get(key) or 0) + int(d[key])
+                d[key] = 0
+
+    def _on_room_field(self, room: int, key: str, value: int) -> None:
+        if self._loading:
+            return
+
+        def mutate(d: dict[str, Any]) -> None:
+            self._fold_floor_counts(d)
+            rooms = d["rooms"]
+            while len(rooms) <= room:
+                rooms.append({})
+            rooms[room][key] = value
+
+        self.state.edit(tr(f"ui.room_{key}"), mutate, merge_key=f"room{room}:{key}")
+
+    def _on_room_model(self, room: int, key: str, model: str | None) -> None:
+        if self._loading:
+            return
+
+        def mutate(d: dict[str, Any]) -> None:
+            self._fold_floor_counts(d)
+            rooms = d["rooms"]
+            while len(rooms) <= room:
+                rooms.append({})
+            models = rooms[room].setdefault("models", {})
+            if model:
+                models[key] = model
+            else:
+                models.pop(key, None)
+
+        self.state.edit(tr("ui.room_model"), mutate)
+
+    def _on_room_count(self, value: int) -> None:
+        if self._loading:
+            return
+        s = self.state.site
+        have = s.room_count()
+        target = max(1, value)
+        if target < have:
+            busy = [
+                i
+                for i in range(target, have)
+                if any(getattr(s.room(i), k) for k in ROOM_FIELDS) or any(g.room == i for g in s.ap_groups)
+            ]
+            if busy and not confirm(
+                self,
+                tr("rk.delete_room"),
+                tr("ui.rooms_shrink_text", n=len(busy)),
+                tr("ui.delete"),
+                danger=True,
+            ):
+                self.room_count.setValue(s.closets)
+                return
+
+        def mutate(d: dict[str, Any]) -> None:
+            d["closets"] = int(value)
+            if value and len(d.get("rooms") or []) > target:
+                d["rooms"] = d["rooms"][:target]
+            if value:
+                d["ap_groups"] = [g for g in d.get("ap_groups") or [] if (g.get("room") or 0) < target]
+
+        self.state.edit(tr("rk.closets"), mutate, merge_key="closets")
+
+    def _on_room_removed(self, room: int) -> None:
+        s = self.state.site
+        titles = self._room_titles()
+        if not confirm(
+            self, tr("rk.delete_room"), tr("rk.delete_room_text", name=titles[room]), tr("ui.delete"), danger=True
+        ):
+            return
+        r = self.state.result
+        cabinets = {p.key for p in r.rack.plans if p.room == room} if r is not None else set()
+        n = s.room_count()
+
+        def mutate(d: dict[str, Any]) -> None:
+            d["closets"] = n - 1
+            drop_room(d.setdefault("layout", {}), room, cabinets)
+            drop_room_inputs(d, room)
+
+        self.state.edit(tr("rk.delete_room"), mutate)
+
     def _sync_zones(self, groups: list[dict[str, Any]]) -> None:
         while len(self._zone_rows) > len(groups):
             row = self._zone_rows.pop()
@@ -676,7 +1021,9 @@ class LocationView(QWidget):
             row.removed.connect(self._on_zone_removed)
             self.zones_box.addWidget(row)
             self._zone_rows.append(row)
+        titles = self._room_titles()
         for row, g in zip(self._zone_rows, groups, strict=True):
+            row.set_rooms(titles)
             row.load(g)
         self.zones_empty.setVisible(not groups)
         total = sum(int(g.get("qty", 0)) for g in groups)
@@ -826,6 +1173,12 @@ class LocationView(QWidget):
             m.setStyleSheet("font-weight: 600;")
             rl.addWidget(m)
             self.cat_list.addWidget(row)
+
+        self._fill_room_switches(result)
+        titles = self._room_titles()
+        for i, block in enumerate(self._room_blocks):
+            if i < len(titles):
+                block.title.setText(titles[i])
 
         self.mini.set_diagram(
             SiteDiagram(result, self.state.catalog, self.state.settings.language, style_from_tokens(tokens()))

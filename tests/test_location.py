@@ -44,7 +44,9 @@ def test_optical_panel_towards_the_firewall_floor(catalog: Catalog) -> None:
     combined = loc.combined
     assert combined is not None
     om = catalog.passive.fiber[combined.rack.passive.fiber_type]
-    assert qty(combined, om.housing_12) == 2 and qty(combined, om.transceiver) == 2
+    # the link to the firewall floor is a 24-fibre cable with a 24-fibre panel at each end
+    assert qty(combined, om.housing_24) == 2 and qty(combined, om.transceiver) == 2
+    assert qty(combined, om.cable_for(24)) > 0 and qty(combined, om.housing_12) == 0
     assert combined.rack.passive.fiber_links == 1
 
 

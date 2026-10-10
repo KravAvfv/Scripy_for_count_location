@@ -492,13 +492,30 @@ def test_fibre_backbone_to_idf(catalog: Catalog) -> None:
     assert roles.count("mdf") == 1 and roles.count("idf") == 2
     fibre = {line.model: line.qty for line in r.lines("fiber")}
     om4 = catalog.passive.fiber["om4"]
-    assert fibre[om4.cable] == ps.fiber_m and fibre[om4.cord] == ps.fiber_links * 2
+    # both remote rooms link to the firewall's cabinet: 24-fibre cables and 24-fibre panels
+    assert fibre[om4.cable_for(24)] == ps.fiber_m and fibre[om4.cord] == ps.fiber_links * 2
+    assert fibre[om4.housing_24] == ps.fiber_links * 2 and om4.housing_12 not in fibre
+    assert ps.splices == ps.fiber_links * 2 * 24
     sr = next(line for line in r.bom if line.model == om4.transceiver)
     assert sr.qty == ps.fiber_links * 2
 
 
+def test_fibre_between_cabinets_is_12_or_6(catalog: Catalog) -> None:
+    """A second cabinet of a remote room links to that room's first one with a smaller cable."""
+    site = make_site(mode="extended", rooms=[{"sockets": 10}, {"sockets": 900}], rack_size_u=24)
+    r = size_site(site, catalog)
+    om4 = catalog.passive.fiber["om4"]
+    fibre = {line.model: line.qty for line in r.lines("fiber")}
+    assert om4.cable_for(24) in fibre and om4.cable_for(12) in fibre
+    r6 = size_site(site.model_copy(update={"fiber_rack_fibers": 6}), catalog)
+    fibre6 = {line.model: line.qty for line in r6.lines("fiber")}
+    assert om4.cable_for(6) in fibre6 and om4.cable_for(12) not in fibre6
+    assert fibre6[om4.cable_for(6)] == fibre[om4.cable_for(12)]
+
+
 def test_closet_count_entered_by_the_user(catalog: Catalog) -> None:
-    r = size_site(make_site(mode="extended", sockets=300, closets=3), catalog)
+    rooms = [{"sockets": 100}, {"sockets": 100}, {"sockets": 100}]
+    r = size_site(make_site(mode="extended", rooms=rooms, closets=3), catalog)
     assert r.rack.idf_count == 3
     roles = [p.role for p in r.rack.plans]
     assert roles.count("mdf") == 1 and roles.count("idf") == 2
@@ -507,6 +524,8 @@ def test_closet_count_entered_by_the_user(catalog: Catalog) -> None:
     # the entered number wins over the cable run
     r2 = size_site(make_site(mode="extended", sockets=300, max_cable_run_m=200, closets=2), catalog)
     assert r2.rack.idf_count == 2
+    # sockets entered for the floor belong to the main room
+    assert all(it.group != "access_switch" for p in r2.rack.plans if p.room == 1 for it in p.items)
     # more closets than switches: the empty ones still get a cabinet to switch to
     r3 = size_site(make_site(sockets=48, closets=3), catalog)
     assert [p.role for p in r3.rack.plans] == ["mdf", "idf", "idf"]
@@ -693,3 +712,43 @@ def test_rack_device_unknown_model_is_ignored_safely(catalog: Catalog) -> None:
     base, r = _with_devices(catalog, ["NOT-IN-CATALOG"])
     assert r.power.total_w == pytest.approx(base.power.total_w)
     assert {line.model for line in r.lines("rack_device")} == {"NOT-IN-CATALOG"}
+
+
+def test_endpoints_per_telecom_room(catalog: Catalog) -> None:
+    """Each room gets the switches for its own endpoints, in its own cabinets."""
+    rooms = [{"sockets": 20, "cameras": 10}, {"sockets": 20, "ajax": 2, "skud": 3, "other": 1}]
+    r = size_site(make_site(rooms=rooms, aps=[("low_density", 4)]), catalog)
+    acc, cam = r.categories["access_switch"], r.categories["camera_switch"]
+    # 20 + 20 sockets would fit one 48-port switch, but they stand in two rooms
+    assert acc.per_room == [1, 1] and acc.count == 2
+    # Ajax, СКУД and other devices take ports of the video switch, without PoE
+    assert cam.per_room == [1, 1] and cam.endpoints == 16
+    assert cam.poe_load_w == 10 * (r.input.camera_watts or catalog.rules.camera_watts_default)
+    assert r.counts.vsw_extra == 6 and (r.counts.ajax, r.counts.skud, r.counts.other) == (2, 3, 1)
+    by_room = {
+        room: sorted(it.group for p in r.rack.plans if p.room == room for it in p.items if "switch" in it.group)
+        for room in (0, 1)
+    }
+    assert by_room[0] == ["access_switch", "camera_switch", "wifi_switch"]
+    assert by_room[1] == ["access_switch", "camera_switch"]
+    assert r.rack.passive.device_links == 10 + 6 + 4
+    # a floor-level number (older files) belongs to the main room
+    r2 = size_site(make_site(sockets=30, rooms=[{}, {"sockets": 30}]), catalog)
+    assert r2.categories["access_switch"].per_room == [1, 1]
+
+
+def test_room_switch_model_replaced(catalog: Catalog) -> None:
+    acc = catalog.categories["access_switch"]
+    other = next(m for m, d in catalog.models.items() if d.kind == "switch" and m not in (acc.base, acc.premium))
+    rooms = [{"sockets": 96}, {"sockets": 48, "models": {"access_switch": other}}]
+    r = size_site(make_site(rooms=rooms), catalog)
+    res = r.categories["access_switch"]
+    assert res.models == {acc.base: 2, other: 1}
+    lines = {line.model: line.qty for line in r.lines("access_switch")}
+    assert lines == {acc.base: 2, other: 1}
+    models = [it.model for p in r.rack.plans if p.room == 1 for it in p.items if it.group == "access_switch"]
+    assert models == [other]
+    assert any(m == other for m, _n, _w in r.power.breakdown)
+    # an unknown model is ignored
+    bad = size_site(make_site(rooms=[{"sockets": 48, "models": {"access_switch": "NOPE"}}]), catalog)
+    assert bad.categories["access_switch"].models == {acc.base: 1}
