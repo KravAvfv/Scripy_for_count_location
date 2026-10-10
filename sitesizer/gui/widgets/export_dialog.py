@@ -25,6 +25,7 @@ DEFAULTS: dict[str, Any] = {
     "xlsx": True,
     "sheets": ["spec", "racks", "ip", "prices"],
     "only_used": False,
+    "split": True,
     "pdf": False,
     "pdf_sections": list(PDF_SECTIONS),
     "png_topology": False,
@@ -61,8 +62,14 @@ class ExportDialog(QDialog):
         self.only_used = QCheckBox(tr("ex.only_used"))
         self.only_used.setChecked(bool(c["only_used"]))
         grid.addWidget(self.only_used, (len(SHEETS) + 1) // 2, 0, 1, 2)
+        self.split = QCheckBox(tr("ex.split"))
+        self.split.setChecked(bool(c["split"]))
+        self.split.setToolTip(tr("ex.split.tip"))
+        grid.addWidget(self.split, (len(SHEETS) + 1) // 2 + 1, 0, 1, 2)
         lay.addLayout(grid)
-        self.xlsx.toggled.connect(lambda on: [w.setEnabled(on) for w in (*self.sheets.values(), self.only_used)])
+        self.xlsx.toggled.connect(
+            lambda on: [w.setEnabled(on) for w in (*self.sheets.values(), self.only_used, self.split)]
+        )
 
         lay.addWidget(hline())
         self.pdf = QCheckBox(tr("ex.pdf"))
@@ -123,7 +130,7 @@ class ExportDialog(QDialog):
         buttons.addWidget(ok)
         lay.addLayout(buttons)
         self.setMinimumWidth(px(560))
-        for w in (*self.sheets.values(), self.only_used):
+        for w in (*self.sheets.values(), self.only_used, self.split):
             w.setEnabled(self.xlsx.isChecked())
         for w in self.sections.values():
             w.setEnabled(self.pdf.isChecked())
@@ -145,6 +152,7 @@ class ExportDialog(QDialog):
             "xlsx": self.xlsx.isChecked(),
             "sheets": [k for k, cb in self.sheets.items() if cb.isChecked()],
             "only_used": self.only_used.isChecked(),
+            "split": self.split.isChecked(),
             "pdf": self.pdf.isChecked(),
             "pdf_sections": [k for k, cb in self.sections.items() if cb.isChecked()],
             "png_topology": self.png_topology.isChecked(),

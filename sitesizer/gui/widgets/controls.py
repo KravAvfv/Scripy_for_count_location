@@ -20,7 +20,19 @@ from PySide6.QtCore import (
     QVariantAnimation,
     Signal,
 )
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QKeyEvent, QMouseEvent, QPainter, QPaintEvent, QPen, QWheelEvent
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QIntValidator,
+    QKeyEvent,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QPen,
+    QValidator,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import (
     QAbstractButton,
     QDoubleSpinBox,
@@ -29,6 +41,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLayout,
     QLayoutItem,
+    QLineEdit,
     QPushButton,
     QSizePolicy,
     QSpinBox,
@@ -224,6 +237,55 @@ class _NoWheelMixin:
 
 class SpinBox(_NoWheelMixin, QSpinBox):
     pass
+
+
+class _RangeValidator(QIntValidator):
+    """Like QIntValidator, but refuses a number above the maximum instead of letting it be typed."""
+
+    def validate(self, text: str, pos: int) -> object:
+        t = text.strip()
+        if t and not t.isdigit():
+            return (QValidator.State.Invalid, text, pos)
+        if t and int(t) > self.top():
+            return (QValidator.State.Invalid, text, pos)
+        return super().validate(text, pos)
+
+
+class OptionalIntEdit(QLineEdit):
+    """A number field that may stay empty: type the number, clear it for "not set" (value -1).
+
+    Emits ``valueChanged(int)`` on every user edit; ``setValue`` keeps quiet and leaves the text
+    alone while the user is typing in it.
+    """
+
+    valueChanged = Signal(int)
+
+    def __init__(self, minimum: int, maximum: int, placeholder: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setValidator(_RangeValidator(minimum, maximum, self))
+        self.setPlaceholderText(placeholder)
+        self.setMaxLength(len(str(maximum)))
+        self.setClearButtonEnabled(True)
+        self.textChanged.connect(self._changed)
+        self._quiet = False
+
+    def value(self) -> int:
+        text = self.text().strip()
+        return int(text) if text and self.hasAcceptableInput() else -1
+
+    def setValue(self, value: int | None) -> None:
+        text = "" if value is None or value < 0 else str(value)
+        if self.hasFocus() and self.value() == (value if value is not None and value >= 0 else -1):
+            return
+        self._quiet = True
+        try:
+            self.setText(text)
+        finally:
+            self._quiet = False
+
+    def _changed(self, _text: str) -> None:
+        if not self._quiet and (not self.text().strip() or self.hasAcceptableInput()):
+            self.valueChanged.emit(self.value())
 
 
 class DoubleSpinBox(_NoWheelMixin, QDoubleSpinBox):

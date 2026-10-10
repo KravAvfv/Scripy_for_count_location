@@ -3,16 +3,18 @@
 Turns the sized equipment into closets (MDF + remote IDFs) and lays every closet out in 24U/42U
 cabinets following the house standard (top to bottom)::
 
-    ODF / fibre panels
+    ODF · organizer                         (one per fibre link of the cabinet)
     firewall(s), core switch(es)
-    organizer · patch panels · organizer · switch · organizer · patch panels · organizer · switch …
+    panel · organizer · Wi-Fi switch        (one panel, one organizer)
+    panel · organizer · switch · organizer · panel   (two panels, two organizers)
     PDUs, UPS
 
-Every switch sits between two organizers and every group of patch panels sits between two
-organizers; a 48-port switch gets one panel above and one below it. The user's manual layout
-(:class:`~sitesizer.core.models.RackLayout`: dragged items, added/removed cabinets, extra
-organizers…) is applied on top, then devices get their names (``BO123-5B-ASW01``) and the
-copper and fibre parts are counted. Part numbers come from ``catalog.passive`` (Corning by default).
+Fibre links (an optical patch panel at each end): every further cabinet of a telecom room to the
+room's first cabinet, a remote room to the main one, and the main cabinet of a floor to the
+firewall floor. The user's manual layout (:class:`~sitesizer.core.models.RackLayout`: dragged
+items, added/removed cabinets, extra organizers, deleted items — active ones too) is applied on
+top, then devices get their names (``BO123-5B-ASW01``) and the copper and fibre parts are counted
+from what is actually in the cabinets. Part numbers come from ``catalog.passive``.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from .catalog import FiberSpec
 from .models import (
     CategoryResult,
     FirewallChoice,
+    FloorContext,
     PassiveSummary,
     PowerSummary,
     RackItem,
@@ -48,7 +51,7 @@ ROLE_CODES = {
 }
 """Device name role codes: ``<site>-<floor><cabinet>-<ROLE><NN>``."""
 PASSIVE_GROUPS = ("panel", "manager", "fiber", "pdu", "shelf", "blank", "custom", "device")
-"""Item groups the user may delete from a cabinet (active equipment can only be moved)."""
+"""Passive item groups (anything in a cabinet may be deleted, active equipment too)."""
 EXTRA_GROUPS = {
     "manager": "manager",
     "panel": "panel",
@@ -86,14 +89,10 @@ class _Switch:
 class _Closet:
     index: int
     switches: list[_Switch] = field(default_factory=list)
-    top: list[_Unit] = field(default_factory=list)
-    """Fibre housings (first cabinet of the closet)."""
     head: list[_Unit] = field(default_factory=list)
     """Firewalls, core switches, OOB router (MDF only)."""
     bottom: list[_Unit] = field(default_factory=list)
     """UPS (MDF only)."""
-    uplinks: int = 0
-    """Links from this closet's switches towards the core / firewall."""
 
 
 def fiber_choice(ctx: _Ctx, backbone: list[int]) -> tuple[str, FiberSpec | None, bool]:
@@ -113,26 +112,32 @@ def fiber_choice(ctx: _Ctx, backbone: list[int]) -> tuple[str, FiberSpec | None,
 
 
 # =========================================================================================
-# stack pattern: organizer · panels · organizer · switch · organizer · panels …
+# stack pattern: panel · organizer · switch · organizer · panel …
 # =========================================================================================
 def stack_units(switches: list[_Switch], panel_model: str, panel_u: int, manager_model: str) -> list[_Unit]:
-    """Top-down units for a run of switches with their patch panels and organizers."""
-    tokens: list[list[_Unit]] = []
-    pending: list[_Unit] = []
+    """Top-down units for a run of switches with their patch panels and organizers.
+
+    One panel: panel · organizer · switch. Two panels: panel · organizer · switch · organizer · panel.
+    """
+    out: list[_Unit] = []
     for sw in switches:
         upper = math.ceil(sw.panels / 2)
         panels = [_Unit(f"panel:{sw.id}:{k}", panel_u, "", "panel", panel_model) for k in range(1, sw.panels + 1)]
-        group = pending + panels[:upper]
-        if group:
-            tokens.append(group)
-        tokens.append([_Unit(sw.id, sw.height, "", sw.key, sw.model)])
-        pending = panels[upper:]
-    if pending:
-        tokens.append(pending)
+        out.extend(panels[:upper])
+        out.append(_Unit(f"org:{sw.id}", 1, "", "manager", manager_model))
+        out.append(_Unit(sw.id, sw.height, "", sw.key, sw.model))
+        if panels[upper:]:
+            out.append(_Unit(f"org:{sw.id}:2", 1, "", "manager", manager_model))
+            out.extend(panels[upper:])
+    return out
+
+
+def odf_units(key: str, peers: list[str], model: str, height: int, manager_model: str) -> list[_Unit]:
+    """An optical patch panel and its organizer for every fibre link of cabinet ``key``."""
     out: list[_Unit] = []
-    for tok in tokens:
-        out.append(_Unit(f"org:{tok[0].id}", 1, "", "manager", manager_model))
-        out.extend(tok)
+    for peer in peers:
+        out.append(_Unit(f"odf:{key}:{peer}", height, "", "fiber", model))
+        out.append(_Unit(f"org:odf:{key}:{peer}", 1, "", "manager", manager_model))
     return out
 
 
@@ -145,6 +150,7 @@ def plan_passive(
     addons: dict[str, bool],
 ) -> RackSummary:
     t, cat, r, pr = ctx.t, ctx.catalog, ctx.rules, ctx.catalog.passive
+    fctx = ctx.floor
     rs = RackSummary()
     ps = PassiveSummary()
     rs.passive = ps
@@ -164,7 +170,6 @@ def plan_passive(
             ctx.site.fiber_backbone_m or max(1, round(k * run / n_closets) if run else k * r.copper_max_m)
             for k in range(1, n_closets)
         ]
-    links_per_switch = core.uplinks_per_switch if core.count else 1
 
     # ---- switches (assigned to the least loaded closet) ---------------------------------
     load = [0] * n_closets
@@ -172,61 +177,27 @@ def plan_passive(
         res = categories[key]
         if not res.count:
             continue
-        base, extra = divmod(res.endpoints, res.count)
+        ports = cat.categories[key].endpoints_per_switch if key in cat.categories else pr.panel_ports
+        panels = pr.panels_per_switch.get(key, _ceil_div(ports, pr.panel_ports))
         for i in range(res.count):
-            ep = base + (1 if i < extra else 0)
             ci = min(range(n_closets), key=lambda k: (load[k], k))
             load[ci] += 1
-            panels = _ceil_div(ep, pr.panel_ports)
             closets[ci].switches.append(_Switch(f"{key}:{i + 1}", key, res.model, units(res.model), panels))
-            closets[ci].uplinks += links_per_switch
 
-    # ---- fibre backbone -----------------------------------------------------------------
-    fkey, fspec, fauto = fiber_choice(ctx, ps.backbone_m)
+    # ---- fibre type (estimated from the longest run) ------------------------------------
+    runs = list(ps.backbone_m)
+    if fctx is not None and not fctx.has_firewall:
+        runs.append(floor_run(ctx.site.floor, fctx.fw_floor, pr.floor_height_m))
+    if fctx is not None and fctx.has_firewall:
+        runs += [floor_run(n, ctx.site.floor, pr.floor_height_m) for n, _tag in fctx.remote]
+    fkey, fspec, fauto = fiber_choice(ctx, runs)
     ps.fiber_type, ps.fiber_auto = fkey, fauto
+    odf_model = fspec.housing_12 if fspec else ""
+    odf_u = units(odf_model)
     mdf = closets[0]
-    if fspec is not None and n_closets > 1:
-        flabel = t.pick(fspec.label).split(" ")[0]
-        for k in range(1, n_closets):
-            links = closets[k].uplinks
-            if not links:
-                continue
-            fibers = math.ceil(links * 2 * (1 + pr.fiber_spare_ratio))
-            cables = _ceil_div(fibers, fspec.cable_fibers)
-            n24, n12 = divmod(cables, 2) if fspec.cable_fibers == 12 else (0, cables)
-            idf_name = t.t("rack.idf", n=k)
-            for side, target, peer in ((0, mdf, idf_name), (1, closets[k], t.t("rack.mdf"))):
-                for j in range(n24):
-                    target.top.append(
-                        _Unit(
-                            f"fiber:{k}:{side}:24:{j + 1}",
-                            units(fspec.housing_24),
-                            t.t("rack.fiber", f=24, type=flabel, to=peer),
-                            "fiber",
-                            fspec.housing_24,
-                        )
-                    )
-                for j in range(n12):
-                    target.top.append(
-                        _Unit(
-                            f"fiber:{k}:{side}:12:{j + 1}",
-                            units(fspec.housing_12),
-                            t.t("rack.fiber", f=12, type=flabel, to=peer),
-                            "fiber",
-                            fspec.housing_12,
-                        )
-                    )
-            ps.housings_24 += 2 * n24
-            ps.housings_12 += 2 * n12
-            ps.fiber_links += links
-            ps.fiber_cables += cables
-            ps.fiber_cores += cables * fspec.cable_fibers
-            ps.fiber_m += cables * (ps.backbone_m[k - 1] + pr.fiber_slack_m)
-            ps.splices += cables * fspec.cable_fibers * 2
-            ps.fiber_cords += links * 2
 
     # ---- MDF core equipment -------------------------------------------------------------
-    if ctx.tier.oob:
+    if ctx.tier.oob and (fctx is None or fctx.has_firewall):
         mdf.head.append(_Unit("oob", units("OOB-LTE"), t.t("rack.oob"), "power", "OOB-LTE"))
     if fw and fw.fits:
         for i in range(fw.count):
@@ -257,17 +228,18 @@ def plan_passive(
     model_for = {dev.rack_size_u: model for model, dev in racks}
     feeds = 2 if ctx.dual_psu else 1
     panel_u = units(pr.panel)
+    odf_pair = (odf_u + 1) if odf_model else 0
 
     def cabinet_u(closet: _Closet, sws: list[_Switch], first: bool) -> int:
         body = sum(u.height for u in stack_units(sws, pr.panel, panel_u, pr.manager))
-        extra = sum(u.height for u in (*closet.top, *closet.head, *closet.bottom)) if first else 0
+        extra = sum(u.height for u in (*closet.head, *closet.bottom)) if first else 0
         cords = len(sws) + (len(closet.head) if first else 0)
         pdus = feeds * max(1, _ceil_div(cords, pr.pdu_outlets)) if cords else 0
-        return body + extra + pdus
+        return body + extra + pdus + odf_pair * (2 if first else 1)
 
-    plans: list[RackPlan] = []
+    layouts: list[tuple[_Closet, list[list[_Switch]], int]] = []
     for closet in closets:
-        if not (closet.switches or closet.top or closet.head or closet.bottom or ctx.site.closets):
+        if not (closet.switches or closet.head or closet.bottom or ctx.site.closets):
             continue  # an empty closet still gets a cabinet when the user asked for that many
         need = math.ceil(cabinet_u(closet, closet.switches, True) * (1 + r.rack_spare_ratio))
         size = _pick_size(ctx.site.rack_size_u, need, sizes)
@@ -281,13 +253,29 @@ def plan_passive(
                 cabinet_u(closet, g, gi == 0) <= usable for gi, g in enumerate(balanced)
             ):
                 groups = balanced
+        layouts.append((closet, groups, size))
+
+    # fibre links of the automatic structure (re-checked after the manual layout)
+    def cab_key(closet: _Closet, gi: int) -> str:
+        return f"mdf-{gi + 1}" if closet.index == 0 else f"idf{closet.index}-{gi + 1}"
+
+    peers: dict[str, list[str]] = {}
+    structure = [
+        (cab_key(c, gi), c.index, bool(sws or (gi == 0 and c.head)))
+        for c, groups, _s in layouts
+        for gi, sws in enumerate(groups)
+    ]
+    if odf_model:
+        peers = cabinet_links(structure, fctx)
+
+    plans: list[RackPlan] = []
+    for closet, groups, size in layouts:
         for gi, sws in enumerate(groups):
             first = gi == 0
+            key = cab_key(closet, gi)
             if closet.index == 0:
-                key = f"mdf-{gi + 1}"
                 name = t.t("rack.mdf") + (f"-{gi + 1}" if len(groups) > 1 else "")
             else:
-                key = f"idf{closet.index}-{gi + 1}"
                 name = t.t("rack.idf", n=closet.index) + (f".{gi + 1}" if len(groups) > 1 else "")
             plan = RackPlan(
                 name=name,
@@ -295,9 +283,11 @@ def plan_passive(
                 size_u=size,
                 model=model_for.get(size, ""),
                 key=key,
+                floor=ctx.site.floor,
                 room=closet.index,
             )
-            seq = ([*closet.top, *closet.head] if first else []) + stack_units(sws, pr.panel, panel_u, pr.manager)
+            seq = odf_units(key, peers.get(key, []), odf_model, odf_u, pr.manager)
+            seq += (list(closet.head) if first else []) + stack_units(sws, pr.panel, panel_u, pr.manager)
             cursor = size
             for unit in seq:
                 plan.items.append(_item(unit, cursor - unit.height + 1))
@@ -327,7 +317,7 @@ def plan_passive(
     for i, plan in enumerate(plans):
         plan.letter = _letter(i)
 
-    # ---- manual layout, names -----------------------------------------------------------
+    # ---- manual layout, fibre links, names ----------------------------------------------
     rs.rooms = room_names(n_closets, ctx.site.layout, t)
     rs.layout_problems = apply_layout(
         plans,
@@ -335,10 +325,15 @@ def plan_passive(
         model_for,
         ctx.site.rack_size_u,
         t,
-        {"manager": pr.manager, "panel": pr.panel},
+        {"manager": pr.manager, "panel": pr.panel, "odf": odf_model},
         rooms=n_closets,
+        floor=ctx.site.floor,
     )
     plans.sort(key=lambda p: p.room)  # a room's cabinets side by side (stable: keeps their order)
+    links: list[tuple[str, str]] = []
+    if odf_model:
+        links, problems = link_cabinets(plans, ctx.site.layout, fctx, odf_model, odf_u, pr.manager, t)
+        rs.layout_problems += problems
     if not ctx.site.layout.is_empty:
         rs.layout_problems += top_up_pdus(plans, feeds, pr.pdu_outlets, pr.pdu, set(ctx.site.layout.hidden), t)
     name_items(plans, ctx.site.layout, ctx.site.location_code, t, pr.panel_ports)
@@ -353,6 +348,31 @@ def plan_passive(
                 ps.panels += 1
             elif it.group == "manager" and it.model:
                 ps.managers += 1
+            elif it.group == "fiber" and it.model:
+                ps.housings_12 += 1
+
+    # ---- fibre: one 12-fibre cable per link, counted on the side that uplinks -----------
+    if fspec is not None:
+        by_key = {p.key: p for p in plans}
+        for child, parent in links:
+            if parent.startswith("floor"):
+                continue  # the other floor counts that cable
+            if parent == "fw":
+                length = floor_run(ctx.site.floor, fctx.fw_floor if fctx else ctx.site.floor, pr.floor_height_m)
+            else:
+                a, b = by_key.get(child), by_key.get(parent)
+                room = max(a.room if a else 0, b.room if b else 0)
+                if a and b and a.room == b.room:
+                    length = pr.fiber_cabinet_m
+                else:
+                    length = ps.backbone_m[room - 1] if 0 < room <= len(ps.backbone_m) else r.copper_max_m
+            ps.fiber_links += 1
+            ps.fiber_cables += 1
+            ps.fiber_cores += fspec.cable_fibers
+            ps.fiber_m += length + pr.fiber_slack_m
+        ps.fiber_ends = ps.housings_12
+        ps.splices = ps.housings_12 * fspec.cable_fibers
+        ps.fiber_cords = ps.housings_12
 
     # ---- copper -------------------------------------------------------------------------
     counts = ctx.counts
@@ -392,6 +412,115 @@ def plan_passive(
     rs.cable_m = ps.cable_m
     rs.cable_boxes = ps.cable_drums
     return rs
+
+
+def floor_run(floor: int, other: int, per_floor_m: int) -> int:
+    """Fibre run between two floors (at least one floor height)."""
+    return max(1, abs(floor - other)) * per_floor_m
+
+
+def cabinet_links(cabinets: list[tuple[str, int, bool]], fctx: FloorContext | None) -> dict[str, list[str]]:
+    """Fibre links of every cabinet: ``key -> peers`` (a peer is a cabinet key, ``fw`` or ``floor<N>``).
+
+    ``cabinets`` are (key, room, has active equipment) in display order. A further cabinet of a
+    room links to the room's first cabinet; the first cabinet of a remote room links to the main
+    one; the main cabinet of a floor without the firewall links to the firewall floor, and the
+    firewall floor's main cabinet gets one link per other floor.
+    """
+    out: dict[str, list[str]] = {k: [] for k, _r, _a in cabinets}
+    pairs = cabinet_link_pairs(cabinets, fctx)
+    for a, b in pairs:
+        out[a].append(b)
+        if b in out:
+            out[b].append(a)
+    return out
+
+
+def cabinet_link_pairs(cabinets: list[tuple[str, int, bool]], fctx: FloorContext | None) -> list[tuple[str, str]]:
+    """(child, parent) fibre links; see :func:`cabinet_links`."""
+    heads: dict[int, str] = {}
+    room_active: dict[int, bool] = {}
+    for key, room, active in cabinets:
+        heads.setdefault(room, key)
+        room_active[room] = room_active.get(room, False) or active
+    if not heads:
+        return []
+    main = heads.get(0) or heads[min(heads)]
+    pairs: list[tuple[str, str]] = []
+    for room in sorted(heads):
+        head = heads[room]
+        if head != main and room_active[room]:
+            pairs.append((head, main))
+    for key, room, active in cabinets:
+        if key != heads[room] and active:
+            pairs.append((key, heads[room]))
+    if fctx is not None:
+        if not fctx.has_firewall and any(room_active.values()):
+            pairs.append((main, "fw"))
+        if fctx.has_firewall:
+            pairs += [(main, f"floor{n}") for n, _tag in fctx.remote]
+    return pairs
+
+
+def link_cabinets(
+    plans: list[RackPlan],
+    layout: RackLayout,
+    fctx: FloorContext | None,
+    model: str,
+    height: int,
+    manager_model: str,
+    t: Translator,
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Put an ODF (+ organizer) at both ends of every fibre link of the final cabinets.
+
+    Automatic ODFs whose link no longer exists (a cabinet was removed or emptied) are dropped;
+    missing ones go to the highest free units. ODFs the user deleted stay deleted. Returns the
+    (child, parent) links and the placement problems.
+    """
+    problems: list[str] = []
+    cabinets = [(p.key, p.room, any(it.group in POWERED_GROUPS for it in p.items)) for p in plans]
+    pairs = cabinet_link_pairs(cabinets, fctx)
+    by_key = {p.key: p for p in plans}
+    ends: list[tuple[str, str]] = []
+    for a, b in pairs:
+        ends.append((a, b))
+        if b in by_key:
+            ends.append((b, a))
+    want_ids = {f"odf:{k}:{peer}" for k, peer in ends} | {f"org:odf:{k}:{peer}" for k, peer in ends}
+    for plan in plans:
+        plan.items = [
+            it
+            for it in plan.items
+            if it.extra or not (it.id.startswith("odf:") or it.id.startswith("org:odf:")) or it.id in want_ids
+        ]
+    present = {it.id for p in plans for it in p.items}
+    hidden = set(layout.hidden)
+    tags = {p.key: p.tag for p in plans}
+    remote = dict(fctx.remote) if fctx else {}
+    for key, peer in ends:
+        plan = by_key[key]
+        if peer == "fw":
+            to = fctx.fw_tag if fctx else ""
+        elif peer.startswith("floor"):
+            to = remote.get(int(peer[5:]), peer[5:])
+        else:
+            to = tags.get(peer, peer)
+        odf_id, org_id = f"odf:{key}:{peer}", f"org:odf:{key}:{peer}"
+        label = t.t("rack.odf", to=to)
+        for it in (it for p in plans for it in p.items if it.id == odf_id):
+            it.label = label
+        for item_id, h, group, m, lab in (
+            (odf_id, height, "fiber", model, label),
+            (org_id, 1, "manager", manager_model, ""),
+        ):
+            if item_id in present or item_id in hidden:
+                continue
+            slot = plan.free_slot(h)
+            if slot is None:
+                problems.append(t.t("check.rack_no_space", item=lab or t.t("rack.manager")))
+                continue
+            plan.items.append(RackItem(u=slot, height=h, label=lab, group=group, model=m, id=item_id))
+    return pairs, problems
 
 
 def room_names(n: int, layout: RackLayout, t: Translator) -> list[str]:
@@ -467,6 +596,7 @@ def apply_layout(
     t: Translator,
     extra_models: dict[str, str] | None = None,
     rooms: int = 1,
+    floor: int = 1,
 ) -> list[str]:
     """Apply the user's manual layout to the automatic ``plans`` (in place).
 
@@ -486,7 +616,8 @@ def apply_layout(
         if plan is not None:
             for it in plan.items:
                 home[it.id] = ""
-            orphans.extend(it for it in plan.items if not it.id.startswith("pdu:"))
+            # PDUs and fibre panels belong to the cabinet; the rest moves to another one
+            orphans.extend(it for it in plan.items if not it.id.startswith(("pdu:", "odf:", "org:odf:")))
             plans.remove(plan)
     for key in layout.added:
         if key in by_key:
@@ -494,7 +625,9 @@ def apply_layout(
         props = layout.props.get(key)
         size = (props.size_u if props and props.size_u else None) or preferred_u or DEFAULT_USER_RACK_U
         room = min(props.room or 0, rooms - 1) if props else 0
-        plan = RackPlan(name="", role="user", size_u=size, model=model_for.get(size, ""), key=key, room=room)
+        plan = RackPlan(
+            name="", role="user", size_u=size, model=model_for.get(size, ""), key=key, floor=floor, room=room
+        )
         plans.append(plan)
         by_key[key] = plan
     used_letters = {p.letter for p in plans if p.role != "user"}
@@ -521,8 +654,8 @@ def apply_layout(
     for plan in plans:
         for it in plan.items:
             home[it.id] = plan.key
-        plan.items = [it for it in plan.items if not (it.id in hidden and it.group in PASSIVE_GROUPS)]
-    orphans = [it for it in orphans if not (it.id in hidden and it.group in PASSIVE_GROUPS)]
+        plan.items = [it for it in plan.items if it.id not in hidden]
+    orphans = [it for it in orphans if it.id not in hidden]
 
     # move every item to where the user dropped it; the rest keeps its automatic place
     all_items: dict[str, RackItem] = {it.id: it for plan in plans for it in plan.items}

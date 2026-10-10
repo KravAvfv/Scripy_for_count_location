@@ -261,7 +261,7 @@ def test_tier_effects_configurable(catalog: Catalog) -> None:
 def test_quick_mode_has_only_passive_addons(catalog: Catalog) -> None:
     r = size_site(make_site(sockets=100, cameras=20, aps=[("corridor", 6)]), catalog)
     addon_groups = {line.group for line in r.bom if "addon" in line.tags}
-    assert addon_groups == {"cabling", "rack"}
+    assert addon_groups == {"cabling", "rack", "transceiver"}
 
 
 def test_extended_mode_addons(catalog: Catalog) -> None:
@@ -271,8 +271,8 @@ def test_extended_mode_addons(catalog: Catalog) -> None:
     groups = {line.group for line in r.bom}
     assert {"transceiver", "cabling", "rack", "license", "spare"} <= groups
     panels = next(line for line in r.bom if line.model == catalog.passive.panel)
-    # panels are counted per switch: Wi-Fi 6 APs → 1, access 100 sockets over 3 switches → 2+2+2, CCTV 20 → 1
-    assert panels.qty == 1 + 6 + 1 >= math.ceil(126 / 24)
+    # panels per switch role: Wi-Fi → 1, access (3 switches) → 2 each, CCTV → 2
+    assert panels.qty == 1 + 6 + 2
 
 
 def test_addon_can_be_forced_off(catalog: Catalog) -> None:
@@ -295,7 +295,7 @@ def test_idf_hint_and_fibre(catalog: Catalog) -> None:
 def test_80f_without_sfp_uses_copper_sfp(catalog: Catalog) -> None:
     r = size_site(make_site(mode="extended", sockets=96), catalog)
     assert r.firewall is not None and r.firewall.model == "FG-80F"
-    assert any(line.model == "FN-TRAN-GC" and line.qty == 2 for line in r.bom)
+    assert any(line.model == "FN-TRAN-GC" and line.qty == 1 for line in r.bom)
 
 
 # ---- power ----------------------------------------------------------------------------------
@@ -358,7 +358,8 @@ def test_copper_quantities(catalog: Catalog) -> None:
     assert ps.outlets == 20 + 16
     assert ps.cords_rack == 56 + 16 and ps.cords_user == 40
     models = {line.model: line.qty for line in r.lines("cabling")}
-    assert models[pr.cable] == ps.cable_drums and models[pr.outlet] == 36
+    assert models[pr.cable] == ps.cable_drums
+    assert pr.outlet not in models  # outlets are not ordered with the specification
 
 
 def test_small_site_fits_24u(catalog: Catalog) -> None:
@@ -384,21 +385,16 @@ def test_rack_size_preference_and_split(catalog: Catalog) -> None:
 
 
 def test_house_rack_pattern(catalog: Catalog) -> None:
-    """Organizer · PP · organizer · switch · organizer · PP PP · organizer · switch … (photo of rack 5B)."""
+    """Wi-Fi: PP · organizer · switch; others: PP · organizer · switch · organizer · PP (photo of rack 5B)."""
     r = size_site(make_site(sockets=96, cameras=48, aps=[("corridor", 10)]), catalog)
     items = r.rack.plans[0].items
-    first = next(i for i, it in enumerate(items) if it.group == "manager")
+    first = next(i for i, it in enumerate(items) if it.group == "panel")
     body = [it.group for it in items[first:] if it.group not in ("pdu", "power")]
     assert body == [
-        "manager", "panel",  # Wi-Fi panel
-        "manager", "wifi_switch",
-        "manager", "panel",  # ASW01 upper
-        "manager", "access_switch",
-        "manager", "panel", "panel",  # ASW01 lower + ASW02 upper
-        "manager", "access_switch",
-        "manager", "panel", "panel",  # ASW02 lower + VSW01 upper
-        "manager", "camera_switch",
-        "manager", "panel",  # VSW01 lower
+        "panel", "manager", "wifi_switch",  # one panel, one organizer
+        "panel", "manager", "access_switch", "manager", "panel",  # two panels, two organizers
+        "panel", "manager", "access_switch", "manager", "panel",
+        "panel", "manager", "camera_switch", "manager", "panel",
     ]  # fmt: skip
     labels = [it.label for it in items if it.group == "panel"]
     assert labels == ["ПП Wi-Fi", "ПП №1", "ПП №2", "ПП №3", "ПП №4", "ПП №V1", "ПП №V2"]
@@ -422,18 +418,13 @@ def _dac(r) -> dict[str, int]:
     return {line.model: line.qty for line in r.bom if line.model.startswith("FN-CABLE")}
 
 
-def test_dac_length_follows_layout(catalog: Catalog) -> None:
-    site = dict(mode="extended", sockets=48 * 2, aggregation="yes")
-    r = size_site(make_site(**site), catalog)
-    # core and both switches sit close together at the top of the cabinet → 1 m
-    assert _dac(r) == {"FN-CABLE-SFP+1": 3}  # 2 uplinks + core ↔ FortiGate
-    # drag the second switch to the bottom of the cabinet → its uplink needs 3 m
-    plan = r.rack.plans[0]
-    moved = make_site(**site, layout={"positions": {"access_switch:2": {"rack": plan.key, "u": 3}}})
-    r2 = size_site(moved, catalog)
-    assert _dac(r2) == {"FN-CABLE-SFP+1": 2, "FN-CABLE-SFP+3": 1}
-    it = next(i for i in r2.rack.plans[0].items if i.id == "access_switch:2")
-    assert it.u == 3 and it.manual
+def test_dac_per_switch_count(catalog: Catalog) -> None:
+    # 10 switches on a floor → 5 × DAC 1 m + 1 × DAC 3 m
+    r = size_site(make_site(sockets=48 * 10), catalog)
+    assert r.edge_switch_count == 10
+    assert _dac(r) == {"FN-CABLE-SFP+1": 5, "FN-CABLE-SFP+3": 1}
+    # 3 switches → 2 × 1 m (rounded up) + 1 × 3 m
+    assert _dac(size_site(make_site(sockets=48 * 3), catalog)) == {"FN-CABLE-SFP+1": 2, "FN-CABLE-SFP+3": 1}
 
 
 def test_manual_layout_racks_and_extras(catalog: Catalog) -> None:
@@ -451,7 +442,15 @@ def test_manual_layout_racks_and_extras(catalog: Catalog) -> None:
     user = r.rack.plans[1]
     assert user.size_u == 24 and user.letter == "B"
     # the moved switch needs power: the user cabinet gets its own PDU
-    assert {it.id for it in user.items} == {"access_switch:2", "x1", "pdu:user-1:1"}
+    # ...and an optical patch panel (+ organizer) towards the room's first cabinet, which gets one too
+    assert {it.id for it in user.items} == {
+        "access_switch:2",
+        "x1",
+        "pdu:user-1:1",
+        f"odf:user-1:{key}",
+        f"org:odf:user-1:{key}",
+    }
+    assert any(it.id == f"odf:{key}:user-1" for it in r.rack.plans[0].items)
     assert not any(it.group == "pdu" for it in r.rack.plans[0].items)  # the deleted PDU stays deleted
     assert any(line.model == "RACK-24U" for line in r.lines("rack"))
     # removing the automatic cabinet moves its devices into the remaining one

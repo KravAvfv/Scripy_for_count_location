@@ -6,7 +6,10 @@ sitesizer/
     catalog.py   schema + validation of data/catalog.json, FortiOS-dependent limits, compat overlay
     models.py    SiteInput (user input), SiteResult, BomLine, Check, Power/Rack/IP summaries
     sizing.py    size_site(): reserve → switch categories → core → firewall ladder → BoM → power/rack → checks
-    passive.py   closets (MDF/IDF), house cabinet pattern, manual layout overrides, device names, Corning parts
+    passive.py   closets (MDF/IDF), house cabinet pattern, fibre links (ODF at both ends), manual layout
+                 overrides (anything may be deleted), device names, Corning parts
+    location.py  a location = several floors: one firewall/core on the firewall floor, results added up
+    passive_calc.py  passive parts of existing cabinets read from an Excel file or typed in (passive_count.py)
     template_import.py  company Excel template → catalog (codes, names, units, two prices, sections)
     ipplan.py    subnet sizing (prototype formula) and aligned, non-overlapping carving
     pricing.py   subtotal / discount / VAT;  compare.py  scenario diff
@@ -40,7 +43,8 @@ packaging/     PyInstaller spec, icon and version-info generators
 
 ```
 user edit ─► AppState.edit() ─► QUndoCommand (mergeable per field) ─► SiteInput (validated)
-         ─► 60 ms debounce ─► core.sizing.size_site(SiteInput, Catalog, lang) ─► SiteResult
+         ─► 60 ms debounce ─► core.location.size_location(floors) ─► size_site() per floor ─► SiteResult
+         (current floor) + combined SiteResult (whole location: BoM view, IP plan, exports)
          ─► resultChanged ─► every view re-renders (BoM, diagram, IP plan, power, summary bar)
 ```
 

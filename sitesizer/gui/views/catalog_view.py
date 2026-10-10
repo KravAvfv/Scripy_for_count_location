@@ -711,7 +711,7 @@ class CatalogView(QWidget):
             "power_model": ["datasheet", "legacy"],
         }
         for key, value in rules.items():
-            if key in ("ip", "legacy_power_w", "aggregation_auto_threshold"):
+            if key in ("ip", "legacy_power_w", "aggregation_auto_threshold", "dac_short_max_u"):
                 continue
             title = tr(f"rule.{key}") if current().has(f"rule.{key}") else key
             caption = tr(f"rule.{key}.help") if current().has(f"rule.{key}.help") else ""
@@ -778,6 +778,14 @@ class CatalogView(QWidget):
                 pw.editingFinished.connect(lambda k=key, e=pw: self._edit(("passive", k), e.text().strip()))  # type: ignore[attr-defined]
             pw.setFixedWidth(px(200))
             pcard.add(FieldRow(title, pw))
+        panels = passive.get("panels_per_switch") or {}
+        for role, key in (("wifi_switch", "wifi"), ("access_switch", "access"), ("camera_switch", "camera")):
+            sp = SpinBox()
+            sp.setRange(0, 8)
+            sp.setValue(int(panels.get(role, 2)))
+            sp.valueChanged.connect(lambda v, r=role: self._edit(("passive", "panels_per_switch", r), int(v)))
+            sp.setFixedWidth(px(200))
+            pcard.add(FieldRow(tr(f"passive.panels_{key}"), sp))
         lay.addWidget(pcard)
 
         ip = Card(tr("cat.ip_title"), tr("cat.ip_sub"))

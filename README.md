@@ -11,19 +11,40 @@ The UI is Ukrainian by default, with a full English version (Settings → Langua
 ## Швидкий старт (для колег)
 
 1. Запустіть `LocalCount.exe`.
-2. **Локація:** код (напр. `BO123`), ID локації (другий октет, напр. `57` → `10.57.x.x`), кількість поверхів,
-   розетки, камери, зони Wi-Fi (або натисніть шаблон «Склад», «HQ»…).
+2. **Локація і поверхи:** проєкт — це одна локація, а кожен запис у боковій панелі «Поверхи» — поверх
+   (`+` додає наступний). Код (напр. `BO123`), ID (другий октет, напр. `57` → `10.57.x.x`), рівень і IP-план
+   спільні для всіх поверхів; на кожному поверсі — свої розетки, камери, зони Wi-Fi і шафи.
+   **Фаєрвол один на локацію:** він рахується на комутатори всіх поверхів і стоїть на поверсі з перемикачем
+   «Фаєрвол на цьому поверсі». Інші поверхи з'єднуються з ним оптичною патч-панеллю.
 3. **Шафи:** шафи стоять у комутаційних кімнатах. Перемикач угорі показує «Усі шафи» або шафи однієї
    кімнати; «+ Комутаційна» додає кімнату (комутатори розподіляються й на неї, оптика рахується сама),
    у картці кімнати її можна перейменувати чи видалити. «Додати шафу» додає шафу у вибрану кімнату.
-   Пристрої перетягуються мишею, їм можна дати власну назву (модель пишеться під назвою), додані
-   вручну — видаляються кнопкою «Видалити» або клавішею Delete.
-   Пристрій, доданий у шафу вручну (з каталогу чи власний), потрапляє в специфікацію
-   («Додано в шафу»), у живлення/UPS/тепловиділення, у кількість PDU, у ліміт комутаторів
-   FortiGate та в Management-підмережу IP-плану.
+   Пристрої перетягуються мишею; **Ctrl+клік** виділяє кілька й вони перетягуються разом (Ctrl+A — уся шафа).
+   Пристрою можна дати власну назву. **Видалити можна будь-що** (Delete): фаєрвол, комутатори, ДБЖ, ПП.
+   Специфікація будується від того, що лишилося в шафах, а «Повернути видалене» поверне все назад.
+   **Ctrl+C** копіює назви вибраних пристроїв (кожна з нового рядка), «Копіювати назви» — усі пристрої шаф.
+   Стандарт шафи: Wi-Fi комутатор — 1 ПП + 1 органайзер; інші — 2 ПП + 2 органайзери (ПП · органайзер ·
+   комутатор · органайзер · ПП); оптична ПП — 1 органайзер, по одній на кожному кінці лінку
+   (до фаєрвола з іншого поверху та між шафами однієї комутаційної). DAC: 1 м — один на 2 комутатори
+   поверху, 3 м — один на 10 (10 комутаторів → 5 + 1). Розетки в специфікацію не додаються.
 4. **IP-план** будується сам з ID локації; номери, назви й маски VLAN змінюються подвійним кліком.
-5. **Специфікація:** за потреби змініть кількість або ціну (подвійний клік), додайте роботи.
-6. **Експорт (`Ctrl+E`)** — позначте, що потрібно: «Слаботрумка», шафи, IP, ціни, PDF, картинки.
+5. **Специфікація:** «Уся локація» — сума поверхів; на «Цей поверх» можна змінити кількість або ціну
+   (подвійний клік) і додати роботи.
+6. **Експорт (`Ctrl+E`)** — уся локація: «Слаботрумка», схема шаф по поверхах, IP, ціни, PDF, картинки.
+
+### Пасивка для готових шаф
+
+Є свій Excel зі схемою шаф (назви на кшталт `BO123-5B-ASW01 (FS-148F)`) або специфікація з кількостями?
+**Експорт → «Пасивка з мого Excel…»** — програма порахує ПП, органайзери, оптичні ПП, трансивери, патч-корди
+й DAC за тими самими правилами і збереже `<файл> — пасивка.xlsx` поруч. Те саме з консолі:
+
+```powershell
+python passive_count.py "BO123 схема.xlsx"                 # з вашого Excel
+python passive_count.py --cab "5B: W1 A4 V1" --cab "7A: A2 F1"   # вручну: W — Wi-Fi, A — доступ, V — відео, C — ядро, F — фаєрвол
+python passive_count.py                                    # запитає шафи по одній
+```
+
+`--sockets / --cameras / --aps` додають кабель, модулі й патч-корди під кінцеві точки, `--out` — свій файл.
 
 `Ctrl+K` — палітра команд, `Ctrl+S` — зберегти проєкт, `F1` — довідка з поясненням логіки.
 Ціни й коди 1С: **Каталог → Імпорт шаблону Excel** (ваш файл «Слаботрумка»).
@@ -76,8 +97,10 @@ import (1C codes, names, two prices) · datasheet links · no customer justifica
   PNG/SVG, a *Racks* sheet in Excel (table + picture) and a section in the PDF.
 - **Extended mode** — VLAN plan carved from a base network (gateway + DHCP pool), transceivers/DAC, cabling,
   rack elevation and size, UPS sizing with the real PoE load, licences, spares, FortiManager/FortiAnalyzer.
-- **Projects** — several locations in one file (HQ + remote sites), hub-and-spoke diagram, duplicate a location,
-  compare scenarios side by side (e.g. Tier 2 vs Tier 1) with a cost diff when prices are set.
+- **Floors of one location** — a project is one location and its entries are floors (own sockets, cameras,
+  Wi-Fi, cabinets); code, ID, tier and IP plan are shared. One firewall (and core) per location, sized for every
+  floor and placed on the firewall floor; other floors get an optical patch panel to it. The specification and
+  the exports add the floors up. Compare floors side by side; a duplicated floor becomes the next one up.
 - **Exports** — Excel (BoM, IP plan, diagram, inputs), branded PDF report, PNG/SVG diagram, JSON/CSV, and
   copy-to-clipboard (pastes as a table into Excel, Word or Outlook). Heavy exports run in the background.
 - **Comfortable to use** — light/dark themes (follows the system), UI scaling, undo/redo, keyboard-first input,

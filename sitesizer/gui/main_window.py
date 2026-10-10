@@ -194,6 +194,8 @@ class MainWindow(QMainWindow):
             ("download", tr("ex.menu"), "Ctrl+E", self.export_all),
             (None, None, None, None),
             ("file-spreadsheet", tr("ui.export_xlsx"), "", self.export_xlsx),
+            ("file-spreadsheet", tr("ui.export_xlsx_spec"), "", lambda: self.export_xlsx_sheet("spec")),
+            ("server", tr("ui.export_xlsx_racks"), "", lambda: self.export_xlsx_sheet("racks")),
             ("file-text", tr("ui.export_pdf"), "Ctrl+P", self.export_pdf),
             (None, None, None, None),
             ("image", tr("ui.export_png"), "", lambda: self.export_diagram("png")),
@@ -204,6 +206,8 @@ class MainWindow(QMainWindow):
             ("file-json", tr("ui.export_json"), "", self.export_json),
             ("file-spreadsheet", tr("ui.export_csv"), "", self.export_csv),
             ("copy", tr("ui.copy_bom"), "Ctrl+Shift+C", lambda: self.bom.copy_to_clipboard()),
+            (None, None, None, None),
+            ("cable", tr("ui.passive_from_xlsx"), "", self.passive_from_xlsx),
         ]
         for icon_name, text, sc, fn in items:
             if icon_name is None:
@@ -429,20 +433,36 @@ class MainWindow(QMainWindow):
 
         self._jobs.append(run_in_background(fn, done, failed))
 
+    def _run_export_many(self, fn) -> None:
+        """Like :meth:`_run_export` for a job that writes several files and returns their paths."""
+        toast = self.toasts.show("info", tr("ui.exporting", name="Excel"), busy=True)
+
+        def done(paths: object) -> None:
+            toast.dismiss()
+            for p in paths if isinstance(paths, list) else []:
+                self._after_export(p)
+
+        def failed(err: str) -> None:
+            toast.dismiss()
+            self.toasts.show("error", tr("ui.export_failed", err=err), 9000)
+
+        self._jobs.append(run_in_background(fn, done, failed))
+
     def export_all(self) -> None:
         """The export dialog: the user picks Excel sheets, PDF sections and pictures."""
         from ..exporters.diagram import export_png
         from ..exporters.pdf import export_pdf
         from ..exporters.rack import RackDiagram
-        from ..exporters.xlsx import export_xlsx
+        from ..exporters.xlsx import export_xlsx, export_xlsx_split
         from .widgets.export_dialog import ExportDialog
 
-        result = self.state.result
+        result = self.state.location_result
         if result is None or not result.has_equipment:
             self.toasts.show("warning", tr("ui.nothing_to_export"))
             return
         site = result.input
-        name = safe_filename(f"{site.location_code} {site.name}".strip() if site.location_code else site.name)
+        full = f"{site.location_code} {site.name}".strip() if site.location_code not in ("", site.name) else site.name
+        name = safe_filename(full)
         name = f"{name}_{date.today().isoformat()}"
         folder = self.state.settings.export_dir or str(Path.home())
         dlg = ExportDialog(self, self.state.settings.export_choices, folder, name)
@@ -459,8 +479,13 @@ class MainWindow(QMainWindow):
         catalog, lang, opts = self.state.catalog, self.state.settings.language, self._report_options()
         if choices["xlsx"]:
             xopts = {**opts, "sheets": choices["sheets"], "only_used": choices["only_used"]}
-            xpath = out_dir / f"{base}.xlsx"
-            self._run_export(lambda: export_xlsx(result, xpath, catalog=catalog, lang=lang, options=xopts), xpath)
+            if choices.get("split", True):
+                self._run_export_many(
+                    lambda: export_xlsx_split(result, out_dir, base, catalog=catalog, lang=lang, options=xopts)
+                )
+            else:
+                xpath = out_dir / f"{base}.xlsx"
+                self._run_export(lambda: export_xlsx(result, xpath, catalog=catalog, lang=lang, options=xopts), xpath)
         if choices["pdf"]:
             popts = {**opts, "sections": choices["pdf_sections"]}
             ppath = out_dir / f"{base}.pdf"
@@ -478,7 +503,7 @@ class MainWindow(QMainWindow):
             self.toasts.show("error", tr("ui.export_failed", err=err), 9000)
 
     def export_xlsx(self) -> None:
-        result = self.state.result
+        result = self.state.location_result
         if result is None or not result.has_equipment:
             self.toasts.show("warning", tr("ui.nothing_to_export"))
             return
@@ -490,8 +515,52 @@ class MainWindow(QMainWindow):
         catalog, lang, opts = self.state.catalog, self.state.settings.language, self._report_options()
         self._run_export(lambda: export_xlsx(result, path, catalog=catalog, lang=lang, options=opts), path)
 
+    def export_xlsx_sheet(self, sheet: str) -> None:
+        """One Excel file with one table: the specification, or the cabinets alone."""
+        result = self.state.location_result
+        if result is None or not result.has_equipment or (sheet == "racks" and not result.rack.plans):
+            self.toasts.show("warning", tr("ui.nothing_to_export"))
+            return
+        prefix = tr(f"xl.file.{sheet}")
+        path = self._ask_path("xlsx", "Excel (*.xlsx)", prefix)
+        if not path:
+            return
+        from ..exporters.xlsx import export_xlsx
+
+        catalog, lang = self.state.catalog, self.state.settings.language
+        opts = {**self._report_options(), "sheets": [sheet], "diagram": False}
+        self._run_export(lambda: export_xlsx(result, path, catalog=catalog, lang=lang, options=opts), path)
+
+    def passive_from_xlsx(self) -> None:
+        """Count the passive parts of the cabinets in an Excel file the user already has."""
+        from ..core.passive_calc import cabinets_from_xlsx, count_passive, write_xlsx
+
+        start = self.state.settings.export_dir or str(Path.home())
+        src, _ = QFileDialog.getOpenFileName(self, tr("ui.passive_from_xlsx"), start, "Excel (*.xlsx *.xlsm)")
+        if not src:
+            return
+        try:
+            cabinets, warnings, _how = cabinets_from_xlsx(src, self.state.catalog)
+        except Exception as err:  # a damaged or foreign file must not crash the app
+            self.toasts.show("error", tr("ui.export_failed", err=err), 9000)
+            return
+        if not cabinets:
+            self.toasts.show("warning", warnings[0] if warnings else tr("ui.nothing_to_export"), 9000)
+            return
+        pc = count_passive(cabinets, self.state.catalog)
+        pc.warnings = warnings
+        out = Path(src).with_name(Path(src).stem + tr("ui.passive_suffix") + ".xlsx")
+        try:
+            write_xlsx(pc, out)
+        except OSError as err:
+            self.toasts.show("error", tr("ui.export_failed", err=err), 9000)
+            return
+        if warnings:
+            self.toasts.show("warning", warnings[0], 9000)
+        self._after_export(out)
+
     def export_pdf(self) -> None:
-        result = self.state.result
+        result = self.state.location_result
         if result is None or not result.has_equipment:
             self.toasts.show("warning", tr("ui.nothing_to_export"))
             return
@@ -533,7 +602,7 @@ class MainWindow(QMainWindow):
         self._after_export(path)
 
     def export_racks(self, fmt: str) -> None:
-        result = self.state.result
+        result = self.state.location_result
         if result is None or not result.rack.plans:
             self.toasts.show("warning", tr("ui.nothing_to_export"))
             return
@@ -555,22 +624,22 @@ class MainWindow(QMainWindow):
         self._after_export(path)
 
     def export_json(self) -> None:
-        if self.state.result is None:
+        result = self.state.location_result
+        if result is None:
             return
         path = self._ask_path("json", "JSON (*.json)")
         if path:
-            path.write_text(
-                json.dumps(result_to_dict(self.state.result), ensure_ascii=False, indent=2), encoding="utf-8"
-            )
+            path.write_text(json.dumps(result_to_dict(result), ensure_ascii=False, indent=2), encoding="utf-8")
             self._after_export(path)
 
     def export_csv(self) -> None:
-        if self.state.result is None:
+        result = self.state.location_result
+        if result is None:
             return
         path = self._ask_path("csv", "CSV (*.csv)")
         if path:
-            with_prices = any(line.unit_price is not None for line in self.state.result.bom)
-            path.write_text(bom_csv(self.state.result, current(), with_prices), encoding="utf-8-sig")
+            with_prices = any(line.unit_price is not None for line in result.bom)
+            path.write_text(bom_csv(result, current(), with_prices), encoding="utf-8-sig")
             self._after_export(path)
 
     # ---- palette / tour / theme ----------------------------------------------------------
@@ -589,6 +658,15 @@ class MainWindow(QMainWindow):
         cmds += [
             Command(tr("ex.menu"), self.export_all, "download", "Ctrl+E", tr("ui.export")),
             Command(tr("ui.export_xlsx"), self.export_xlsx, "file-spreadsheet", "", tr("ui.export")),
+            Command(
+                tr("ui.export_xlsx_spec"),
+                lambda: self.export_xlsx_sheet("spec"),
+                "file-spreadsheet",
+                "",
+                tr("ui.export"),
+            ),
+            Command(tr("ui.export_xlsx_racks"), lambda: self.export_xlsx_sheet("racks"), "server", "", tr("ui.export")),
+            Command(tr("ui.passive_from_xlsx"), self.passive_from_xlsx, "cable", "", tr("ui.export")),
             Command(tr("ui.export_pdf"), self.export_pdf, "file-text", "Ctrl+P", tr("ui.export")),
             Command(tr("ui.export_png"), lambda: self.export_diagram("png"), "image", "", tr("ui.export")),
             Command(tr("ui.export_svg"), lambda: self.export_diagram("svg"), "download", "", tr("ui.export")),

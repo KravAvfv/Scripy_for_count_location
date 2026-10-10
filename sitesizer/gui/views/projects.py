@@ -42,7 +42,7 @@ class SiteCard(QFrame):
         colors = {1: tokens().error, 2: tokens().warning, 3: tokens().info, 4: tokens().text_faint}
         head.addWidget(Pill(f"{entry.input.tier} · {t.pick(tier.label)}", colors.get(entry.input.tier, tokens().info)))
         if entry.is_hub:
-            head.addWidget(Pill("HQ", tokens().warning))
+            head.addWidget(Pill(tr("ui.fw_pill"), tokens().warning))
         head.addStretch(1)
         for icon_name, tip, action in (
             ("map-pin", tr("ui.site_open"), "select"),

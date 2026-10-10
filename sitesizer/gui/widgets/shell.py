@@ -424,7 +424,11 @@ class SummaryBar(QFrame):
 
     def on_result(self, r: SiteResult) -> None:
         fw = r.firewall
-        self.fw.set(f"{fw.model} × {fw.count}" if fw and fw.fits else ("—" if not fw else tr("ui.m_fw_none")))
+        elsewhere = self.state.firewall_elsewhere()
+        if not fw and elsewhere is not None:
+            self.fw.set(elsewhere[0], tr("ui.m_fw_on", floor=elsewhere[1]))
+        else:
+            self.fw.set(f"{fw.model} × {fw.count}" if fw and fw.fits else ("—" if not fw else tr("ui.m_fw_none")))
         self.sw.set(str(r.total_switches))
         self.ap.set(str(r.counts.aps))
         self.poe.set(f"{r.power.poe_w:,.0f}".replace(",", " ") + tr("ui.unit_w"))

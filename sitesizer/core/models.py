@@ -176,6 +176,9 @@ class SiteInput(BaseModel):
     location_id: int | None = Field(default=None, ge=0, le=255)
     """Second octet of the site's addresses; builds the IP table (``10.<ID>.<VLAN>.0/24``)."""
     floors: int = Field(default=1, ge=1, le=300)
+    """Floors of a single-entry (legacy) location; a project with several floors counts its entries."""
+    floor: int = Field(default=1, ge=-10, le=300)
+    """Floor number of this entry: cabinet tags and device names (``BO123-5B-ASW01``) start with it."""
     mode: Mode = "quick"
     sockets: int = Field(default=0, ge=0, le=1_000_000)
     cameras: int = Field(default=0, ge=0, le=1_000_000)
@@ -233,6 +236,28 @@ class Severity(StrEnum):
     INFO = "info"
     WARNING = "warning"
     ERROR = "error"
+
+
+@dataclass
+class FloorContext:
+    """Where one floor stands in a multi-floor location (``None`` = a standalone location).
+
+    The firewall (and the core) is sized once for the whole location and stands on one floor;
+    every other floor gets an optical patch panel towards it.
+    """
+
+    has_firewall: bool = True
+    """The firewall and the core stand on this floor."""
+    floors: int = 1
+    """Floors of the location."""
+    others: dict[str, int] = field(default_factory=dict)
+    """Totals of the other floors: ``switches``, ``aps``, ``sockets``, ``cameras``, ``wifi``,
+    ``guest``, ``iot`` (the firewall, the core and the IP plan serve them too)."""
+    fw_floor: int = 1
+    fw_tag: str = ""
+    """Tag of the firewall floor's main cabinet (``7A``)."""
+    remote: list[tuple[int, str]] = field(default_factory=list)
+    """(floor, main cabinet tag) of every other floor — set on the firewall floor."""
 
 
 @dataclass
@@ -418,7 +443,10 @@ class PassiveSummary:
     fiber_m: int = 0
     fiber_cores: int = 0
     housings_12: int = 0
+    """Optical patch panels (one at each end of a fibre link)."""
     housings_24: int = 0
+    fiber_ends: int = 0
+    """Fibre link ends in this floor's cabinets (one transceiver and one cord each)."""
     fiber_cords: int = 0
     splices: int = 0
     pdus: int = 0

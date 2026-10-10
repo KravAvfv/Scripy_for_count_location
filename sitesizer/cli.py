@@ -23,6 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .core.catalog import Catalog, CatalogError, load_catalog, prototype_compat_catalog
+from .core.location import size_location
 from .core.models import ApGroup, SiteInput, SiteResult
 from .core.project import ProjectError, load_project
 from .core.report import default_export_name, result_to_dict
@@ -220,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     sites: list[SiteInput]
+    hubs: list[bool] = []
     if args.json:
         try:
             if args.json == "-":
@@ -230,7 +232,9 @@ def main(argv: list[str] | None = None) -> int:
                     else [SiteInput.model_validate(s["input"]) for s in raw["sites"]]
                 )
             else:
-                sites = [s.input for s in load_project(args.json).sites]
+                entries = load_project(args.json).sites
+                sites = [s.input for s in entries]
+                hubs = [s.is_hub for s in entries]
         except (ProjectError, json.JSONDecodeError, ValueError) as err:
             print(f"Помилка вхідних даних: {err}", file=sys.stderr)
             return 2
@@ -242,7 +246,15 @@ def main(argv: list[str] | None = None) -> int:
             print("\nСкасовано користувачем.")
             return 1
 
-    results = [size_site(site, catalog, lang=args.lang) for site in sites]
+    if len(sites) > 1:
+        # a project is one location: its entries are floors with one firewall
+        hubs = hubs if any(hubs) else [i == 0 for i in range(len(sites))]
+        loc = size_location(
+            [(str(i), s, h) for i, (s, h) in enumerate(zip(sites, hubs, strict=True))], catalog, args.lang
+        )
+        results = [loc.combined] if loc.combined is not None else []
+    else:
+        results = [size_site(site, catalog, lang=args.lang) for site in sites]
     if not args.quiet and args.out != "-":
         for result in results:
             print_result(result, args.lang)

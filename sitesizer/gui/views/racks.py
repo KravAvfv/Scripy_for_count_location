@@ -13,7 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QGuiApplication
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.models import SiteResult
-from ...core.passive import PASSIVE_GROUPS, drop_room
+from ...core.passive import POWERED_GROUPS, drop_room
 from ...exporters.diagram import style_from_tokens
 from ...exporters.rack import RackDiagram
 from ...i18n import current, tr
@@ -143,6 +143,14 @@ class RacksView(QWidget):
             menu.addAction(act)
         add.setMenu(menu)
         bar.addWidget(add)
+        self.copy_btn = button(tr("rk.copy_names"), None, "copy", tr("rk.copy_names_tip"))
+        self.copy_btn.clicked.connect(
+            lambda: self.copy_names(self.editor.sel_items if len(self.editor.sel_items) > 1 else None)
+        )
+        bar.addWidget(self.copy_btn)
+        self.restore_btn = button(tr("rk.restore", n=0), "ghost", "undo-2", tr("rk.restore_tip"))
+        self.restore_btn.clicked.connect(self.restore_deleted)
+        bar.addWidget(self.restore_btn)
         self.reset_btn = button(tr("rk.reset"), "ghost", "refresh-ccw", tr("rk.reset_tip"))
         self.reset_btn.clicked.connect(self.reset_layout)
         bar.addWidget(self.reset_btn)
@@ -171,6 +179,9 @@ class RacksView(QWidget):
         self.empty.hide()
         self.editor = RackEditor()
         self.editor.moved.connect(self.move_item)
+        self.editor.movedMany.connect(self.move_items)
+        self.editor.deleteManyRequested.connect(self.delete_items)
+        self.editor.copyRequested.connect(lambda ids: self.copy_names(ids or None))
         self.editor.selectionChanged.connect(lambda *_: self._load_side())
         self.editor.contextRequested.connect(self._context)
         self.editor.deleteRequested.connect(self.delete_item)
@@ -263,7 +274,8 @@ class RacksView(QWidget):
         self.item_name.setPlaceholderText(tr("rk.name_auto"))
         self.item_name.setClearButtonEnabled(True)
         self.item_name.editingFinished.connect(lambda: self.rename_item(self.editor.sel_item, self.item_name.text()))
-        self.item_card.add(FieldRow(tr("rk.item_name"), self.item_name))
+        self.name_row = FieldRow(tr("rk.item_name"), self.item_name)
+        self.item_card.add(self.name_row)
         self.item_info = label("", "muted", wrap=True)
         self.item_card.add(self.item_info)
         row = QHBoxLayout()
@@ -276,12 +288,16 @@ class RacksView(QWidget):
         row.addWidget(self.down_btn)
         row.addStretch(1)
         self.auto_btn = button(tr("rk.item_auto"), "ghost", "refresh-ccw")
-        self.auto_btn.clicked.connect(lambda: self.reset_item(self.editor.sel_item))
+        self.auto_btn.clicked.connect(lambda: self.reset_items(list(self.editor.sel_items)))
         row.addWidget(self.auto_btn)
+        self.copy_item = icon_button("copy", tr("rk.copy_name"))
+        self.copy_item.clicked.connect(lambda: self.copy_names(list(self.editor.sel_items)))
+        row.addWidget(self.copy_item)
         self.del_item = button(tr("ui.delete"), "danger", "trash-2", tr("rk.item_delete"))
-        self.del_item.clicked.connect(lambda: self.delete_item(self.editor.sel_item))
+        self.del_item.clicked.connect(lambda: self.delete_items(list(self.editor.sel_items)))
         row.addWidget(self.del_item)
         self.item_card.add(row)
+        self.item_card.add(label(tr("rk.deleted_bom"), "caption", wrap=True))
         side_lay.addWidget(self.item_card)
 
         # ---- summary ---------------------------------------------------------------------
@@ -289,7 +305,14 @@ class RacksView(QWidget):
         self.summary = label("", "muted", wrap=True)
         self.sum_card.add(self.summary)
         self.sum_card.add(hline())
-        self.sum_card.add(label(tr("rk.legend", u=state.catalog.rules.dac_short_max_u), "caption", wrap=True))
+        rules = state.catalog.rules
+        self.sum_card.add(
+            label(
+                tr("rk.legend", short=rules.dac_short_per_switches, long=rules.dac_long_per_switches),
+                "caption",
+                wrap=True,
+            )
+        )
         side_lay.addWidget(self.sum_card)
         side_lay.addStretch(1)
 
@@ -318,6 +341,9 @@ class RacksView(QWidget):
             )
         )
         self.reset_btn.setEnabled(not r.input.layout.is_empty)
+        hidden = len(r.input.layout.hidden)
+        self.restore_btn.setText(tr("rk.restore", n=hidden))
+        self.restore_btn.setVisible(hidden > 0)
 
     def _redraw(self) -> None:
         r = self.state.result
@@ -427,7 +453,19 @@ class RacksView(QWidget):
                 )
                 self.del_rack.setEnabled(self._rack_count() > 1)
             self.item_card.setVisible(it is not None)
-            if it is not None:
+            many = len(self.editor.sel_items)
+            if it is not None and many > 1:
+                group = self.editor.selected_items()
+                self.item_title.setText(tr("rk.selected_n", n=many))
+                self.item_model.setText("\n".join(g.label for g in group))
+                self.item_model.setVisible(True)
+                self.name_row.setVisible(False)
+                self.item_info.setText(f"U{group[-1].u}–U{group[0].top}")
+                self.auto_btn.setVisible(any(g.manual and not g.extra for g in group))
+                self.del_item.setText(tr("rk.delete_selected", n=many))
+            elif it is not None:
+                self.name_row.setVisible(True)
+                self.del_item.setText(tr("ui.delete"))
                 span = f"U{it.u}" if it.height == 1 else f"U{it.u}–U{it.top}"
                 self.item_title.setText(it.label)
                 self.item_model.setText(it.model)
@@ -439,7 +477,6 @@ class RacksView(QWidget):
                 state = tr("rk.item_manual") if it.manual else tr("rk.item_auto_placed")
                 self.item_info.setText(f"{span} · {it.height}U · {state}")
                 self.auto_btn.setVisible(it.manual and not it.extra)
-                self.del_item.setVisible(it.extra or it.group in PASSIVE_GROUPS)
         finally:
             self._loading = False
 
@@ -553,8 +590,63 @@ class RacksView(QWidget):
         self.editor.sel_item = item_id
         self._layout(tr("rk.moved"), fn)
 
+    def move_items(self, moves: list[tuple[str, str, int]]) -> None:
+        """Several devices dragged together: one undoable edit."""
+
+        def fn(lay: dict[str, Any]) -> None:
+            for item_id, rack, u in moves:
+                ex = next((ex for ex in lay["extras"] if ex["id"] == item_id), None)
+                if ex is not None:
+                    ex["rack"], ex["u"] = rack, u
+                else:
+                    lay["positions"][item_id] = {"rack": rack, "u": u}
+
+        if moves:
+            self.editor.sel_rack = moves[0][1]
+            self.editor.sel_items = [m[0] for m in moves]
+        self._layout(tr("rk.moved"), fn)
+
+    def copy_names(self, ids: list[str] | None = None) -> None:
+        """Names to the clipboard, one per line: the given items, or every device in the cabinets shown."""
+        diagram = self.editor.diagram
+        if diagram is None:
+            return
+        names: list[str] = []
+        if ids:
+            wanted = set(ids)
+            for plan in diagram.plans:
+                for it in sorted(plan.items, key=lambda i: -i.u):
+                    if it.id in wanted and it.label:
+                        names.append(it.label)
+        else:
+            for plan in diagram.plans:
+                for it in sorted(plan.items, key=lambda i: -i.u):
+                    if it.group in POWERED_GROUPS and it.label:
+                        names.append(it.label)
+        if not names:
+            return
+        QGuiApplication.clipboard().setText("\n".join(names))
+        self.state.message.emit("success", tr("rk.copied", n=len(names)))
+
+    def restore_deleted(self) -> None:
+        if self.state.site.layout.hidden:
+            self._layout(tr("rk.restore", n=len(self.state.site.layout.hidden)), lambda lay: lay.update(hidden=[]))
+
+    def reset_items(self, ids: list[str]) -> None:
+        def fn(lay: dict[str, Any]) -> None:
+            for item_id in ids:
+                lay["positions"].pop(item_id, None)
+
+        if ids:
+            self._layout(tr("rk.item_auto"), fn)
+
     def _nudge(self, step: int) -> None:
         plan, it = self.editor.selected()
+        group = self.editor.selected_items()
+        if plan is not None and len(group) > 1:
+            if self.editor.group_fits(plan, group, step):
+                self.move_items([(g.id, plan.key, g.u + step) for g in group])
+            return
         if plan is None or it is None:
             return
         target = it.u + step
@@ -568,22 +660,25 @@ class RacksView(QWidget):
             self._layout(tr("rk.item_auto"), lambda lay: lay["positions"].pop(item_id, None))
 
     def delete_item(self, item_id: str) -> None:
-        it = self.editor.item(item_id)
-        if it is None:
-            return
-        if not (it.extra or it.group in PASSIVE_GROUPS):
-            self.state.message.emit("info", tr("rk.cannot_delete"))
+        self.delete_items([item_id])
+
+    def delete_items(self, ids: list[str]) -> None:
+        """Remove anything from the cabinets — switches and the firewall too: the specification follows."""
+        ids = [i for i in ids if self.editor.item(i) is not None]
+        if not ids:
             return
 
         def fn(lay: dict[str, Any]) -> None:
-            before = len(lay["extras"])
-            lay["extras"] = [ex for ex in lay["extras"] if ex["id"] != item_id]
-            if len(lay["extras"]) == before and item_id not in lay["hidden"]:
-                lay["hidden"].append(item_id)
-            lay["positions"].pop(item_id, None)
-            lay["labels"].pop(item_id, None)
+            for item_id in ids:
+                before = len(lay["extras"])
+                lay["extras"] = [ex for ex in lay["extras"] if ex["id"] != item_id]
+                if len(lay["extras"]) == before and item_id not in lay["hidden"]:
+                    lay["hidden"].append(item_id)
+                lay["positions"].pop(item_id, None)
+                lay["labels"].pop(item_id, None)
 
         self.editor.sel_item = ""
+        self.editor.sel_items = []
         self._layout(tr("rk.item_delete"), fn)
 
     def add_extra(
@@ -671,14 +766,19 @@ class RacksView(QWidget):
         menu = QMenu(self)
         it = self.editor.item(item_id) if item_id else None
         if it is not None:
-            if it.manual and not it.extra:
+            ids = list(self.editor.sel_items) if item_id in self.editor.sel_items else [item_id]
+            many = len(ids) > 1
+            a = QAction(icons.icon("copy", size=16), tr("rk.copy_names") if many else tr("rk.copy_name"), menu)
+            a.triggered.connect(lambda: self.copy_names(ids))
+            menu.addAction(a)
+            if any((g := self.editor.item(i)) is not None and g.manual and not g.extra for i in ids):
                 a = QAction(icons.icon("refresh-ccw", size=16), tr("rk.item_auto"), menu)
-                a.triggered.connect(lambda: self.reset_item(item_id))
+                a.triggered.connect(lambda: self.reset_items(ids))
                 menu.addAction(a)
-            if it.extra or it.group in PASSIVE_GROUPS:
-                a = QAction(icons.icon("trash-2", "error", 16), tr("rk.item_delete"), menu)
-                a.triggered.connect(lambda: self.delete_item(item_id))
-                menu.addAction(a)
+            text = tr("rk.delete_selected", n=len(ids)) if many else tr("rk.item_delete")
+            a = QAction(icons.icon("trash-2", "error", 16), text, menu)
+            a.triggered.connect(lambda: self.delete_items(ids))
+            menu.addAction(a)
         else:
             sub = menu.addMenu(icons.icon("plus", size=16), tr("rk.add_here", u=u))
             dev_act = QAction(icons.icon("server", size=16), tr("rk.add_device"), sub)

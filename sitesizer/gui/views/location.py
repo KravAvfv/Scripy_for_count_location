@@ -35,6 +35,7 @@ from ..widgets.controls import (
     DoubleSpinBox,
     FieldRow,
     FlowLayout,
+    OptionalIntEdit,
     SegmentedControl,
     SpinBox,
     Stepper,
@@ -261,15 +262,16 @@ class LocationView(QWidget):
         ident.add(
             FieldRow(tr("ui.location_code"), self.code_edit, tr("ui.location_code_caption"), tr("help.location_code"))
         )
-        self.loc_id = SpinBox()
-        self.loc_id.setRange(-1, 255)
-        self.loc_id.setSpecialValueText(tr("ui.ip_id_none"))
+        self.loc_id = OptionalIntEdit(0, 255, tr("ui.ip_id_none"))
         self.loc_id.setFixedWidth(px(140))
         self.loc_id.valueChanged.connect(self._on_loc_id)
         ident.add(FieldRow(tr("ui.location_id"), self.loc_id, tr("ui.ip_id_caption"), tr("help.location_id")))
-        self.floors = Stepper(1, 300, width=140)
-        self.floors.valueChanged.connect(lambda v: self.state.set_field("floors", v, tr("ui.floors")))
-        ident.add(FieldRow(tr("ui.floors"), self.floors, tr("ui.floors_caption"), tr("help.floors")))
+        self.floor_no = Stepper(-10, 300, width=140)
+        self.floor_no.valueChanged.connect(self._on_floor_no)
+        ident.add(FieldRow(tr("ui.floor_no"), self.floor_no, tr("ui.floor_no_caption"), tr("help.floor_no")))
+        self.fw_here = ToggleRow(tr("ui.fw_here"), tr("ui.fw_here_caption"))
+        self.fw_here.toggled.connect(self._on_fw_here)
+        ident.add(self.fw_here)
         f.addWidget(ident)
         self.ident_card = ident
 
@@ -534,6 +536,22 @@ class LocationView(QWidget):
     # =====================================================================================
     # state → widgets
     # =====================================================================================
+    def _on_floor_no(self, value: int) -> None:
+        if self._loading:
+            return
+        old = self.state.site.floor
+
+        def mutate(d: dict[str, Any]) -> None:
+            d["floor"] = int(value)
+            if d.get("name") in ("", tr("ui.floor_name", n=old)):
+                d["name"] = tr("ui.floor_name", n=int(value))
+
+        self.state.edit(tr("ui.floor_no"), mutate, merge_key="floor")
+
+    def _on_fw_here(self, on: bool) -> None:
+        if not self._loading and on:
+            self.state.set_hub(self.state.current_id)
+
     def load_from_site(self) -> None:
         s = self.state.site
         cat = self.state.catalog
@@ -546,7 +564,13 @@ class LocationView(QWidget):
             self.loc_id.blockSignals(True)
             self.loc_id.setValue(-1 if s.location_id is None else s.location_id)
             self.loc_id.blockSignals(False)
-            self.floors.setValue(s.floors)
+            self.floor_no.setValue(s.floor)
+            entry = self.state.project.site(self.state.current_id)
+            is_fw = bool(entry and entry.is_hub) or len(self.state.project.sites) <= 1
+            self.fw_here.switch.blockSignals(True)
+            self.fw_here.switch.setChecked(is_fw)
+            self.fw_here.switch.blockSignals(False)
+            self.fw_here.setEnabled(len(self.state.project.sites) > 1 and not is_fw)
             self.mode.setValue(s.mode, animate=True)
             self.mode_caption.setText(tr("ui.mode_quick_tip") if s.mode == "quick" else tr("ui.mode_extended_tip"))
             self.sockets.setValue(s.sockets)
@@ -761,6 +785,8 @@ class LocationView(QWidget):
             self.m_fw.set(
                 f"{fw.model if fw.fits else '—'}", tr("ui.m_fw_sub", n=fw.count) if fw.fits else tr("ui.m_fw_none")
             )
+        elif (elsewhere := self.state.firewall_elsewhere()) is not None:
+            self.m_fw.set(elsewhere[0], tr("ui.m_fw_on", floor=elsewhere[1]))
         else:
             self.m_fw.set("—", tr("ui.m_none"))
         self.m_sw.set(

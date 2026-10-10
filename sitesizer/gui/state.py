@@ -27,6 +27,7 @@ from ..core.catalog import (
     save_catalog,
     with_missing_defaults,
 )
+from ..core.location import LOCATION_FIELDS, LocationResult, size_location
 from ..core.models import SiteInput, SiteResult
 from ..core.project import Project, ProjectError, load_project, new_project, save_project
 from ..core.sizing import size_site
@@ -95,6 +96,8 @@ def user_catalog_path() -> Path:
 
 
 class SiteEditCommand(QUndoCommand):
+    """An edit of one floor; location-wide fields also change on the other floors (``others``)."""
+
     def __init__(
         self,
         state: AppState,
@@ -103,6 +106,7 @@ class SiteEditCommand(QUndoCommand):
         after: dict[str, Any],
         text: str,
         merge_key: str | None,
+        others: dict[str, tuple[dict[str, Any], dict[str, Any]]] | None = None,
     ) -> None:
         super().__init__(text)
         self.state = state
@@ -110,6 +114,7 @@ class SiteEditCommand(QUndoCommand):
         self.before = before
         self.after = after
         self.merge_key = merge_key
+        self.others = others or {}
         self.stamp = time.monotonic()
 
     def id(self) -> int:
@@ -123,13 +128,20 @@ class SiteEditCommand(QUndoCommand):
         if other.stamp - self.stamp > MERGE_WINDOW_S:
             return False
         self.after = other.after
+        for sid, (_b, a) in other.others.items():
+            prev = self.others.get(sid)
+            self.others[sid] = (prev[0] if prev else _b, a)
         self.stamp = other.stamp
         return True
 
     def redo(self) -> None:
+        for sid, (_b, a) in self.others.items():
+            self.state._apply_site_data(sid, a, quiet=True)
         self.state._apply_site_data(self.site_id, self.after)
 
     def undo(self) -> None:
+        for sid, (b, _a) in self.others.items():
+            self.state._apply_site_data(sid, b, quiet=True)
         self.state._apply_site_data(self.site_id, self.before)
 
 
@@ -159,6 +171,9 @@ class AppState(QObject):
         self.project_path: Path | None = None
         self._dirty_struct = False
         self.result: SiteResult | None = None
+        """Result of the current floor."""
+        self.location: LocationResult | None = None
+        """Every floor plus the whole location added up (specification, exports)."""
         self._result_cache: dict[str, tuple[str, SiteResult]] = {}
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -231,7 +246,18 @@ class AppState(QObject):
             return
         if after == before:
             return
-        self.undo.push(SiteEditCommand(self, self.current_id, before, after, text, merge_key))
+        # code, ID, tier, IP plan… belong to the whole location: every floor follows
+        shared = {k: after[k] for k in LOCATION_FIELDS if after.get(k) != before.get(k)}
+        others: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+        if shared:
+            for entry in self.project.sites:
+                if entry.id == self.current_id:
+                    continue
+                b = entry.input.model_dump(mode="json")
+                a = {**copy.deepcopy(b), **copy.deepcopy(shared)}
+                if a != b:
+                    others[entry.id] = (b, a)
+        self.undo.push(SiteEditCommand(self, self.current_id, before, after, text, merge_key, others))
 
     def set_field(self, name: str, value: Any, text: str = "", merge: bool = True) -> None:
         def mutate(d: dict[str, Any]) -> None:
@@ -242,11 +268,13 @@ class AppState(QObject):
     def replace_site(self, new_input: SiteInput, text: str) -> None:
         self.edit(text, lambda d: (d.clear(), d.update(new_input.model_dump(mode="json"))))
 
-    def _apply_site_data(self, site_id: str, data: dict[str, Any]) -> None:
+    def _apply_site_data(self, site_id: str, data: dict[str, Any], quiet: bool = False) -> None:
         entry = self.project.site(site_id)
         if entry is None:
             return
         entry.input = SiteInput.model_validate(data)
+        if quiet:
+            return
         if site_id != self.current_id:
             self.current_id = site_id
             self.projectChanged.emit()
@@ -256,20 +284,55 @@ class AppState(QObject):
     def schedule(self) -> None:
         self._timer.start()
 
+    @property
+    def location_name(self) -> str:
+        site = self.site
+        return site.location_code or self.project.name
+
+    def _size_location(self) -> LocationResult:
+        entries = [(e.id, e.input, e.is_hub) for e in self.project.sites]
+        return size_location(entries, self.catalog, self.settings.language, name=self.location_name)
+
     def recompute(self) -> None:
         self._timer.stop()
         try:
-            self.result = size_site(self.site, self.catalog, lang=self.settings.language)
+            self.location = self._size_location()
+            self.result = self.location.floor(self.current_id) or size_site(
+                self.site, self.catalog, lang=self.settings.language
+            )
         except Exception:  # never crash the UI on an engine bug
             log.exception("Sizing failed")
             self.message.emit("error", "Помилка розрахунку — деталі в журналі.")
             return
         self.resultChanged.emit(self.result)
 
+    def firewall_elsewhere(self) -> tuple[str, str] | None:
+        """(firewall model, floor name) when the firewall stands on another floor of the location."""
+        if len(self.project.sites) <= 1 or self.location is None:
+            return None
+        hub = self.project.hub
+        if hub is None or hub.id == self.current_id:
+            return None
+        fw_result = self.location.floor(hub.id)
+        fw = fw_result.firewall if fw_result else None
+        model = f"{fw.model} × {fw.count}" if fw and fw.fits and fw.count else "—"
+        return model, hub.input.name
+
+    @property
+    def location_result(self) -> SiteResult | None:
+        """The whole location added up (all floors); the current floor's result for one floor."""
+        if self.location is None or self.location.combined is None:
+            return self.result
+        return self.location.combined
+
     def result_for(self, site_id: str) -> SiteResult | None:
         entry = self.project.site(site_id)
         if entry is None:
             return None
+        if self.location is not None:
+            r = self.location.floor(site_id)
+            if r is not None and r.input == entry.input:
+                return r
         key = entry.input.model_dump_json()
         cached = self._result_cache.get(site_id)
         if cached and cached[0] == key:
@@ -301,6 +364,15 @@ class AppState(QObject):
         self.recompute()
 
     def add_site(self, site: SiteInput | None = None) -> str:
+        """A new floor of the location (shared fields copied from the current floor)."""
+        from ..i18n import tr
+
+        if site is None and self.project.sites:
+            cur = self.site.model_dump(mode="json")
+            floor = max(e.input.floor for e in self.project.sites) + 1
+            data = {k: cur[k] for k in LOCATION_FIELDS if k in cur}
+            data.update(floor=floor, name=tr("ui.floor_name", n=floor), mode=cur.get("mode", "quick"))
+            site = SiteInput.model_validate(data)
         entry = self.project.add_site(site)
         self._apply_new_site_defaults(entry.input)
         self.current_id = entry.id
@@ -312,6 +384,10 @@ class AppState(QObject):
 
         entry = self.project.duplicate_site(site_id or self.current_id, suffix=tr("ui.copy_suffix"))
         if entry:
+            # a copy of a floor is the next floor up with the same equipment
+            floor = max(e.input.floor for e in self.project.sites) + 1
+            entry.input.floor = floor
+            entry.input.name = tr("ui.floor_name", n=floor)
             self.current_id = entry.id
             self._structure_changed()
 

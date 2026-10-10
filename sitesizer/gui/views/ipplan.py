@@ -23,7 +23,7 @@ from ...i18n import current, tr
 from .. import icons
 from ..state import AppState
 from ..theme import tokens
-from ..widgets.controls import Callout, Card, Chip, FieldRow, FlowLayout, SpinBox, button, label, px
+from ..widgets.controls import Callout, Card, Chip, FieldRow, FlowLayout, OptionalIntEdit, button, label, px
 
 COL_VLAN, COL_NAME, COL_HOSTS, COL_PREFIX, COL_NET, COL_MASK, COL_GW, COL_DHCP, COL_NOTE = range(9)
 
@@ -134,9 +134,7 @@ class IpPlanView(QWidget):
         root.setSpacing(px(12))
 
         top = Card(tr("ui.ip_settings"), tr("ui.ip_settings_sub"))
-        self.loc_id = SpinBox()
-        self.loc_id.setRange(-1, 255)
-        self.loc_id.setSpecialValueText(tr("ui.ip_id_none"))
+        self.loc_id = OptionalIntEdit(0, 255, tr("ui.ip_id_none"))
         self.loc_id.setFixedWidth(px(130))
         self.loc_id.valueChanged.connect(self._on_id)
         self.template_caption = label("", "caption", wrap=True)
@@ -276,7 +274,11 @@ class IpPlanView(QWidget):
     def add_vlan(self) -> None:
         used = {
             s.vlan
-            for s in (self.state.result.ip_plan.segments if self.state.result and self.state.result.ip_plan else [])
+            for s in (
+                self.state.location_result.ip_plan.segments
+                if self.state.location_result and self.state.location_result.ip_plan
+                else []
+            )
         }
         vlan = next(v for v in range(100, 4095) if v not in used)
         new = {
@@ -325,6 +327,8 @@ class IpPlanView(QWidget):
 
     # ---- result --------------------------------------------------------------------------
     def on_result(self, result: SiteResult) -> None:
+        # one IP plan for the whole location (planned on the firewall floor)
+        result = self.state.location_result or result
         plan = result.ip_plan
         if plan is None:
             self.model.set_rows([])

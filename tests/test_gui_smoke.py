@@ -283,8 +283,6 @@ def test_rack_editor_drag_and_drop(app: QApplication, window) -> None:
     pump(app)
     editor = window.racks.editor
     plan = st.result.rack.plans[0]
-    dac = {line.model: line.qty for line in st.result.bom if line.model.startswith("FN-CABLE")}
-    assert dac == {"FN-CABLE-SFP+1": 3}
     rect = editor.item_rect_in_widget("access_switch:2")
     target = editor.unit_point(plan.key, 3)
     assert rect is not None and target is not None
@@ -295,8 +293,6 @@ def test_rack_editor_drag_and_drop(app: QApplication, window) -> None:
     pump(app)
     pos = st.site.layout.positions["access_switch:2"]
     assert (pos.rack, pos.u) == (plan.key, 3)
-    dac = {line.model: line.qty for line in st.result.bom if line.model.startswith("FN-CABLE")}
-    assert dac == {"FN-CABLE-SFP+1": 2, "FN-CABLE-SFP+3": 1}
     # keyboard nudge, extra organizer, new cabinet
     editor.setFocus()
     QTest.keyClick(editor, Qt.Key.Key_Up)
@@ -383,10 +379,27 @@ def test_export_dialog_choices(app: QApplication, window, tmp_path: Path, monkey
     window.export_all()
     QThreadPool.globalInstance().waitForDone(20_000)
     pump(app, 10)
-    wb = load_workbook(tmp_path / "out.xlsx")
-    assert wb.sheetnames == ["Слаботрумка", "BO7 - Схема+шафи", "BO7 - IP"]
+    # each table in its own file by default
+    assert sorted(p.name for p in tmp_path.glob("*.xlsx")) == [
+        "out — IP-таблиця.xlsx",
+        "out — специфікація.xlsx",
+        "out — схема шаф.xlsx",
+    ]
+    assert load_workbook(tmp_path / "out — схема шаф.xlsx").sheetnames == ["BO7 - Шафи"]
     assert (tmp_path / "out.pdf").read_bytes().startswith(b"%PDF")
     assert st.settings.export_choices["only_used"] is True
+
+    def one_file(self) -> int:
+        fake_exec(self)
+        self.split.setChecked(False)
+        return 1
+
+    monkeypatch.setattr(export_dialog.ExportDialog, "exec", one_file)
+    window.export_all()
+    QThreadPool.globalInstance().waitForDone(20_000)
+    pump(app, 10)
+    wb = load_workbook(tmp_path / "out.xlsx")
+    assert wb.sheetnames == ["Слаботрумка", "BO7 - Схема+шафи", "BO7 - IP"]
 
 
 def test_settings_and_catalog_move_over_from_the_old_name(tmp_path: Path) -> None:
@@ -530,7 +543,117 @@ def test_rack_items_rename_and_delete(app: QApplication, window) -> None:
     pump(app)
     assert not st.site.layout.extras and racks.editor.item(dev_id) is None
     assert not any(line.group == "rack_device" for line in st.result.bom)
-    # active equipment cannot be deleted
-    racks.editor.select(plan.key, sw.id)
+    # active equipment can be deleted too — the firewall and switches leave the specification
+    fw = next(it for it in st.result.rack.plans[0].items if it.group == "firewall")
+    racks.editor.select(plan.key, fw.id)
+    racks.editor.select(plan.key, sw.id, add=True)  # Ctrl+click
     pump(app)
-    assert not racks.del_item.isVisible()
+    assert racks.editor.sel_items == [fw.id, sw.id] and racks.del_item.isVisible()
+    racks.del_item.click()
+    st.recompute()
+    pump(app)
+    assert not st.result.lines("firewall")
+    assert st.result.lines("access_switch")[0].qty == 1
+    assert racks.restore_btn.isVisible()
+    racks.restore_deleted()
+    st.recompute()
+    pump(app)
+    assert st.result.lines("firewall") and st.result.lines("access_switch")[0].qty == 2
+
+
+def test_rack_multi_select_drag_and_copy(app: QApplication, window) -> None:
+    st = window.state
+    racks = window.racks
+    st.edit("t", lambda d: d.update(sockets=96, location_code="BO123"))
+    st.recompute()
+    window.navigate("racks")
+    pump(app)
+    editor = racks.editor
+    plan = st.result.rack.plans[0]
+    sws = [it for it in plan.items if it.group == "access_switch"]
+    editor.select(plan.key, sws[0].id)
+    editor.select(plan.key, sws[1].id, add=True)
+    pump(app)
+    # Ctrl+C copies the names of the selected devices, one per line
+    editor.setFocus()
+    QTest.keyClick(editor, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    pump(app)
+    assert QApplication.clipboard().text() == "BO123-1A-ASW01\nBO123-1A-ASW02"
+    # the "copy names" button copies every device of the cabinets shown
+    editor.select(plan.key)
+    racks.copy_names()
+    assert QApplication.clipboard().text().splitlines()[0] == "BO123-1A-FW01"
+    # dragging one of two selected devices moves both by the same distance
+    editor.select(plan.key, sws[0].id)
+    editor.select(plan.key, sws[1].id, add=True)
+    rect = editor.item_rect_in_widget(sws[1].id)
+    target = editor.unit_point(plan.key, 3)
+    assert rect is not None and target is not None
+    _mouse(editor, "press", rect.center())
+    _mouse(editor, "move", rect.center() + (target - rect.center()) / 2)
+    _mouse(editor, "move", target)
+    _mouse(editor, "release", target)
+    pump(app)
+    pos = st.site.layout.positions
+    delta = 3 - sws[1].u
+    assert (pos[sws[0].id].u, pos[sws[1].id].u) == (sws[0].u + delta, 3)
+    st.undo.undo()
+    pump(app)
+    assert not st.site.layout.positions
+
+
+def test_floors_of_one_location(app: QApplication, window) -> None:
+    st = window.state
+    st.edit("t", lambda d: d.update(sockets=96, location_code="BO123"))
+    first = st.current_id
+    new_id = st.add_site()
+    pump(app)
+    assert st.site.floor == 2 and st.site.name == "2 поверх" and st.site.location_code == "BO123"
+    st.edit("t", lambda d: d.update(sockets=48, location_id=57))
+    st.recompute()
+    pump(app)
+    # location-wide fields follow on every floor; one undo step reverts both
+    assert st.project.site(first).input.location_id == 57
+    # one firewall for the location, on the first floor; this floor links to it with an ODF
+    assert not st.result.lines("firewall")
+    assert any(it.label == "ODF 1A" for p in st.result.rack.plans for it in p.items)
+    combined = st.location_result
+    assert combined is not None and combined.lines("firewall")[0].qty == 1
+    assert combined.lines("access_switch")[0].qty == 3
+    window.navigate("bom")
+    pump(app)
+    assert window.bom.scope_ctl.isVisible() and window.bom.shown() is combined
+    # move the firewall to this floor
+    window.navigate("location")
+    pump(app)
+    window.location.fw_here.switch.setChecked(True)
+    pump(app)
+    assert st.project.site(new_id).is_hub and st.result.lines("firewall")
+    st.undo.undo()
+    pump(app)
+    assert st.project.site(first).input.location_id is None
+
+
+def test_location_id_typed_and_cleared(app: QApplication, window) -> None:
+    st = window.state
+    field = window.location.loc_id
+    assert field.text() == "" and st.site.location_id is None
+    field.setFocus()
+    QTest.keyClicks(field, "57")
+    pump(app)
+    assert st.site.location_id == 57
+    QTest.keyClicks(field, "9")  # 579 > 255 is refused
+    pump(app)
+    assert field.text() == "57" and st.site.location_id == 57
+    field.clear()
+    pump(app)
+    assert st.site.location_id is None
+    field.clearFocus()
+    QTest.keyClicks(field, "12")
+    pump(app)
+    assert st.site.location_id == 12
+    field.clearFocus()
+    while st.undo.canUndo():
+        st.undo.undo()
+    pump(app)
+    assert st.site.location_id is None and field.text() == ""

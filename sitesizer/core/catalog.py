@@ -229,7 +229,11 @@ class Rules(_Strict):
     dac_short_model: str = "FN-CABLE-SFP+1"
     dac_long_model: str = "FN-CABLE-SFP+3"
     dac_short_max_u: int = Field(default=10, ge=0, le=60)
-    """Devices in the same cabinet at most this many units apart get the short DAC."""
+    """Deprecated (DAC lengths no longer depend on the layout); kept so older user catalogs load."""
+    dac_short_per_switches: int = Field(default=2, ge=1)
+    """One short DAC (1 m) per this many switches of a floor: 10 switches → 5."""
+    dac_long_per_switches: int = Field(default=10, ge=1)
+    """One long DAC (3 m) per this many switches of a floor (started): 10 switches → 1."""
     core_icl_links: int = Field(default=2, ge=0)
     core_port_check: bool = True
     reserve_percent_default: float = Field(default=20, ge=0, le=500)
@@ -293,6 +297,15 @@ class PassiveRules(_Strict):
     outlet: str = "UAXCSE-U0201-C001"
     outlet_ports: int = Field(default=2, gt=0)
     manager: str = "XE005315637"
+    panels_per_switch: dict[str, int] = Field(
+        default_factory=lambda: {"wifi_switch": 1, "access_switch": 2, "camera_switch": 2}
+    )
+    """Patch panels of each switch role. One panel: panel · organizer · switch; two panels:
+    panel · organizer · switch · organizer · panel."""
+    fiber_cabinet_m: int = Field(default=5, ge=1)
+    """Fibre run between two cabinets of the same telecom room."""
+    floor_height_m: int = Field(default=4, ge=1)
+    """Fibre run per floor between a floor and the firewall floor."""
     fiber_default: Literal["auto", "om4", "os2"] = "auto"
     fiber: dict[str, FiberSpec] = Field(default_factory=dict)
     fiber_spare_ratio: float = Field(default=1.0, ge=0, le=10)

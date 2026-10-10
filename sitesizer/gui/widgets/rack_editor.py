@@ -1,8 +1,10 @@
 """Interactive cabinet editor: drag devices between units and cabinets.
 
-Paints the same :class:`~sitesizer.exporters.rack.RackDiagram` as the exports and adds selection,
-a drag ghost (green = fits, red = blocked) and keyboard moves. It never edits the layout itself;
-it emits signals that the racks page turns into undoable edits of ``SiteInput.layout``.
+Paints the same :class:`~sitesizer.exporters.rack.RackDiagram` as the exports and adds selection
+(Ctrl+click adds devices of the same cabinet, Ctrl+A selects the whole cabinet), a drag ghost
+(green = fits, red = blocked) that moves every selected device together, and keyboard moves.
+It never edits the layout itself; it emits signals that the racks page turns into undoable edits
+of ``SiteInput.layout``.
 """
 
 from __future__ import annotations
@@ -21,11 +23,16 @@ DRAG_THRESHOLD = 4
 class RackEditor(QWidget):
     moved = Signal(str, str, int)
     """(item id, cabinet key, new lowest unit)"""
+    movedMany = Signal(list)
+    """[(item id, cabinet key, new lowest unit), …] — a selection moved together."""
     selectionChanged = Signal(str, str)
     """(cabinet key, item id or "")"""
     contextRequested = Signal(str, str, int, QPoint)
     """(cabinet key, item id or "", unit, global position)"""
     deleteRequested = Signal(str)
+    deleteManyRequested = Signal(list)
+    copyRequested = Signal(list)
+    """Item ids whose names should go to the clipboard."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -33,7 +40,10 @@ class RackEditor(QWidget):
         self.zoom = 1.0
         self.sel_rack = ""
         self.sel_item = ""
+        self.sel_items: list[str] = []
+        """Every selected item (all in ``sel_rack``); ``sel_item`` is the last one clicked."""
         self._press: QPointF | None = None
+        self._press_plain = False
         self._drag: RackItem | None = None
         self._grab_offset = 0
         self._ghost: tuple[RackPlan, int, bool] | None = None
@@ -51,6 +61,11 @@ class RackEditor(QWidget):
                 self.sel_rack = diagram.plans[0].key if diagram.plans else ""
             if self.sel_item and self.item(self.sel_item) is None:
                 self.sel_item = ""
+            self.sel_items = [i for i in self.sel_items if self.item(i) is not None]
+            if self.sel_item and self.sel_item not in self.sel_items:
+                self.sel_items = [self.sel_item]
+            if not self.sel_item:
+                self.sel_items = []
         self._drag = None
         self._ghost = None
         self.updateGeometry()
@@ -82,10 +97,49 @@ class RackEditor(QWidget):
     def selected(self) -> tuple[RackPlan | None, RackItem | None]:
         return self.plan(self.sel_rack), self.item(self.sel_item) if self.sel_item else None
 
-    def select(self, rack: str, item: str = "") -> None:
+    def select(self, rack: str, item: str = "", add: bool = False) -> None:
+        """Select a cabinet / an item; ``add`` (Ctrl) toggles the item in a multi-selection."""
+        if add and item and rack == self.sel_rack:
+            if item in self.sel_items:
+                self.sel_items.remove(item)
+                item = self.sel_items[-1] if self.sel_items else ""
+            else:
+                self.sel_items.append(item)
+        else:
+            self.sel_items = [item] if item else []
         self.sel_rack, self.sel_item = rack, item
         self.selectionChanged.emit(rack, item)
         self.update()
+
+    def select_all(self) -> None:
+        plan = self.plan(self.sel_rack)
+        if plan is None:
+            return
+        ids = [it.id for it in sorted(plan.items, key=lambda i: -i.u)]
+        self.sel_items = ids
+        self.sel_item = ids[-1] if ids else ""
+        self.selectionChanged.emit(self.sel_rack, self.sel_item)
+        self.update()
+
+    def selected_items(self) -> list[RackItem]:
+        """Selected items, top-down."""
+        items = [it for i in self.sel_items if (it := self.item(i)) is not None]
+        return sorted(items, key=lambda it: -it.u)
+
+    def group_fits(self, plan: RackPlan, items: list[RackItem], delta: int, target: RackPlan | None = None) -> bool:
+        """Can ``items`` of ``plan`` move ``delta`` units (into ``target``, default the same cabinet)?"""
+        target = target or plan
+        moving = {id(it) for it in items}
+        for it in items:
+            u = it.u + delta
+            if u < 1 or u + it.height - 1 > target.size_u:
+                return False
+            for o in target.items:
+                if id(o) in moving:
+                    continue
+                if o.u <= u + it.height - 1 and u <= o.top:
+                    return False
+        return True
 
     # ---- geometry ------------------------------------------------------------------------
     def _to_diagram(self, pos: QPointF) -> QPointF:
@@ -118,25 +172,34 @@ class RackEditor(QWidget):
             p.setPen(QPen(QColor(t.primary), 2))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRoundedRect(self.diagram.header_rect(x, y).adjusted(-4, -2, 4, 0), 6, 6)
-        sel = self.item(self.sel_item) if self.sel_item else None
-        if sel is not None and plan is not None:
+        if plan is not None:
             x, y = self._origin(plan)
-            p.setPen(QPen(QColor(t.primary), 2.2))
-            p.drawRoundedRect(self.diagram.unit_rect(plan, x, y, sel.u, sel.height).adjusted(0, 0, 0, 0), 3, 3)
+            for sel in self.selected_items():
+                p.setPen(QPen(QColor(t.primary), 2.2))
+                fill = QColor(t.primary)
+                fill.setAlphaF(0.12 if len(self.sel_items) > 1 else 0.0)
+                p.setBrush(fill)
+                p.drawRoundedRect(self.diagram.unit_rect(plan, x, y, sel.u, sel.height), 3, 3)
+            p.setBrush(Qt.BrushStyle.NoBrush)
         if self._drag is not None and self._ghost is not None:
             gplan, gu, ok = self._ghost
             x, y = self._origin(gplan)
-            rect = self.diagram.unit_rect(gplan, x, y, gu, self._drag.height)
             color = QColor(t.success if ok else t.error)
             fill = QColor(color)
             fill.setAlphaF(0.22)
-            p.setPen(QPen(color, 2, Qt.PenStyle.DashLine))
-            p.setBrush(fill)
-            p.drawRoundedRect(rect, 3, 3)
-            p.setPen(color)
-            p.drawText(
-                rect.adjusted(8, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, f"U{gu}"
-            )
+            delta = gu - self._drag.u
+            for it in self._drag_group():
+                rect = self.diagram.unit_rect(gplan, x, y, it.u + delta, it.height)
+                p.setPen(QPen(color, 2, Qt.PenStyle.DashLine))
+                p.setBrush(fill)
+                p.drawRoundedRect(rect, 3, 3)
+                if it is self._drag:
+                    p.setPen(color)
+                    p.drawText(
+                        rect.adjusted(8, 0, -8, 0),
+                        Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
+                        f"U{gu}",
+                    )
         p.end()
 
     # ---- mouse ---------------------------------------------------------------------------
@@ -148,15 +211,25 @@ class RackEditor(QWidget):
         plan, item, u, _header = self.diagram.hit(pos)
         if e.button() == Qt.MouseButton.RightButton:
             if plan is not None:
-                self.select(plan.key, item.id if item else "")
+                if item is not None and item.id in self.sel_items:
+                    self.sel_item = item.id  # keep the multi-selection for the menu
+                else:
+                    self.select(plan.key, item.id if item else "")
                 self.contextRequested.emit(plan.key, item.id if item else "", u, e.globalPosition().toPoint())
             return
         if e.button() != Qt.MouseButton.LeftButton:
             return
         if plan is None:
             return
-        self.select(plan.key, item.id if item else "")
-        if item is not None:
+        ctrl = bool(e.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier))
+        if item is not None and not ctrl and item.id in self.sel_items and len(self.sel_items) > 1:
+            # pressing on a selected device keeps the selection, so that the group can be dragged
+            self.sel_item = item.id
+            self._press_plain = True
+        else:
+            self.select(plan.key, item.id if item else "", add=ctrl)
+            self._press_plain = False
+        if item is not None and item.id in self.sel_items:
             self._press = pos
             self._drag = None
             self._grab_offset = u - item.u
@@ -174,9 +247,11 @@ class RackEditor(QWidget):
             self._drag = self.item(self.sel_item)
         if self._drag is not None:
             plan, _item, u, header = self.diagram.hit(pos)
-            if plan is not None and not header:
+            src = self.plan(self.sel_rack)
+            if plan is not None and not header and src is not None:
                 target = max(1, u - self._grab_offset)
-                self._ghost = (plan, target, self.fits(plan, self._drag, target))
+                ok = self.group_fits(src, self._drag_group(), target - self._drag.u, plan)
+                self._ghost = (plan, target, ok)
             else:
                 self._ghost = None
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
@@ -190,8 +265,15 @@ class RackEditor(QWidget):
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
 
+    def _drag_group(self) -> list[RackItem]:
+        if self._drag is None:
+            return []
+        group = self.selected_items()
+        return group if any(it is self._drag for it in group) else [self._drag]
+
     def mouseReleaseEvent(self, e: QMouseEvent) -> None:
         drag, ghost = self._drag, self._ghost
+        group = self._drag_group()
         self._press = None
         self._drag = None
         self._ghost = None
@@ -200,12 +282,37 @@ class RackEditor(QWidget):
             plan, u, ok = ghost
             if ok and (plan.key != self.sel_rack or u != drag.u):
                 self.sel_rack = plan.key
-                self.moved.emit(drag.id, plan.key, u)
+                delta = u - drag.u
+                if len(group) > 1:
+                    self.movedMany.emit([(it.id, plan.key, it.u + delta) for it in group])
+                else:
+                    self.moved.emit(drag.id, plan.key, u)
+        elif drag is None and self._press_plain and self.sel_item:
+            # a plain click on a device of a multi-selection selects just that device
+            self.select(self.sel_rack, self.sel_item)
+        self._press_plain = False
         self.update()
 
     # ---- keyboard ------------------------------------------------------------------------
     def keyPressEvent(self, e: QKeyEvent) -> None:
         plan, it = self.selected()
+        ctrl = bool(e.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        if ctrl and e.key() == Qt.Key.Key_A:
+            self.select_all()
+            return
+        if ctrl and e.key() == Qt.Key.Key_C:
+            self.copyRequested.emit([i.id for i in self.selected_items()])
+            return
+        group = self.selected_items()
+        if plan is not None and len(group) > 1:
+            if e.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                step = 1 if e.key() == Qt.Key.Key_Up else -1
+                if self.group_fits(plan, group, step):
+                    self.movedMany.emit([(g.id, plan.key, g.u + step) for g in group])
+                return
+            if e.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+                self.deleteManyRequested.emit([g.id for g in group])
+                return
         if plan is not None and it is not None:
             if e.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
                 step = 1 if e.key() == Qt.Key.Key_Up else -1

@@ -19,21 +19,20 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 def demo_project():
-    from sitesizer.core.presets import preset
+    """One location (BO123) with three floors; the firewall stands on the 7th."""
+    from sitesizer.core.models import ApGroup, SiteInput
     from sitesizer.core.project import Project
 
-    project = Project(name="Демо: мережа компанії", customer="ТОВ «Приклад»", author="Мережевий інженер")
-    hq = preset("hq").build(name="Київ — головний офіс")  # type: ignore[union-attr]
-    hq.redundant_psu = True
-    hq.location_code, hq.location_id, hq.floors = "KV001", 10, 5
-    project.add_site(hq, is_hub=True)
-    wh = preset("warehouse").build(name="Склад Бровари")  # type: ignore[union-attr]
-    wh.location_code, wh.location_id = "BR014", 14
-    project.add_site(wh)
-    rd = preset("rnd_office").build(name="Львів R&D")  # type: ignore[union-attr]
-    project.add_site(rd)
-    farm = preset("farm3d").build(name="Дніпро 3D-ферма")  # type: ignore[union-attr]
-    project.add_site(farm)
+    project = Project(name="BO123 — офіс", customer="ТОВ «Приклад»", author="Мережевий інженер")
+    common = {"location_code": "BO123", "location_id": 57, "tier": 3, "redundant_psu": False}
+    floors = [
+        (7, 150, 12, [ApGroup(zone="low_density", qty=10)], True),
+        (5, 200, 20, [ApGroup(zone="low_density", qty=12)], False),
+        (1, 60, 30, [ApGroup(zone="corridor", qty=6)], False),
+    ]
+    for n, sockets, cameras, aps, fw in floors:
+        site = SiteInput(name=f"{n} поверх", floor=n, sockets=sockets, cameras=cameras, ap_groups=aps, **common)
+        project.add_site(site, is_hub=fw)
     return project
 
 

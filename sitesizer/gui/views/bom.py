@@ -61,7 +61,18 @@ from ...i18n import current, tr
 from .. import icons
 from ..state import AppState
 from ..theme import theme_manager, tokens
-from ..widgets.controls import Card, FieldRow, Pill, button, clear_layout, hline, label, paint_pill, px
+from ..widgets.controls import (
+    Card,
+    FieldRow,
+    Pill,
+    SegmentedControl,
+    button,
+    clear_layout,
+    hline,
+    label,
+    paint_pill,
+    px,
+)
 from ..widgets.overlays import confirm
 
 LINE_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -517,6 +528,17 @@ class BomView(QWidget):
 
         bar = QHBoxLayout()
         bar.setSpacing(px(8))
+        self.scope = "location"
+        """``location`` = every floor added up (read-only), ``floor`` = the current floor (editable)."""
+        self.scope_ctl = SegmentedControl(
+            [("location", tr("ui.bom_scope_location")), ("floor", tr("ui.bom_scope_floor"))], expand=False
+        )
+        self.scope_ctl.valueChanged.connect(self._set_scope)
+        self.scope_ctl.setFixedWidth(px(280))
+        scope_row = QHBoxLayout()
+        scope_row.addWidget(self.scope_ctl)
+        scope_row.addStretch(1)
+        root.addLayout(scope_row)
         self.search = QLineEdit()
         self.search.setObjectName("SearchEdit")
         self.search.setPlaceholderText(tr("ui.bom_search"))
@@ -543,7 +565,8 @@ class BomView(QWidget):
         self.copy_btn.clicked.connect(self.copy_to_clipboard)
         bar.addWidget(self.copy_btn)
         root.addLayout(bar)
-        root.addWidget(label(tr("ui.bom_edit_hint"), "caption", wrap=True))
+        self.edit_hint = label(tr("ui.bom_edit_hint"), "caption", wrap=True)
+        root.addWidget(self.edit_hint)
 
         split = QSplitter(Qt.Orientation.Horizontal)
         split.setChildrenCollapsible(False)
@@ -606,6 +629,20 @@ class BomView(QWidget):
         if self.state.result is not None:
             self.on_result(self.state.result)
 
+    def _set_scope(self, scope: str) -> None:
+        self.scope = scope
+        if self.state.result is not None:
+            self.on_result(self.state.result)
+
+    def _multi_floor(self) -> bool:
+        return len(self.state.project.sites) > 1
+
+    def shown(self) -> SiteResult | None:
+        """The result on screen: the whole location, or the current floor."""
+        if self.scope == "location" and self._multi_floor():
+            return self.state.location_result
+        return self.state.result
+
     def _headers(self) -> None:
         labels = [
             tr("col.model"),
@@ -623,6 +660,13 @@ class BomView(QWidget):
             header.resizeSection(col, px(width))
 
     def on_result(self, result: SiteResult) -> None:
+        multi = self._multi_floor()
+        self.scope_ctl.setVisible(multi)
+        readonly = multi and self.scope == "location"
+        if readonly and self.state.location_result is not None:
+            result = self.state.location_result
+        self.edit_hint.setText(tr("ui.bom_scope_hint") if readonly else tr("ui.bom_edit_hint"))
+        self.add_btn.setEnabled(not readonly)
         cur = self.tree.currentIndex()
         cur_key = None
         if cur.isValid():
@@ -670,8 +714,8 @@ class BomView(QWidget):
                     it.setData("line", KIND_ROLE)
                     it.setData(line.group, GROUP_ROLE)
                     it.setData(sort_vals[c], SORT_ROLE)
-                    it.setEditable(c in EDITABLE and line.qty is not None)
-                    if c in EDITABLE and line.qty is not None:
+                    it.setEditable(c in EDITABLE and line.qty is not None and not readonly)
+                    if c in EDITABLE and line.qty is not None and not readonly:
                         it.setToolTip(tr("ui.bom_edit_tip"))
                 gi[0].appendRow(cells)
             self.model.appendRow(gi)
@@ -692,8 +736,8 @@ class BomView(QWidget):
             self.detail.show_line(None)
         purch = [line for line in result.bom if line.qty]
         self.count_label.setText(tr("ui.bom_count", lines=len(purch), pcs=sum(line.qty or 0 for line in purch)))
-        edits = result.input.bom
-        self.reset_btn.setEnabled(bool(edits.overrides or edits.custom))
+        edits = self.state.site.bom
+        self.reset_btn.setEnabled(bool(edits.overrides or edits.custom) and not readonly)
         self._update_totals(result)
 
     # ---- manual edits --------------------------------------------------------------------
@@ -828,7 +872,7 @@ class BomView(QWidget):
         self.expand_btn.setText(tr("ui.collapse_all") if self._expanded else tr("ui.expand_all"))
 
     def copy_to_clipboard(self) -> None:
-        result = self.state.result
+        result = self.shown()
         if result is None:
             return
         t = current()

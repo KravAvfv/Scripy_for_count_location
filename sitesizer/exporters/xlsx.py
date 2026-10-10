@@ -153,7 +153,8 @@ def export_xlsx(
 ) -> Path:
     """Write the workbook and return its path.
 
-    ``options``: ``sheets`` (subset of :data:`SHEETS`), ``only_used`` (drop zero rows from the
+    ``options``: ``sheets`` (subset of :data:`SHEETS`), ``diagram`` (the network diagram under the
+    cabinets, on by default), ``only_used`` (drop zero rows from the
     specification), ``project``, ``customer``, ``author``, ``company``, ``discount_pct``, ``vat_pct``.
     """
     from ..core.catalog import load_default_catalog
@@ -171,7 +172,8 @@ def export_xlsx(
         if key == "spec":
             _spec_sheet(wb.create_sheet(sheet_title(t.t("xl.sheet_spec"))), result, catalog, t, opts)
         elif key == "racks" and (result.rack.plans or result.has_equipment):
-            _racks_sheet(wb.create_sheet(sheet_title(t.t("xl.sheet_scheme", site=site))), result, catalog, t, lang)
+            title = t.t("xl.sheet_scheme" if opts.get("diagram", True) else "xl.sheet_racks", site=site)
+            _racks_sheet(wb.create_sheet(sheet_title(title)), result, catalog, t, lang, opts.get("diagram", True))
         elif key == "ip" and result.ip_plan is not None and result.ip_plan.segments:
             _ip_sheet(wb.create_sheet(sheet_title(t.t("xl.sheet_ip_site", site=site))), result, t, opts)
         elif key == "prices":
@@ -183,6 +185,32 @@ def export_xlsx(
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
     return path
+
+
+def export_xlsx_split(
+    result: SiteResult,
+    folder: str | Path,
+    base: str,
+    catalog: Catalog | None = None,
+    lang: str = "uk",
+    options: dict[str, Any] | None = None,
+) -> list[Path]:
+    """Every chosen sheet as its own workbook: ``<base> — специфікація.xlsx``, ``<base> — шафи.xlsx``…
+
+    The cabinets file holds only the cabinets (the network diagram stays out of it).
+    """
+    t = Translator(lang)
+    opts = options or {}
+    sheets = [s for s in SHEETS if s in set(opts.get("sheets") or SHEETS)] or ["spec"]
+    out: list[Path] = []
+    for key in sheets:
+        if key == "racks" and not (result.rack.plans or result.has_equipment):
+            continue
+        if key == "ip" and (result.ip_plan is None or not result.ip_plan.segments):
+            continue
+        path = Path(folder) / f"{base} — {t.t(f'xl.file.{key}')}.xlsx"
+        out.append(export_xlsx(result, path, catalog, lang, {**opts, "sheets": [key], "diagram": False}))
+    return out
 
 
 # =========================================================================================
@@ -272,20 +300,31 @@ def rack_cell_label(item_label: str, model: str, group: str) -> str:
     return item_label
 
 
-def _racks_sheet(ws: Worksheet, result: SiteResult, catalog: Catalog, t: Translator, lang: str) -> None:
+def _racks_sheet(
+    ws: Worksheet, result: SiteResult, catalog: Catalog, t: Translator, lang: str, diagram: bool = True
+) -> None:
+    """Every cabinet drawn in cells; a location with several floors gets one band per floor."""
     ws.sheet_view.showGridLines = False
     ws.cell(row=1, column=2, value=t.t("xl.racks_title", site=result.input.name)).font = Font(
         name=FONT, size=14, bold=True, color=TEXT
     )
-    top = 3
-    col = 2
-    max_rows = 0
+    floors: dict[int, list[RackPlan]] = {}
     for plan in result.rack.plans:
-        _rack_block(ws, plan, top, col)
-        max_rows = max(max_rows, plan.size_u + 2)
-        col += 4
-    row = top + max_rows + 2
-    if result.has_equipment:
+        floors.setdefault(plan.floor, []).append(plan)
+    banded = len(floors) > 1
+    row = 3
+    for floor in sorted(floors, reverse=True):  # top floor first, like the building
+        plans = floors[floor]
+        if banded:
+            cell = ws.cell(row=row, column=2, value=t.t("xl.racks_floor", n=floor))
+            cell.font = Font(name=FONT, size=12, bold=True, color=NAVY)
+            row += 2
+        col = 2
+        for plan in plans:
+            _rack_block(ws, plan, row, col)
+            col += 4
+        row += max(p.size_u for p in plans) + 4
+    if diagram and result.has_equipment:
         try:
             png, w, h = _diagram_png(result, catalog, lang)
         except Exception:

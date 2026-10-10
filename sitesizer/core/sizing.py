@@ -22,6 +22,7 @@ from .models import (
     Check,
     EffectiveCounts,
     FirewallChoice,
+    FloorContext,
     IpPlan,
     PowerSummary,
     RackSummary,
@@ -29,7 +30,7 @@ from .models import (
     SiteInput,
     SiteResult,
 )
-from .passive import EDGE_KEYS, plan_passive
+from .passive import plan_passive
 
 log = logging.getLogger(__name__)
 
@@ -92,6 +93,16 @@ class _Ctx:
     """BoM line key -> calculated quantity, for lines whose count the user overrode."""
     manual_devices: list[tuple[str, Device]] = field(default_factory=list)
     """Catalog devices the user put into cabinets by hand, one entry per unit."""
+    floor: FloorContext | None = None
+    """Place of this floor in a multi-floor location (``None`` = standalone location)."""
+
+    @property
+    def has_firewall(self) -> bool:
+        return self.floor is None or self.floor.has_firewall
+
+    def other(self, key: str) -> int:
+        """Total of the location's other floors (0 for a standalone location)."""
+        return self.floor.others.get(key, 0) if self.floor and self.floor.has_firewall else 0
 
     def manual_count(self, *kinds: str) -> int:
         return sum(1 for _, dev in self.manual_devices if dev.kind in kinds)
@@ -339,7 +350,8 @@ def size_core(ctx: _Ctx, edge_count: int, fw_count_hint: int) -> CategoryResult:
     cat = ctx.catalog.categories["core_switch"]
     res = CategoryResult(key="core_switch", endpoints=edge_count, endpoints_per_switch=cat.endpoints_per_switch)
     mode = ctx.site.aggregation
-    auto_need = edge_count > ctx.rules.core_min_switches and ctx.site.floors > ctx.rules.core_min_floors
+    floors = ctx.floor.floors if ctx.floor else ctx.site.floors
+    auto_need = edge_count > ctx.rules.core_min_switches and floors > ctx.rules.core_min_floors
     need = mode == "yes" or (mode == "auto" and auto_need)
     if not need:
         if mode == "no" and auto_need:
@@ -450,7 +462,7 @@ def addon_enabled(site: SiteInput, key: str, tier: Tier) -> bool:
     if value is not None:
         return bool(value)
     extended = site.mode == "extended"
-    if key in ("cabling", "rack"):
+    if key in ("cabling", "rack", "transceivers"):
         return True
     if key == "spares":
         return extended and tier.spare_percent > 0
@@ -465,8 +477,12 @@ def resolve_addons(site: SiteInput, tier: Tier) -> dict[str, bool]:
     return {k: addon_enabled(site, k, tier) for k in ADDON_KEYS}
 
 
-def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk") -> SiteResult:
-    """Run the full sizing for one location."""
+def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk", floor: FloorContext | None = None) -> SiteResult:
+    """Run the full sizing for one location, or for one floor of a location (``floor``).
+
+    A floor without the firewall gets neither the firewall nor the core: they are sized once, on
+    the firewall floor, for the switches and APs of every floor (``floor.others``).
+    """
     t = Translator(lang)
     tier = catalog.tier(site.tier)
     checks: list[Check] = []
@@ -476,7 +492,7 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk") -> SiteResult
         dual_psu, confirmed = tier.dual_psu, False
     else:
         dual_psu, confirmed = site.redundant_psu, True
-    ctx = _Ctx(site=site, catalog=catalog, t=t, tier=tier, counts=counts, dual_psu=dual_psu, checks=checks)
+    ctx = _Ctx(site=site, catalog=catalog, t=t, tier=tier, counts=counts, dual_psu=dual_psu, checks=checks, floor=floor)
     ctx.manual_devices = [
         (ex.model, catalog.models[ex.model])
         for ex in site.layout.extras
@@ -506,14 +522,18 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk") -> SiteResult
     }
     edge = sum(c.count for c in categories.values())
     fw_count_hint = 2 if tier.fw_ha else 1
-    core = size_core(ctx, edge, fw_count_hint)
+    if ctx.has_firewall:
+        core = size_core(ctx, edge + ctx.other("switches"), fw_count_hint)
+    else:
+        core = CategoryResult(key="core_switch")
     total_switches = edge + core.count
 
     firewall: FirewallChoice | None = None
-    # switches / APs placed into cabinets by hand are managed by the same FortiGate
-    managed_switches = total_switches + ctx.manual_count("switch")
-    managed_aps = counts.aps + ctx.manual_count("ap")
-    if managed_switches > 0:
+    # switches / APs placed into cabinets by hand (and those of the other floors) are managed
+    # by the same FortiGate
+    managed_switches = total_switches + ctx.manual_count("switch") + ctx.other("switches")
+    managed_aps = counts.aps + ctx.manual_count("ap") + ctx.other("aps")
+    if managed_switches > 0 and ctx.has_firewall:
         firewall = pick_firewall(ctx, managed_switches, managed_aps, requires_10g=core.count > 0)
         firewall.count = apply_count_override(ctx, "firewall", firewall.model, firewall.count)
         if not firewall.fits:
@@ -543,10 +563,12 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk") -> SiteResult
     _uplink_checks(ctx, categories, core, firewall)
 
     bom: list[BomLine] = []
-    _bom_equipment(ctx, bom, categories, core, firewall)
     power = compute_power(ctx, categories, core, firewall)
     rack = compute_rack(ctx, categories, core, firewall, power, addons)
-    _bom_tier_lines(ctx, bom, power, addons)
+    if _counts_from_racks(rack, categories, core, firewall):
+        power = compute_power(ctx, categories, core, firewall)
+    _bom_equipment(ctx, bom, categories, core, firewall)
+    _bom_tier_lines(ctx, bom, power, addons, rack)
     if addons["transceivers"]:
         _bom_transceivers(ctx, bom, categories, core, firewall, rack)
     if addons["cabling"]:
@@ -554,7 +576,7 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk") -> SiteResult
     if addons["rack"] and rack.plans:
         _bom_rack(ctx, bom, rack)
     _bom_rack_devices(ctx, bom, rack)
-    if addons["licensing"] and firewall is not None:
+    if addons["licensing"]:
         _bom_licensing(ctx, bom, categories, core, firewall)
     if addons["spares"]:
         _bom_spares(ctx, bom)
@@ -590,7 +612,7 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk") -> SiteResult
     _finalize_bom(ctx, bom)
     _bom_custom(ctx, bom)
 
-    ip_plan = build_ip_plan(ctx, total_switches, firewall)
+    ip_plan = build_ip_plan(ctx, sum(c.count for c in categories.values()) + core.count, firewall)
 
     order = {Severity.ERROR: 0, Severity.WARNING: 1, Severity.INFO: 2}
     checks.sort(key=lambda c: order[c.severity])
@@ -761,7 +783,7 @@ def _bom_equipment(
             )
         )
 
-    if fw is not None:
+    if fw is not None and fw.count:
         reason = " ".join(fw.reasons)
         tags = []
         if ctx.tier.fw_ha:
@@ -780,12 +802,16 @@ def _bom_equipment(
         )
 
 
-def _bom_tier_lines(ctx: _Ctx, bom: list[BomLine], power: PowerSummary, addons: dict[str, bool]) -> None:
+def _bom_tier_lines(
+    ctx: _Ctx, bom: list[BomLine], power: PowerSummary, addons: dict[str, bool], rack: RackSummary
+) -> None:
     t = ctx.t
     edge_or_fw = any(line.group in ("firewall", "wifi_switch", "access_switch", "camera_switch") for line in bom)
     if not edge_or_fw:
         return
-    if ctx.tier.ups or addons["ups"]:
+    in_racks = [it.id for p in rack.plans for it in p.items]
+    ups_in_racks = sum(1 for i in in_racks if i.startswith("ups:"))
+    if (ctx.tier.ups or addons["ups"]) and (ups_in_racks or not rack.plans):
         if ctx.rules.power_model == "legacy":
             bom.append(
                 BomLine(
@@ -803,6 +829,8 @@ def _bom_tier_lines(ctx: _Ctx, bom: list[BomLine], power: PowerSummary, addons: 
             ups_dev = ctx.catalog.models.get(model)
             if ups_dev and ups_dev.ups_va and power.ups_va > ups_dev.ups_va:
                 qty = math.ceil(power.ups_va / ups_dev.ups_va)
+            if rack.plans:
+                qty = ups_in_racks  # what is left in the cabinets (the user may delete a UPS)
             bom.append(
                 BomLine(
                     group="power",
@@ -821,7 +849,7 @@ def _bom_tier_lines(ctx: _Ctx, bom: list[BomLine], power: PowerSummary, addons: 
                     tags=["tier"] if ctx.tier.ups else ["addon"],
                 )
             )
-    if ctx.tier.oob:
+    if ctx.tier.oob and ctx.has_firewall and ("oob" in in_racks or not rack.plans):
         bom.append(
             BomLine(
                 group="power", category=t.t("cat.oob"), model="OOB-LTE", qty=1, reason=t.t("reason.oob"), tags=["tier"]
@@ -837,112 +865,50 @@ def _bom_transceivers(
     fw: FirewallChoice | None,
     rack: RackSummary,
 ) -> None:
-    """Uplinks: DAC length from the cabinet layout, fibre transceivers for remote closets."""
+    """DACs per number of switches on the floor, a transceiver at every fibre link end."""
     t, rules = ctx.t, ctx.rules
-    edge = sum(c.count for c in categories.values())
-    if edge == 0 and core.count == 0:
-        return
+    switches = sum(c.count for c in categories.values()) + core.count
     fw_count = fw.count if fw else 0
     fw_dev = ctx.catalog.models.get(fw.model) if fw else None
     fw_has_10g = bool(fw_dev and fw_dev.firewall and fw_dev.firewall.ports_10g > 0)
     ps = rack.passive
-    remote_links = ps.fiber_links
     fspec = ctx.catalog.passive.fiber.get(ps.fiber_type)
 
-    where: dict[str, tuple[str, float]] = {}
-    local_edges: list[str] = []
-    for plan in rack.plans:
-        for it in sorted(plan.items, key=lambda i: -i.u):
-            where[it.id] = (plan.key, (it.u + it.top) / 2)
-            if it.group in EDGE_KEYS and plan.room == 0:
-                local_edges.append(it.id)
-    short = long = gc = 0
-
-    def link(a: str, b: str) -> None:
-        nonlocal short, long
-        pa, pb = where.get(a), where.get(b)
-        if pa and pb and pa[0] == pb[0] and abs(pa[1] - pb[1]) <= rules.dac_short_max_u:
-            short += 1
-        else:
-            long += 1
-
-    details: list[str] = []
-    if core.count:
-        per_group = 2 if ctx.tier.core_redundant else 1
-        groups = max(1, core.count // per_group)
-        for i, sid in enumerate(local_edges):
-            g = i % groups
-            for j in range(core.uplinks_per_switch):
-                link(sid, f"core_switch:{min(core.count, g * per_group + j % per_group + 1)}")
-        fw_links = 0
-        if fw_has_10g:
-            for c in range(core.count):
-                for f in range(max(fw_count, 1)):
-                    link(f"core_switch:{c + 1}", f"firewall:{f + 1}")
-                    fw_links += 1
-        icl = 0
-        if ctx.tier.core_redundant:
-            for g in range(groups):
-                for _ in range(rules.core_icl_links):
-                    link(f"core_switch:{g * 2 + 1}", f"core_switch:{g * 2 + 2}")
-                    icl += 1
-        details.append(t.t("detail.links_core", edge=len(local_edges) * core.uplinks_per_switch, fw=fw_links, icl=icl))
-    else:
-        if fw_has_10g:
-            for sid in local_edges:
-                link(sid, "firewall:1")
-        else:
-            gc += len(local_edges)
-        details.append(t.t("detail.links_direct", edge=edge))
-    if remote_links:
-        details.append(t.t("detail.links_remote", n=remote_links, idf=rack.idf_count - 1))
-    dac_detail = [t.t("detail.dac_length", u=rules.dac_short_max_u), *details]
-    for model, qty, key in (
-        (rules.dac_short_model, short, "reason.dac_short"),
-        (rules.dac_long_model, long, "reason.dac_long"),
-    ):
-        if qty:
+    def add(model: str, qty: int, reason: str) -> None:
+        if qty > 0:
             bom.append(
                 BomLine(
                     group="transceiver",
                     category=t.t("cat.transceivers"),
                     model=model,
                     qty=qty,
-                    reason=t.t(key, u=rules.dac_short_max_u),
-                    details=dac_detail,
+                    reason=reason,
+                    details=[
+                        t.t("detail.dac_rule", short=rules.dac_short_per_switches, long=rules.dac_long_per_switches)
+                    ],
                     tags=["addon"],
                 )
             )
-    if remote_links:
-        model = fspec.transceiver if fspec else "FN-TRAN-SFP+SR"
-        bom.append(
-            BomLine(
-                group="transceiver",
-                category=t.t("cat.transceivers"),
-                model=model,
-                qty=remote_links * 2,
-                reason=t.t(
-                    "reason.sr",
-                    idf=rack.idf_count - 1,
-                    n=remote_links,
-                    fiber=t.pick(fspec.label) if fspec else "",
-                ),
-                details=details,
-                tags=["addon"],
-            )
+
+    if switches:
+        add(
+            rules.dac_short_model,
+            ceil_div(switches, rules.dac_short_per_switches),
+            t.t("reason.dac_short_n", per=rules.dac_short_per_switches, n=switches),
         )
-    if gc:
-        bom.append(
-            BomLine(
-                group="transceiver",
-                category=t.t("cat.transceivers"),
-                model="FN-TRAN-GC",
-                qty=gc,
-                reason=t.t("reason.gc", model=fw.model if fw else ""),
-                details=details,
-                tags=["addon"],
-            )
+        add(
+            rules.dac_long_model,
+            ceil_div(switches, rules.dac_long_per_switches),
+            t.t("reason.dac_long_n", per=rules.dac_long_per_switches, n=switches),
         )
+    if ps.fiber_ends:
+        add(
+            fspec.transceiver if fspec else "FN-TRAN-SFP+SR",
+            ps.fiber_ends,
+            t.t("reason.sr_odf", n=ps.fiber_ends, fiber=t.pick(fspec.label) if fspec else ""),
+        )
+    if fw_count and not fw_has_10g and not core.count and switches:
+        add("FN-TRAN-GC", fw_count, t.t("reason.gc", model=fw.model if fw else ""))
 
 
 def _finalize_bom(ctx: _Ctx, bom: list[BomLine]) -> None:
@@ -1003,7 +969,7 @@ def _bom_custom(ctx: _Ctx, bom: list[BomLine]) -> None:
 
 def _bom_cabling(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
     t, pr, ps = ctx.t, ctx.catalog.passive, rack.passive
-    if ps.copper_links <= 0 and ps.fiber_links <= 0:
+    if ps.copper_links <= 0 and ps.fiber_links <= 0 and ps.housings_12 <= 0:
         return
     avg = ctx.site.avg_cable_run_m or ctx.rules.avg_cable_run_m_default
     copper = t.t("cat.copper")
@@ -1048,57 +1014,42 @@ def _bom_cabling(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
         add(
             "cabling",
             copper,
-            pr.panel,
-            ps.panels,
-            t.t("reason.patch_panels", n=ps.copper_links, ports=pr.panel_ports),
-        )
-        add(
-            "cabling",
-            copper,
-            pr.outlet,
-            ps.outlets,
-            t.t("reason.outlets", sockets=ps.sockets, per=pr.outlet_ports, dev=ps.device_links),
-        )
-        add(
-            "cabling",
-            copper,
             pr.cord_rack,
             ps.cords_rack,
             t.t("reason.cords_rack", links=ps.copper_links, dev=ps.device_links),
         )
         add("cabling", copper, pr.cord_user, ps.cords_user, t.t("reason.cords_user", n=ps.sockets))
-        add("cabling", copper, pr.manager, ps.managers, t.t("reason.cable_managers"))
+    # panels and organizers: exactly what stands in the cabinets
+    add("cabling", copper, pr.panel, ps.panels, t.t("reason.patch_panels_rack", n=ps.panels))
+    add("cabling", copper, pr.manager, ps.managers, t.t("reason.cable_managers"))
 
     fspec = ctx.catalog.passive.fiber.get(ps.fiber_type)
-    if ps.fiber_links and fspec is not None:
+    if (ps.fiber_links or ps.housings_12) and fspec is not None:
         fiber = t.t("cat.fiber")
         flabel = t.pick(fspec.label)
         choice = (
-            t.t("detail.fiber_auto", m=max(ps.backbone_m, default=0), limit=fspec.max_10g_m, type=flabel)
+            t.t("detail.fiber_auto_links", limit=fspec.max_10g_m, type=flabel)
             if ps.fiber_auto
             else t.t("detail.fiber_manual", type=flabel)
         )
-        runs = ", ".join(f"{m} м" for m in ps.backbone_m)
         add(
             "fiber",
             fiber,
             fspec.cable,
             ps.fiber_m,
             t.t(
-                "reason.fiber_cable",
-                cables=ps.fiber_cables,
+                "reason.fiber_cable_links",
+                links=ps.fiber_links,
                 f=fspec.cable_fibers,
                 type=flabel,
-                runs=runs,
                 slack=pr.fiber_slack_m,
                 m=ps.fiber_m,
             ),
-            [choice, t.t("detail.fiber_spare", links=ps.fiber_links, pct=round(pr.fiber_spare_ratio * 100))],
+            [choice],
         )
-        add("fiber", fiber, fspec.housing_24, ps.housings_24, t.t("reason.housing", f=24))
-        add("fiber", fiber, fspec.housing_12, ps.housings_12, t.t("reason.housing", f=12))
+        add("fiber", fiber, fspec.housing_12, ps.housings_12, t.t("reason.odf", n=ps.housings_12))
         add("fiber", fiber, pr.splice_protector, ps.splices, t.t("reason.splices", n=ps.splices))
-        add("fiber", fiber, fspec.cord, ps.fiber_cords, t.t("reason.fiber_cords", links=ps.fiber_links))
+        add("fiber", fiber, fspec.cord, ps.fiber_cords, t.t("reason.fiber_cords_odf", n=ps.fiber_cords))
 
 
 def _bom_rack(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
@@ -1168,11 +1119,15 @@ def _bom_rack_devices(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
 
 
 def _bom_licensing(
-    ctx: _Ctx, bom: list[BomLine], categories: dict[str, CategoryResult], core: CategoryResult, fw: FirewallChoice
+    ctx: _Ctx,
+    bom: list[BomLine],
+    categories: dict[str, CategoryResult],
+    core: CategoryResult,
+    fw: FirewallChoice | None,
 ) -> None:
     t = ctx.t
     bundle = ctx.tier.fortiguard
-    if bundle != "none" and fw.fits:
+    if bundle != "none" and fw is not None and fw.fits and fw.count:
         fw_dev = ctx.catalog.device(fw.model)
         sku = ""
         if fw_dev.firewall and fw_dev.firewall.sku_code:
@@ -1236,6 +1191,31 @@ def _bom_spares(ctx: _Ctx, bom: list[BomLine]) -> None:
 # =========================================================================================
 # power, rack, uplinks
 # =========================================================================================
+def _counts_from_racks(
+    rack: RackSummary, categories: dict[str, CategoryResult], core: CategoryResult, fw: FirewallChoice | None
+) -> bool:
+    """Equipment counts follow the cabinets: a switch or firewall the user deleted is not ordered.
+
+    Returns True when anything changed.
+    """
+    placed: dict[str, int] = {}
+    for plan in rack.plans:
+        for it in plan.items:
+            placed[it.group] = placed.get(it.group, 0) + 1
+    changed = False
+    for res in (*categories.values(), core):
+        n = placed.get(res.key, 0)
+        if n < res.count:
+            res.count = n
+            changed = True
+    if fw is not None and fw.fits:
+        n = placed.get("firewall", 0)
+        if n < fw.count:
+            fw.count = n
+            changed = True
+    return changed
+
+
 def compute_power(
     ctx: _Ctx, categories: dict[str, CategoryResult], core: CategoryResult, fw: FirewallChoice | None
 ) -> PowerSummary:
@@ -1450,13 +1430,19 @@ def build_ip_plan(ctx: _Ctx, total_switches: int, fw: FirewallChoice | None) -> 
     counts = ctx.counts
     wifi_hosts = counts.wifi_clients or counts.aps * ctx.rules.wifi_clients_per_ap_default
     fw_count = fw.count if fw else 0
+    # the firewall floor plans the VLANs of the whole location
     sources = {
-        "sockets": counts.sockets,
-        "wifi": wifi_hosts,
+        "sockets": counts.sockets + ctx.other("sockets"),
+        "wifi": wifi_hosts + ctx.other("wifi"),
         "guest": ctx.site.guest_clients,
-        "cameras": counts.cameras,
+        "cameras": counts.cameras + ctx.other("cameras"),
         "iot": ctx.site.iot_devices,
-        "mgmt": total_switches + fw_count + counts.aps + ctx.manual_count("switch", "firewall", "ap"),
+        "mgmt": total_switches
+        + fw_count
+        + counts.aps
+        + ctx.manual_count("switch", "firewall", "ap")
+        + ctx.other("switches")
+        + ctx.other("aps"),
     }
     requests: list[SegmentRequest] = []
     for seg in rules.segments:

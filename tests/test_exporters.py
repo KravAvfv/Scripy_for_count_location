@@ -148,3 +148,15 @@ def test_exports_include_rack_devices(tmp_path: Path, catalog: Catalog) -> None:
     assert any(row and "FS-148F" in " ".join(map(str, row)) for row in rack_table_rows(r))
     assert export_png(RackDiagram(r, catalog), tmp_path / "r.png").exists()  # type: ignore[arg-type]
     assert export_pdf(r, tmp_path / "r.pdf", catalog=catalog).stat().st_size > 1000
+
+
+def test_xlsx_split_files(tmp_path: Path, catalog: Catalog, hq_result) -> None:
+    from sitesizer.exporters.xlsx import export_xlsx_split
+
+    paths = export_xlsx_split(hq_result, tmp_path, "BO1", catalog=catalog, options={"sheets": ["spec", "racks"]})
+    assert [p.name for p in paths] == ["BO1 — специфікація.xlsx", "BO1 — схема шаф.xlsx"]
+    assert load_workbook(paths[0]).sheetnames == ["Слаботрумка"]
+    racks = load_workbook(paths[1])
+    assert len(racks.sheetnames) == 1 and racks.sheetnames[0].endswith("Шафи")
+    with zipfile.ZipFile(paths[1]) as z:  # cabinets only, no network diagram picture
+        assert not any(n.startswith("xl/media/") for n in z.namelist())
