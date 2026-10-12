@@ -193,6 +193,8 @@ class RacksView(QWidget):
         self.editor.deleteManyRequested.connect(self.delete_items)
         self.editor.copyRequested.connect(lambda ids: self.copy_names(ids or None))
         self.editor.swapped.connect(self.swap_items)
+        self.editor.cutRequested.connect(self.cut_items)
+        self.editor.pasteRequested.connect(self.paste_items)
         self.editor.selectionChanged.connect(lambda *_: self._load_side())
         self.editor.contextRequested.connect(self._context)
         self.editor.deleteRequested.connect(self.delete_item)
@@ -625,6 +627,26 @@ class RacksView(QWidget):
         self.editor.sel_rack, self.editor.sel_item = moves[0][1], moves[0][0]
         self.editor.sel_items = [moves[0][0]]
 
+    def cut_items(self, ids: list[str]) -> None:
+        """Put devices aside; Ctrl+V (or «Paste here») moves them to the unit clicked, in any cabinet."""
+        self.editor.cut_ids = [i for i in ids if self.editor.item(i) is not None]
+        self.editor.update()
+        if self.editor.cut_ids:
+            self.state.message.emit("info", tr("rk.cut", n=len(self.editor.cut_ids)))
+
+    def paste_items(self, rack: str, u: int = 0) -> None:
+        """Move the cut devices into ``rack`` (their top at unit ``u``, or as high as there is room)."""
+        ids = list(self.editor.cut_ids)
+        if not ids:
+            return
+        moves = self.editor.paste_moves(ids, rack, u)
+        if moves is None:
+            self.state.message.emit("error", tr("rk.paste_no_space", n=len(ids)))
+            return
+        self.editor.cut_ids = []
+        self.move_items(moves)
+        self.editor.sel_item = moves[-1][0]
+
     def copy_names(self, ids: list[str] | None = None) -> None:
         """Names to the clipboard, one per line: the given items, or every device in the cabinets shown."""
         diagram = self.editor.diagram
@@ -790,6 +812,10 @@ class RacksView(QWidget):
             a = QAction(icons.icon("copy", size=16), tr("rk.copy_names") if many else tr("rk.copy_name"), menu)
             a.triggered.connect(lambda: self.copy_names(ids))
             menu.addAction(a)
+            a = QAction(icons.icon("scissors", size=16), tr("rk.cut_action", n=len(ids)), menu)
+            a.setShortcut("Ctrl+X")
+            a.triggered.connect(lambda: self.cut_items(ids))
+            menu.addAction(a)
             if any((g := self.editor.item(i)) is not None and g.manual and not g.extra for i in ids):
                 a = QAction(icons.icon("refresh-ccw", size=16), tr("rk.item_auto"), menu)
                 a.triggered.connect(lambda: self.reset_items(ids))
@@ -808,6 +834,13 @@ class RacksView(QWidget):
                 a = QAction(tr(f"rack.extra.{kind}"), sub)
                 a.triggered.connect(lambda _=False, k=kind: self.add_extra(k, u))
                 sub.addAction(a)
+        if self.editor.cut_ids:
+            a = QAction(
+                icons.icon("clipboard-list", size=16), tr("rk.paste_here", n=len(self.editor.cut_ids), u=u), menu
+            )
+            a.setShortcut("Ctrl+V")
+            a.triggered.connect(lambda: self.paste_items(rack, u))
+            menu.addAction(a)
         menu.addSeparator()
         a = QAction(icons.icon("trash-2", "error", 16), tr("rk.delete_rack"), menu)
         a.setEnabled(self._rack_count() > 1)

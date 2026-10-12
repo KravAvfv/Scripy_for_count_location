@@ -637,6 +637,41 @@ def test_rack_multi_select_drag_and_copy(app: QApplication, window) -> None:
     assert not st.site.layout.positions
 
 
+def test_rack_cut_and_paste_into_another_cabinet(app: QApplication, window) -> None:
+    st = window.state
+    racks = window.racks
+    st.edit("t", lambda d: d.update(sockets=96, location_code="BO123"))
+    st.recompute()
+    window.navigate("racks")
+    pump(app)
+    racks.add_rack(42)
+    st.recompute()
+    pump(app)
+    editor = racks.editor
+    src, dst = st.result.rack.plans[0], st.result.rack.plans[-1]
+    assert src.key != dst.key
+    sws = [it for it in src.items if it.group == "access_switch"]
+    editor.select(src.key, sws[0].id)
+    editor.select(src.key, sws[1].id, add=True)
+    editor.setFocus()
+    QTest.keyClick(editor, Qt.Key.Key_X, Qt.KeyboardModifier.ControlModifier)
+    assert editor.cut_ids == [sws[0].id, sws[1].id]
+    # click unit 30 of the other cabinet, paste: both move there, spaced as before, top at U30
+    pt = editor.unit_point(dst.key, 30)
+    assert pt is not None
+    _mouse(editor, "press", pt)
+    _mouse(editor, "release", pt)
+    QTest.keyClick(editor, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+    pump(app)
+    pos = st.site.layout.positions
+    assert pos[sws[0].id].rack == dst.key and pos[sws[1].id].rack == dst.key
+    assert pos[sws[0].id].u == 30 and pos[sws[0].id].u - pos[sws[1].id].u == sws[0].u - sws[1].u
+    assert not editor.cut_ids
+    st.undo.undo()
+    pump(app)
+    assert not st.site.layout.positions
+
+
 def test_floors_of_one_location(app: QApplication, window) -> None:
     st = window.state
     st.edit("t", lambda d: d.update(sockets=96, location_code="BO123"))

@@ -1,7 +1,8 @@
 """Interactive cabinet editor: drag devices between units and cabinets.
 
 Paints the same :class:`~sitesizer.exporters.rack.RackDiagram` as the exports and adds selection
-(Ctrl+click adds devices of the same cabinet, Ctrl+A selects the whole cabinet), a drag ghost
+(Ctrl+click adds devices of the same cabinet, Ctrl+A selects the whole cabinet), cut and paste
+of the selection into another cabinet (Ctrl+X or Ctrl+C, click a unit, Ctrl+V), a drag ghost
 (green = fits, red = blocked) that moves every selected device together, swapping two devices by
 dropping one onto the other (blue ⇄), and keyboard moves.
 It never edits the layout itself; it emits signals that the racks page turns into undoable edits
@@ -36,6 +37,10 @@ class RackEditor(QWidget):
     """Item ids whose names should go to the clipboard."""
     swapped = Signal(list)
     """[(item id, cabinet key, new lowest unit), (other id, …)] — a device dropped onto another one."""
+    cutRequested = Signal(list)
+    """Item ids put aside to be pasted into another place (Ctrl+X / Ctrl+C)."""
+    pasteRequested = Signal(str, int)
+    """(cabinet key, unit clicked there or 0) — Ctrl+V."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -45,6 +50,10 @@ class RackEditor(QWidget):
         self.sel_item = ""
         self.sel_items: list[str] = []
         """Every selected item (all in ``sel_rack``); ``sel_item`` is the last one clicked."""
+        self.sel_u = 0
+        """The unit last clicked in ``sel_rack`` (where Ctrl+V puts the cut devices)."""
+        self.cut_ids: list[str] = []
+        """Devices cut (Ctrl+X / Ctrl+C) and waiting for Ctrl+V."""
         self._press: QPointF | None = None
         self._press_plain = False
         self._drag: RackItem | None = None
@@ -71,6 +80,7 @@ class RackEditor(QWidget):
                 self.sel_items = [self.sel_item]
             if not self.sel_item:
                 self.sel_items = []
+            self.cut_ids = [i for i in self.cut_ids if self.item(i) is not None]
         self._drag = None
         self._ghost = None
         self._swap = None
@@ -113,6 +123,8 @@ class RackEditor(QWidget):
                 self.sel_items.append(item)
         else:
             self.sel_items = [item] if item else []
+        if rack != self.sel_rack:
+            self.sel_u = 0
         self.sel_rack, self.sel_item = rack, item
         self.selectionChanged.emit(rack, item)
         self.update()
@@ -165,6 +177,43 @@ class RackEditor(QWidget):
                 return ua, ub
         return None
 
+    def paste_moves(self, ids: list[str], rack: str, u: int = 0) -> list[tuple[str, str, int]] | None:
+        """Where the cut devices land in cabinet ``rack``: their top at unit ``u`` (or as high as
+        possible), spaced as they were — or packed together when that does not fit. ``None``: no room."""
+        target = self.plan(rack)
+        items = sorted((it for i in ids if (it := self.item(i)) is not None), key=lambda it: -it.u)
+        if target is None or not items:
+            return None
+        moving = {id(it) for it in items}
+        occupied = [False] * (target.size_u + 2)
+        for o in target.items:
+            if id(o) not in moving:
+                for k in range(max(1, o.u), min(target.size_u, o.top) + 1):
+                    occupied[k] = True
+
+        def place(offsets: list[int], top: int) -> list[int] | None:
+            out = []
+            for it, off in zip(items, offsets, strict=True):
+                lo = top - off - it.height + 1
+                if lo < 1 or lo + it.height - 1 > target.size_u or any(occupied[lo : lo + it.height]):
+                    return None
+                out.append(lo)
+            return out
+
+        spaced = [items[0].top - it.top for it in items]
+        packed, depth = [], 0
+        for it in items:
+            packed.append(depth)
+            depth += it.height
+        want = u or target.size_u
+        tops = sorted(range(1, target.size_u + 1), key=lambda k: (abs(k - want), -k))
+        for offsets in (spaced, packed):
+            for top in tops:
+                units = place(offsets, top)
+                if units is not None:
+                    return [(it.id, rack, lo) for it, lo in zip(items, units, strict=True)]
+        return None
+
     # ---- geometry ------------------------------------------------------------------------
     def _to_diagram(self, pos: QPointF) -> QPointF:
         return QPointF(pos.x() / self.zoom, pos.y() / self.zoom)
@@ -205,6 +254,15 @@ class RackEditor(QWidget):
                 p.setBrush(fill)
                 p.drawRoundedRect(self.diagram.unit_rect(plan, x, y, sel.u, sel.height), 3, 3)
             p.setBrush(Qt.BrushStyle.NoBrush)
+        for plan_, x, y in self.diagram.origins():
+            for it in plan_.items:
+                if it.id in self.cut_ids:
+                    p.setPen(QPen(QColor(t.primary), 1.6, Qt.PenStyle.DashLine))
+                    p.drawRoundedRect(self.diagram.unit_rect(plan_, x, y, it.u, it.height).adjusted(2, 2, -2, -2), 3, 3)
+        if plan is not None and self.cut_ids and self.sel_u and not self.item(self.sel_item):
+            x, y = self._origin(plan)
+            p.setPen(QPen(QColor(t.primary), 1.6, Qt.PenStyle.DotLine))
+            p.drawRoundedRect(self.diagram.unit_rect(plan, x, y, self.sel_u, 1), 3, 3)
         if self._drag is not None and self._swap is not None:
             other, oplan, ua, ub = self._swap
             src = self.plan(self.sel_rack)
@@ -255,6 +313,7 @@ class RackEditor(QWidget):
                     self.sel_item = item.id  # keep the multi-selection for the menu
                 else:
                     self.select(plan.key, item.id if item else "")
+                self.sel_u = u
                 self.contextRequested.emit(plan.key, item.id if item else "", u, e.globalPosition().toPoint())
             return
         if e.button() != Qt.MouseButton.LeftButton:
@@ -269,6 +328,7 @@ class RackEditor(QWidget):
         else:
             self.select(plan.key, item.id if item else "", add=ctrl)
             self._press_plain = False
+        self.sel_u = u
         if item is not None and item.id in self.sel_items:
             self._press = pos
             self._drag = None
@@ -362,7 +422,26 @@ class RackEditor(QWidget):
             self.select_all()
             return
         if ctrl and e.key() == Qt.Key.Key_C:
-            self.copyRequested.emit([i.id for i in self.selected_items()])
+            ids = [i.id for i in self.selected_items()]
+            self.copyRequested.emit(ids)
+            if ids:
+                self.cut_ids = ids  # devices are not duplicated: Ctrl+V moves them
+                self.update()
+            return
+        if ctrl and e.key() == Qt.Key.Key_X:
+            ids = [i.id for i in self.selected_items()]
+            if ids:
+                self.cut_ids = ids
+                self.cutRequested.emit(ids)
+                self.update()
+            return
+        if ctrl and e.key() == Qt.Key.Key_V:
+            if self.cut_ids and self.sel_rack:
+                self.pasteRequested.emit(self.sel_rack, self.sel_u)
+            return
+        if e.key() == Qt.Key.Key_Escape and self.cut_ids:
+            self.cut_ids = []
+            self.update()
             return
         group = self.selected_items()
         if plan is not None and len(group) > 1:

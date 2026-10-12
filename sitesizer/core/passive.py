@@ -43,6 +43,10 @@ if TYPE_CHECKING:
     from .sizing import _Ctx
 
 EDGE_KEYS = ("wifi_switch", "access_switch", "camera_switch")
+RACK_ORDER = ("wifi_switch", "camera_switch", "access_switch")
+"""Top-down order of the switches in a cabinet: firewall · core (DSW) · WSW · VSW · ASW."""
+POE_KEYS = ("wifi_switch", "camera_switch")
+"""PoE switches stand with the firewall and the core; access switches get cabinets of their own."""
 ROLE_CODES = {
     "wifi_switch": "WSW",
     "access_switch": "ASW",
@@ -176,7 +180,7 @@ def plan_passive(
 
     # ---- switches (assigned to the least loaded closet) ---------------------------------
     load = [0] * n_closets
-    for key in EDGE_KEYS:
+    for key in RACK_ORDER:
         res = categories[key]
         if not res.count:
             continue
@@ -258,13 +262,7 @@ def plan_passive(
         usable = max(1, size - math.floor(size * r.rack_spare_ratio / (1 + r.rack_spare_ratio)))
         groups = _fill(closet, usable, cabinet_u)
         if len(groups) > 1:
-            # spread evenly instead of leaving the last cabinet almost empty
-            per = math.ceil(len(closet.switches) / len(groups))
-            balanced = [closet.switches[i : i + per] for i in range(0, len(closet.switches), per)]
-            if len(balanced) == len(groups) and all(
-                cabinet_u(closet, g, gi == 0) <= usable for gi, g in enumerate(balanced)
-            ):
-                groups = balanced
+            groups = _split_poe(closet, groups, usable, cabinet_u) or _balance(closet, groups, usable, cabinet_u)
         layouts.append((closet, groups, size))
 
     # fibre links of the automatic structure (re-checked after the manual layout)
@@ -603,6 +601,42 @@ def _fill(closet: _Closet, limit: int, cabinet_u) -> list[list[_Switch]]:  # typ
         else:
             groups[-1] = trial
     return groups
+
+
+def _balance(closet: _Closet, groups: list[list[_Switch]], limit: int, cabinet_u) -> list[list[_Switch]]:  # type: ignore[no-untyped-def]
+    """Spread the switches evenly instead of leaving the last cabinet almost empty."""
+    per = math.ceil(len(closet.switches) / len(groups))
+    balanced = [closet.switches[i : i + per] for i in range(0, len(closet.switches), per)]
+    if len(balanced) == len(groups) and all(cabinet_u(closet, g, gi == 0) <= limit for gi, g in enumerate(balanced)):
+        return balanced
+    return groups
+
+
+def _split_poe(closet: _Closet, groups: list[list[_Switch]], limit: int, cabinet_u) -> list[list[_Switch]] | None:  # type: ignore[no-untyped-def]
+    """Best practice for a room with several cabinets: firewall, core and the PoE switches (WSW, VSW)
+    in the first cabinet, the access switches (ASW) in the others.
+
+    ``None`` when the PoE switches do not fit the first cabinet or the split would need more
+    cabinets than the plain fill.
+    """
+    poe = [sw for sw in closet.switches if sw.key in POE_KEYS]
+    access = [sw for sw in closet.switches if sw.key not in POE_KEYS]
+    if not poe or not access or cabinet_u(closet, poe, True) > limit:
+        return None
+    rest: list[list[_Switch]] = [[]]
+    for sw in access:
+        trial = [*rest[-1], sw]
+        if rest[-1] and cabinet_u(closet, trial, False) > limit:
+            rest.append([sw])
+        else:
+            rest[-1] = trial
+    if any(cabinet_u(closet, g, False) > limit for g in rest) or 1 + len(rest) > len(groups):
+        return None
+    per = math.ceil(len(access) / len(rest))
+    balanced = [access[i : i + per] for i in range(0, len(access), per)]
+    if len(balanced) == len(rest) and all(cabinet_u(closet, g, False) <= limit for g in balanced):
+        rest = balanced
+    return [poe, *rest]
 
 
 def _pick_size(preferred: int, need: int, sizes: list[int]) -> int:

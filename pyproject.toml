@@ -22,7 +22,6 @@ sitesizer = "sitesizer.__main__:main"
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = ["counter_location.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
@@ -37,7 +36,7 @@ plugins = ["pydantic.mypy"]
 ignore_missing_imports = true
 warn_unused_ignores = false
 check_untyped_defs = true
-exclude = ["counter_location.py", "build/", "dist/"]
+exclude = ["build/", "dist/"]
 
 [[tool.mypy.overrides]]
 # PySide6 stubs model many Qt APIs as Optional / overloaded in ways that produce noise

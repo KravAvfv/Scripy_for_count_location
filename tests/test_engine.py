@@ -392,12 +392,28 @@ def test_house_rack_pattern(catalog: Catalog) -> None:
     body = [it.group for it in items[first:] if it.group not in ("pdu", "power")]
     assert body == [
         "panel", "manager", "wifi_switch",  # one panel, one organizer
-        "panel", "manager", "access_switch", "manager", "panel",  # two panels, two organizers
+        "panel", "manager", "camera_switch", "manager", "panel",  # two panels, two organizers
         "panel", "manager", "access_switch", "manager", "panel",
-        "panel", "manager", "camera_switch", "manager", "panel",
+        "panel", "manager", "access_switch", "manager", "panel",
     ]  # fmt: skip
     labels = [it.label for it in items if it.group == "panel"]
-    assert labels == ["ПП Wi-Fi", "ПП №1", "ПП №2", "ПП №3", "ПП №4", "ПП №V1", "ПП №V2"]
+    assert labels == ["ПП Wi-Fi", "ПП №V1", "ПП №V2", "ПП №1", "ПП №2", "ПП №3", "ПП №4"]
+
+
+def test_poe_switches_with_the_firewall_access_switches_apart(catalog: Catalog) -> None:
+    """Firewall · core · WSW · VSW in the first cabinet, ASW in the next — when it costs no extra cabinet."""
+    r = size_site(make_site(sockets=240, cameras=30, aps=[("corridor", 10)]), catalog)
+    roles = [
+        [it.group for it in p.items if it.group.endswith("switch") or it.group == "firewall"] for p in r.rack.plans
+    ]
+    assert len(roles) == 2
+    assert roles[0] == ["firewall", "wifi_switch", "camera_switch"]
+    assert set(roles[1]) == {"access_switch"}
+    # one cabinet is enough: everything stays together, PoE switches above the access ones
+    small = size_site(make_site(sockets=96, cameras=30, aps=[("corridor", 10)]), catalog)
+    assert len(small.rack.plans) == 1
+    order = [it.group for it in small.rack.plans[0].items if it.group.endswith("switch") or it.group == "firewall"]
+    assert order == ["firewall", "wifi_switch", "camera_switch", "access_switch", "access_switch"]
 
 
 def test_device_and_rack_names_use_location_code(catalog: Catalog) -> None:
