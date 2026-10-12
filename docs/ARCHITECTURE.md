@@ -16,9 +16,13 @@ sitesizer/
     project.py   multi-location project files (*.sizing.json, atomic save)
     presets.py   one-click templates (data/presets.json)
     report.py    rows/CSV/TSV/JSON views of a result, specification sections in template order
+    topology.py  device-level network (FortiGate HA → MCLAG core → access stacks) from the cabinets,
+                 the user's TopologyEdits, automatic layout and orthogonal link routes
   exporters/   Qt-based rendering without widgets (works in a worker thread and from the CLI)
     diagram.py   SiteDiagram / ProjectDiagram QPainter renderers → screen, PNG, SVG, PDF, Excel
     rack.py      RackDiagram: front elevation of every cabinet (same renderer for screen and exports)
+    topology.py  TopologyDiagram: painter of core.topology (editor, PNG/SVG, Excel, PDF), hit tests
+    drawio.py    the same topology as an editable .drawio file (stacks = containers, glued edges)
     xlsx.py      openpyxl workbook: Слаботрумка (template), Схема+шафи (cells), IP, prices, inputs
     pdf.py       QPdfWriter + QTextDocument report, paginated with header/footer
   gui/         PySide6 widgets only — no business rules
@@ -30,7 +34,7 @@ sitesizer/
                  feedback (toasts, checks panel), overlays (dialogs, command palette, tour), diagram views
     views/       location, racks (telecom rooms → cabinets, drag & drop editor), bom (inline edits), ipplan (VLAN edits), topology, power,
                  compare, projects, catalog_view (template import), settings_view, help_view
-    widgets/rack_editor.py  interactive cabinet canvas; widgets/export_dialog.py  export choices
+    widgets/rack_editor.py  interactive cabinet canvas; widgets/topology_canvas.py  editable network diagram; widgets/export_dialog.py  export choices
     main_window.py, app.py (entry point, logging, crash safety), workers.py (background exports)
   i18n/        uk.json / en.json + Translator (formatting, Ukrainian plural forms)
   data/        catalog.json (default, datasheet-verified), presets.json
@@ -120,3 +124,19 @@ user edit ─► AppState.edit() ─► QUndoCommand (mergeable per field) ─�
 
 Every item has a stable id (`access_switch:3`, `panel:access_switch:3:1`, `org:…`, `firewall:1`) so manual
 positions survive recalculation.
+
+## Network topology (core/topology.py)
+
+1. Nodes come from the cabinets of the whole location (`combine()` keeps every floor's plans), so names match
+   the racks: FortiGates, core switches, and the access switches grouped into columns (stacks) per cabinet and
+   class — PoE (WSW, VSW) apart from ASW — at most `rules.topology_group_size` each (editable on the page).
+2. Links: WAN → each FortiGate, HA between FortiGates, ISL (MCLAG ICL) between cores, every FortiGate to every
+   core. Access: `ring` — a column is daisy-chained, its top switch to core 1 and its bottom one to core 2;
+   `dual` — every switch to both cores. Without a core the FortiGates take that role. Labels: speed and
+   medium (DAC in the same cabinet, the fibre type between cabinets). Core / FortiGate port counts are checked.
+3. `SiteInput.topology` (`TopologyEdits`, a location-wide field) applies the user's changes: positions,
+   removed / added links, link types, labels, switches moved to another stack.
+4. `route_links()` routes orthogonally: up-links of the top switch leave upwards, the others run up a lane
+   beside their column and sideways in a band above the columns; ports along a side are spread. The painter
+   and the draw.io writer use the same routes and label positions.
+

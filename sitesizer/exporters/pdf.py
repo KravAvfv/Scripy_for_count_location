@@ -26,7 +26,8 @@ from ..core.models import Severity, SiteResult
 from ..core.pricing import format_money, summarize_prices
 from ..core.report import BOM_GROUP_ORDER
 from ..i18n import Translator
-from .diagram import FONT_FAMILIES, SiteDiagram, ensure_gui_app, paint_brand, render_image
+from .diagram import FONT_FAMILIES, ensure_gui_app, paint_brand, render_image
+from .topology import TopologyDiagram
 
 NAVY = "#1F4E78"
 LIGHT = "#EAF0F6"
@@ -127,7 +128,8 @@ def build_html(
 
     # ---- diagram -------------------------------------------------------------------------------
     if "diagram" in want:
-        parts.append(f"<h2>{_e(t.t('pdf.h_diagram'))}</h2>")
+        brk = " style='page-break-before: always'" if opts.get("diagram_new_page") else ""
+        parts.append(f"<h2{brk}>{_e(t.t('pdf.h_diagram'))}</h2>")
         parts.append(f"<p align='center'><img src='diagram://site' width='{image_width}'></p>")
 
     # ---- BoM -----------------------------------------------------------------------------------
@@ -289,14 +291,17 @@ def export_pdf(
     doc.setDefaultFont(base)
     doc.setDefaultStyleSheet(_css())
     # diagram resource (rendered at print resolution)
-    diagram = SiteDiagram(result, catalog, lang, title=False)
-    img = render_image(diagram, scale=2.4)
+    diagram = TopologyDiagram(result, catalog, lang, title=False)
+    img = render_image(diagram, scale=2.4)  # type: ignore[arg-type]
     doc.addResource(QTextDocument.ResourceType.ImageResource, QUrl("diagram://site"), img)
     # QTextDocument lays out in its own units; scale so 1 unit == 1 point on the page.
     scale = DPI / 72.0
     doc.setPageSize(QSizeF(pw / scale, body_h / scale))
     doc_w = pw / scale
-    img_w = int(min(doc_w - 8, img.width() / img.devicePixelRatio()))
+    # the topology fits one page (it grows with the stacks), and a tall one starts a page of its own
+    nat_w, nat_h = img.width() / img.devicePixelRatio(), img.height() / img.devicePixelRatio()
+    img_w = int(min(doc_w - 8, nat_w, nat_w * body_h / scale * 0.85 / nat_h))
+    opts = {**opts, "diagram_new_page": img_w * nat_h / nat_w > body_h / scale * 0.45}
     rack_w = 0
     if result.rack.plans:
         from .rack import RackDiagram

@@ -250,6 +250,8 @@ class Rules(_Strict):
     ups_power_factor: float = Field(default=0.9, gt=0, le=1)
     ups_headroom: float = Field(default=0.3, ge=0, le=5)
     rack_spare_ratio: float = Field(default=0.3, ge=0, le=5)
+    topology_group_size: int = Field(default=5, ge=1, le=48)
+    """Most access switches in one stack (column) of the network diagram."""
     patch_panel_ports: int = Field(default=24, gt=0)
     cable_manager_per_panel: float = Field(default=0.5, ge=0)
     copper_max_m: int = Field(default=90, gt=0)

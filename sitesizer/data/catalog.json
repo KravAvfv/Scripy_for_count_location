@@ -394,6 +394,7 @@
     "ups_power_factor": 0.9,
     "ups_headroom": 0.3,
     "rack_spare_ratio": 0.3,
+    "topology_group_size": 5,
     "patch_panel_ports": 24,
     "cable_manager_per_panel": 0.5,
     "copper_max_m": 90,

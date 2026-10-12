@@ -37,6 +37,7 @@ LOCATION_FIELDS = (
     "reserve",
     "reserve_percent",
     "ip",
+    "topology",
 )
 """Inputs shared by every floor of a location (editing one floor changes them on all)."""
 

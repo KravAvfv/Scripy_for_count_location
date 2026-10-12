@@ -526,9 +526,10 @@ def _inputs_sheet(ws: Worksheet, result: SiteResult, catalog: Catalog, t: Transl
 def _diagram_png(result: SiteResult, catalog: Catalog, lang: str) -> tuple[bytes, int, int]:
     from PySide6.QtCore import QBuffer, QByteArray, QIODevice
 
-    from .diagram import SiteDiagram, render_image
+    from .diagram import render_image
+    from .topology import TopologyDiagram
 
-    img = render_image(SiteDiagram(result, catalog, lang, title=False), scale=1.6)
+    img = render_image(TopologyDiagram(result, catalog, lang, title=False), scale=1.6)  # type: ignore[arg-type]
     data = QByteArray()
     buf = QBuffer(data)
     buf.open(QIODevice.OpenModeFlag.WriteOnly)

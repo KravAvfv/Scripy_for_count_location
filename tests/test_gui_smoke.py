@@ -9,7 +9,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QSettings, Qt, QThreadPool
+from PySide6.QtCore import QPointF, QSettings, Qt, QThreadPool
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -727,3 +727,56 @@ def test_location_id_typed_and_cleared(app: QApplication, window) -> None:
         st.undo.undo()
     pump(app)
     assert st.site.location_id is None and field.text() == ""
+
+
+def test_topology_editor(app: QApplication, window) -> None:
+    st = window.state
+    st.edit("t", lambda d: d.update(sockets=240, cameras=30, tier=1, aggregation="yes", location_code="BO123"))
+    st.recompute()
+    window.navigate("topology")
+    pump(app)
+    view = window.topology
+    canvas = view.canvas
+    d = canvas.diagram
+    assert d is not None
+    sw = next(n for n in d.topo.nodes if n.kind == "access_switch")
+    # dragging a device stores its place (one undoable edit, shared by the location)
+    start = canvas.node_point(sw.id)
+    assert start is not None
+    target = start + QPointF(60, 40)
+    _mouse(canvas.viewport(), "press", start)
+    _mouse(canvas.viewport(), "move", start + QPointF(30, 20))
+    _mouse(canvas.viewport(), "move", target)
+    _mouse(canvas.viewport(), "release", target)
+    pump(app)
+    assert sw.id in st.site.topology.positions
+    # remove a link, draw a new one, change the access design
+    stack = next(lk for lk in canvas.diagram.topo.links if lk.kind == "stack")
+    view.delete_links([stack.id])
+    st.recompute()
+    pump(app)
+    assert stack.id in st.site.topology.hidden and canvas.diagram.topo.link(stack.id) is None
+    fw = next(n for n in canvas.diagram.topo.nodes if n.kind == "firewall")
+    canvas.select("node", sw.id)
+    canvas.select("node", fw.id, add=True)
+    view._connect_selected()
+    st.recompute()
+    pump(app)
+    assert any(lk.a == sw.id and lk.b == fw.id and not lk.auto for lk in canvas.diagram.topo.links)
+    view.access.setValue("dual")
+    view.access.valueChanged.emit("dual")
+    st.recompute()
+    pump(app)
+    assert st.site.topology.access == "dual"
+    assert not any(lk.kind == "stack" for lk in canvas.diagram.topo.links)
+    view.reset()
+    st.recompute()
+    pump(app)
+    assert st.site.topology.is_empty
+    st.undo.undo()  # the reset is undoable
+    assert st.site.topology.access == "dual" and st.site.topology.links
+    for _ in range(4):
+        st.undo.undo()
+    st.recompute()
+    pump(app)
+    assert st.site.topology.is_empty and st.site.topology.access == "ring"

@@ -72,6 +72,7 @@ class HelpView(QWidget):
             ups=round(r.ups_headroom * 100),
             buf=round(r.ip.buffer * 100),
             oversub=f"{r.oversubscription_warn:g}",
+            group=r.topology_group_size,
         )
         css = (
             f"body {{ font-family: 'Inter', 'Segoe UI'; font-size: {px(14)}px; color: {tk.text}; line-height: 150%; }}"

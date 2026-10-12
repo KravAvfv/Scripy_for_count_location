@@ -26,6 +26,7 @@ from ..core.presets import load_presets
 from ..core.pricing import summarize_prices
 from ..core.project import PROJECT_SUFFIX, ProjectError
 from ..core.report import bom_csv, default_export_name, result_to_dict, safe_filename
+from ..exporters.topology import TopologyDiagram
 from ..i18n import IS_MAC, current, keys, tr
 from . import icons
 from .state import AppState
@@ -495,7 +496,13 @@ class MainWindow(QMainWindow):
             if choices["png_topology"]:
                 diagram = self.topology.build_diagram(export=True)
                 if diagram is not None:
-                    self._after_export(export_png(diagram, out_dir / f"{base}_topology.png"))
+                    self._after_export(export_png(diagram, out_dir / f"{base}_topology.png"))  # type: ignore[arg-type]
+            if choices.get("drawio"):
+                from ..exporters.drawio import export_drawio
+
+                site_diagram = self.topology.build_diagram(export=True, scope="site")
+                if isinstance(site_diagram, TopologyDiagram):
+                    self._after_export(export_drawio(site_diagram.topo, out_dir / f"{base}_topology.drawio"))
             if choices["png_racks"] and result.rack.plans:
                 path = out_dir / f"{base}_racks.png"
                 export_png(RackDiagram(result, catalog, lang), path)  # type: ignore[arg-type]
@@ -590,13 +597,21 @@ class MainWindow(QMainWindow):
         if diagram is None:
             self.toasts.show("warning", tr("ui.nothing_to_export"))
             return
-        path = self._ask_path(fmt, f"{fmt.upper()} (*.{fmt})", "Topology")
+        if fmt == "drawio" and not isinstance(diagram, TopologyDiagram):
+            diagram = self.topology.build_diagram(export=True, scope="site")
+        filt = "draw.io (*.drawio)" if fmt == "drawio" else f"{fmt.upper()} (*.{fmt})"
+        path = self._ask_path(fmt, filt, "Topology")
         if not path:
             return
         from ..exporters.diagram import export_png, export_svg
+        from ..exporters.drawio import export_drawio
 
         try:
-            (export_png if fmt == "png" else export_svg)(diagram, path)
+            if fmt == "drawio":
+                assert isinstance(diagram, TopologyDiagram)
+                export_drawio(diagram.topo, path)
+            else:
+                (export_png if fmt == "png" else export_svg)(diagram, path)  # type: ignore[arg-type]
         except OSError as err:
             self.toasts.show("error", tr("ui.export_failed", err=err), 9000)
             return

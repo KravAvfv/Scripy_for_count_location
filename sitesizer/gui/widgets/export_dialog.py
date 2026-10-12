@@ -30,6 +30,7 @@ DEFAULTS: dict[str, Any] = {
     "pdf_sections": list(PDF_SECTIONS),
     "png_topology": False,
     "png_racks": False,
+    "drawio": False,
 }
 
 
@@ -91,7 +92,10 @@ class ExportDialog(QDialog):
         self.png_topology.setChecked(bool(c["png_topology"]))
         self.png_racks = QCheckBox(tr("ex.png_racks"))
         self.png_racks.setChecked(bool(c["png_racks"]))
+        self.drawio = QCheckBox(tr("ex.drawio"))
+        self.drawio.setChecked(bool(c.get("drawio", False)))
         row.addWidget(self.png_topology)
+        row.addWidget(self.drawio)
         row.addWidget(self.png_racks)
         row.addStretch(1)
         lay.addLayout(row)
@@ -137,7 +141,11 @@ class ExportDialog(QDialog):
 
     def _accept(self) -> None:
         if not (
-            self.xlsx.isChecked() or self.pdf.isChecked() or self.png_topology.isChecked() or self.png_racks.isChecked()
+            self.xlsx.isChecked()
+            or self.pdf.isChecked()
+            or self.png_topology.isChecked()
+            or self.png_racks.isChecked()
+            or self.drawio.isChecked()
         ):
             return
         self.accept()
@@ -152,6 +160,7 @@ class ExportDialog(QDialog):
             "pdf_sections": [k for k, cb in self.sections.items() if cb.isChecked()],
             "png_topology": self.png_topology.isChecked(),
             "png_racks": self.png_racks.isChecked(),
+            "drawio": self.drawio.isChecked(),
         }
 
     def target(self) -> tuple[Path, str]:

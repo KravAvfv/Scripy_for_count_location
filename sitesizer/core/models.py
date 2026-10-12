@@ -192,6 +192,57 @@ class RackLayout(BaseModel):
         )
 
 
+TopoLinkKind = Literal["wan", "ha", "isl", "uplink", "fortilink", "stack", "custom"]
+TopoAccess = Literal["ring", "dual"]
+
+
+class TopoPos(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    x: float
+    y: float
+
+
+class TopoLink(BaseModel):
+    """A connection drawn by the user on the topology."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    a: str
+    b: str
+    kind: TopoLinkKind = "custom"
+    label: str = ""
+
+
+class TopologyEdits(BaseModel):
+    """Manual changes of the network diagram on top of the automatic one (shared by every floor)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    access: TopoAccess = "ring"
+    """How access switches reach the core: ``ring`` — a stack per column, its top switch to the first
+    core and its bottom one to the second; ``dual`` — every switch to both cores (dual-homed)."""
+    group_size: int | None = Field(default=None, ge=1, le=48)
+    """Most switches in one stack / column; ``None`` = catalog default."""
+    show_wan: bool = True
+    positions: dict[str, TopoPos] = Field(default_factory=dict)
+    """Node id -> where the user dragged it."""
+    hidden: list[str] = Field(default_factory=list)
+    """Automatic links removed by the user."""
+    links: list[TopoLink] = Field(default_factory=list)
+    labels: dict[str, str] = Field(default_factory=dict)
+    """Node / link / group id -> text given by the user."""
+    kinds: dict[str, TopoLinkKind] = Field(default_factory=dict)
+    """Automatic link id -> type chosen by the user (colour and meaning)."""
+    groups: dict[str, str] = Field(default_factory=dict)
+    """Switch node id -> stack (column) it was moved to."""
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.positions or self.hidden or self.links or self.labels or self.kinds or self.groups)
+
+
 class SiteInput(BaseModel):
     """Everything the user enters about one location."""
 
@@ -245,6 +296,7 @@ class SiteInput(BaseModel):
     ip: IpOptions = Field(default_factory=IpOptions)
     bom: BomEdits = Field(default_factory=BomEdits)
     layout: RackLayout = Field(default_factory=RackLayout)
+    topology: TopologyEdits = Field(default_factory=TopologyEdits)
     notes: str = ""
 
     @field_validator("aggregation", mode="before")
