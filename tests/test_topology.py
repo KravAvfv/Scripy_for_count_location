@@ -35,7 +35,7 @@ def test_whiteboard_design(catalog: Catalog) -> None:
     assert kinds(topo, "isl") == [(cores[0].id, cores[1].id)]
     assert sorted(kinds(topo, "uplink")) == sorted((c.id, f.id) for c in cores for f in fws)
     # names come from the cabinets
-    assert fws[0].label == "BO123-1A-FW01" and cores[0].label == "BO123-1A-CSW01"
+    assert fws[0].label == "BO123-1A-FW01" and cores[0].label == "BO123-1A-DSW01"
     # PoE switches have their own stack, apart from the access ones
     first = topo.groups[0]
     assert all(topo.node(i).kind in ("wifi_switch", "camera_switch") for i in first.nodes)  # type: ignore[union-attr]

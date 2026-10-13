@@ -16,12 +16,14 @@ sitesizer/
     project.py   multi-location project files (*.sizing.json, atomic save)
     presets.py   one-click templates (data/presets.json)
     report.py    rows/CSV/TSV/JSON views of a result, specification sections in template order
+    ap_wiring.py which Wi-Fi switch port each AP goes to; neighbours (row / column) alternate switches
     topology.py  device-level network (FortiGate HA → MCLAG core → access stacks) from the cabinets,
                  the user's TopologyEdits, automatic layout and orthogonal link routes
   exporters/   Qt-based rendering without widgets (works in a worker thread and from the CLI)
     diagram.py   SiteDiagram / ProjectDiagram QPainter renderers → screen, PNG, SVG, PDF, Excel
     rack.py      RackDiagram: front elevation of every cabinet (same renderer for screen and exports)
     topology.py  TopologyDiagram: painter of core.topology (editor, PNG/SVG, Excel, PDF), hit tests
+    ap_wiring.py ApWiringDiagram (AP plan coloured by switch + port cards) and the Excel table
     drawio.py    the same topology as an editable .drawio file (stacks = containers, glued edges)
     xlsx.py      openpyxl workbook: Слаботрумка (template), Схема+шафи (cells), IP, prices, inputs
     pdf.py       QPdfWriter + QTextDocument report, paginated with header/footer
@@ -140,3 +142,13 @@ positions survive recalculation.
    beside their column and sideways in a band above the columns; ports along a side are spread. The painter
    and the draw.io writer use the same routes and label positions.
 
+## Equipment chosen by the user
+
+- `SiteInput.firewall_model / firewall_count / core_model / core_count` (location-wide): replace the ladder's
+  FortiGate and the calculated core; 0 = none. A model over its FortiLink / FortiAP limit is a warning.
+- `RoomInput.counts` (switches per role typed for a room), `ups_model / ups_count` (UPS of the room's first
+  cabinet; `None` = main room by tier / add-on), `devices` (catalog devices placed under the firewall / core).
+- A catalog FortiGate or switch put into a cabinet by hand (`RackExtra`, role from `role` or
+  `passive.device_roles`: model kind, category models, `…-DSW01`-style names) gets the role's group, so it is
+  named, counted for power and the firewall, listed once in the specification and drawn in the topology.
+- `RackProps.room` moves any cabinet to another telecom room.

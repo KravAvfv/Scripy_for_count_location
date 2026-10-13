@@ -51,7 +51,7 @@ ROLE_CODES = {
     "wifi_switch": "WSW",
     "access_switch": "ASW",
     "camera_switch": "VSW",
-    "core_switch": "CSW",
+    "core_switch": "DSW",
     "firewall": "FW",
 }
 """Device name role codes: ``<site>-<floor><cabinet>-<ROLE><NN>``."""
@@ -220,23 +220,38 @@ def plan_passive(
             mdf.head.append(_Unit(f"firewall:{i + 1}", units(fw.model), fw.model, "firewall", fw.model))
     for i in range(core.count):
         mdf.head.append(_Unit(f"core_switch:{i + 1}", units(core.model), core.model, "core_switch", core.model))
-    if ctx.tier.ups or addons.get("ups"):
-        ups_dev = cat.models.get(power.ups_model)
-        qty = 1
-        if ups_dev and ups_dev.ups_va and power.ups_va > ups_dev.ups_va:
-            qty = math.ceil(power.ups_va / ups_dev.ups_va)
+    role_of = device_roles(cat)
+    for closet in closets:
+        room_in = ctx.site.room(closet.index)
+        # further devices chosen for the room on the location page: under the firewall / core
+        for j, d in enumerate(room_in.devices):
+            dev = cat.models.get(d.model)
+            if dev is None:
+                continue
+            for k in range(d.qty):
+                group = role_of(d.model, d.label) or "device"
+                label = d.label or ("" if group in ROLE_CODES else d.model)
+                label += f" #{k + 1}" if label and d.qty > 1 else ""
+                closet.head.append(_Unit(f"dev:{closet.index}:{j}:{k + 1}", units(d.model), label, group, d.model))
+        # UPS: the main room by tier / add-on (sized by power), any room by the user's choice
+        auto_ups = closet.index == 0 and bool(ctx.tier.ups or addons.get("ups"))
+        model = room_in.ups_model if room_in.ups_model in cat.models else power.ups_model
+        ups_dev = cat.models.get(model)
+        if room_in.ups_count is not None:
+            qty = room_in.ups_count
+        elif auto_ups:
+            qty = 1
+            if model == power.ups_model and ups_dev and ups_dev.ups_va and power.ups_va > ups_dev.ups_va:
+                qty = math.ceil(power.ups_va / ups_dev.ups_va)
+        else:
+            qty = 0
         for i in range(qty):
             suffix = f" #{i + 1}" if qty > 1 else ""
-            mdf.bottom.append(
-                _Unit(
-                    f"ups:{i + 1}",
-                    (ups_dev.rack_units if ups_dev else 2) or 2,
-                    (power.ups_model or "UPS") + suffix,
-                    "power",
-                    power.ups_model,
-                )
+            uid = f"ups:{i + 1}" if closet.index == 0 else f"ups:r{closet.index}:{i + 1}"
+            closet.bottom.append(
+                _Unit(uid, (ups_dev.rack_units if ups_dev else 2) or 2, (model or "UPS") + suffix, "power", model)
             )
-        rs.units_ups = sum(u.height for u in mdf.bottom)
+    rs.units_ups = sum(u.height for c in closets for u in c.bottom)
 
     # ---- cabinets -----------------------------------------------------------------------
     racks = cat.rack_models()
@@ -338,6 +353,7 @@ def plan_passive(
         {"manager": pr.manager, "panel": pr.panel, "odf": odf_model},
         rooms=n_closets,
         floor=ctx.site.floor,
+        role_of=role_of,
     )
     plans.sort(key=lambda p: p.room)  # a room's cabinets side by side (stable: keeps their order)
     links: list[tuple[str, str]] = []
@@ -448,6 +464,47 @@ def plan_passive(
     rs.cable_m = ps.cable_m
     rs.cable_boxes = ps.cable_drums
     return rs
+
+
+LABEL_ROLES = (
+    ("DSW", "core_switch"),
+    ("CSW", "core_switch"),
+    ("CORE", "core_switch"),
+    ("WSW", "wifi_switch"),
+    ("VSW", "camera_switch"),
+    ("ASW", "access_switch"),
+    ("FW", "firewall"),
+)
+
+
+def device_roles(cat: Any) -> Callable[[str, str], str]:
+    """``(model, label) -> role`` of a device put into a cabinet by hand ("" = not a network device).
+
+    A FortiGate is a firewall; a switch is the core or an edge switch when the catalog's categories use
+    that model, otherwise its name decides (``…-DSW01`` core, ``…-VSW01`` video…), else an access switch.
+    """
+    by_model: dict[str, str] = {}
+    for key in ("core_switch", "wifi_switch", "camera_switch", "access_switch"):
+        c = cat.categories.get(key)
+        if c is not None:
+            by_model.setdefault(c.base, key)
+            by_model.setdefault(c.premium, key)
+
+    def role(model: str, label: str = "") -> str:
+        dev = cat.models.get(model)
+        if dev is None:
+            return ""
+        if dev.kind == "firewall":
+            return "firewall"
+        if dev.kind != "switch":
+            return ""
+        name = label.upper()
+        for code, key in LABEL_ROLES:
+            if re.search(rf"(^|[^A-Z]){code}\d*($|[^A-Z])", name):
+                return key
+        return by_model.get(model, "access_switch")
+
+    return role
 
 
 def floor_run(floor: int, other: int, per_floor_m: int) -> int:
@@ -683,6 +740,7 @@ def apply_layout(
     extra_models: dict[str, str] | None = None,
     rooms: int = 1,
     floor: int = 1,
+    role_of: Callable[[str, str], str] | None = None,
 ) -> list[str]:
     """Apply the user's manual layout to the automatic ``plans`` (in place).
 
@@ -733,6 +791,8 @@ def apply_layout(
             plan.model = model_for.get(props.size_u, "")
         if props.floor is not None:
             plan.floor = props.floor
+        if props.room is not None and plan.role != "user":
+            plan.room = min(props.room, rooms - 1)
         if props.letter:
             plan.letter = props.letter.strip()[:3] or plan.letter
 
@@ -760,10 +820,18 @@ def apply_layout(
         target = by_key.get(ex.rack)
         group = EXTRA_GROUPS.get(ex.kind, "custom")
         model = ex.model if ex.kind == "device" else (extra_models or {}).get(ex.kind, "")
+        if ex.kind == "device" and model:
+            # a FortiGate / switch put in by hand is a real network device: named, in the topology
+            if ex.role == "device":
+                role = ""  # the user said: not a network device
+            else:
+                role = ex.role if ex.role in ROLE_CODES else (role_of(model, ex.label) if role_of else "")
+            group = role or group
+        default = "" if group in ROLE_CODES else (ex.model if ex.kind == "device" else "")
         item = RackItem(
             u=ex.u,
             height=ex.height,
-            label=ex.label or (ex.model if ex.kind == "device" else "") or t.t(f"rack.extra.{ex.kind}"),
+            label=ex.label or default or ("" if group in ROLE_CODES else t.t(f"rack.extra.{ex.kind}")),
             group=group,
             model=model,
             id=ex.id,
@@ -864,11 +932,13 @@ def name_items(plans: list[RackPlan], layout: RackLayout, code: str, t: Translat
         counters: dict[str, int] = {}
         wifi_panels = sum(1 for it in plan.items if it.group == "panel" and it.id.startswith("panel:wifi_switch"))
         for it in sorted(plan.items, key=lambda i: -i.u):
-            if it.extra:
-                continue
             role = ROLE_CODES.get(it.group)
+            if it.extra and not (role and not it.label):
+                continue  # named by the user
             if role:
                 counters[role] = counters.get(role, 0) + 1
+                if it.label and it.id.startswith("dev:"):
+                    continue  # a room device the user named on the location page
                 it.label = f"{prefix}{role}{counters[role]:02d}"
             elif it.group == "panel" and it.id.startswith("panel:"):
                 kind = it.id.split(":")[1]

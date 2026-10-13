@@ -649,7 +649,10 @@ def test_devices_added_to_racks_go_to_the_bom(catalog: Catalog) -> None:
     assert line.code == catalog.models["FS-148F-FPOE"].code and line.key == "rack_device:FS-148F-FPOE"
     assert r.rack.passive.managers == managers + 1  # a hand-added organizer is counted too
     items = {it.id: it for it in r.rack.plans[0].items}
-    assert items["d2"].height == 2 and items["c1"].label == "NVR" and items["d1"].label == "FS-148F-FPOE"
+    assert items["d2"].height == 2 and items["c1"].label == "NVR"
+    # a switch put in by hand is a network device: it gets a role and an automatic name
+    assert items["d1"].group == "camera_switch" and items["d1"].label.endswith("VSW01")
+    assert items["d2"].group == "device" and items["d2"].label == "UPS-3000"
 
 
 def _with_devices(catalog: Catalog, models: list[str], rack: str | None = None, **kw: object):
@@ -759,11 +762,13 @@ def test_room_switch_model_replaced(catalog: Catalog) -> None:
     rooms = [{"sockets": 96}, {"sockets": 48, "models": {"access_switch": other}}]
     r = size_site(make_site(rooms=rooms), catalog)
     res = r.categories["access_switch"]
-    assert res.models == {acc.base: 2, other: 1}
+    # the chosen model's own port count decides how many of it the room needs
+    n = -(-48 // catalog.models[other].ports.count)
+    assert res.models == {acc.base: 2, other: n}
     lines = {line.model: line.qty for line in r.lines("access_switch")}
-    assert lines == {acc.base: 2, other: 1}
+    assert lines == {acc.base: 2, other: n}
     models = [it.model for p in r.rack.plans if p.room == 1 for it in p.items if it.group == "access_switch"]
-    assert models == [other]
+    assert models == [other] * n
     assert any(m == other for m, _n, _w in r.power.breakdown)
     # an unknown model is ignored
     bad = size_site(make_site(rooms=[{"sockets": 48, "models": {"access_switch": "NOPE"}}]), catalog)

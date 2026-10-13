@@ -93,6 +93,12 @@ class AddDeviceDialog(QDialog):
         self.height.setSuffix(" U")
         self.height.setFixedWidth(px(100))
         lay.addWidget(FieldRow(tr("rk.device_height"), self.height))
+        self.role = QComboBox()
+        self.role.addItem(tr("rk.role_auto"), "")
+        for role in ("firewall", "core_switch", "wifi_switch", "camera_switch", "access_switch", "device"):
+            self.role.addItem(tr(f"rk.role.{role}"), role)
+        self.role.setToolTip(tr("rk.role_tip"))
+        lay.addWidget(FieldRow(tr("rk.role"), self.role))
         self.note = label("", "caption", wrap=True)
         lay.addWidget(self.note)
         row = QHBoxLayout()
@@ -122,6 +128,9 @@ class AddDeviceDialog(QDialog):
     def values(self) -> tuple[str, str, int]:
         return self.model.currentData() or "", self.name.text().strip(), self.height.value()
 
+    def role_value(self) -> str:
+        return str(self.role.currentData() or "")
+
 
 class RacksView(QWidget):
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
@@ -138,12 +147,10 @@ class RacksView(QWidget):
         bar = QHBoxLayout()
         bar.setSpacing(px(8))
         add = button(tr("rk.add_rack"), "primary", "plus", tr("rk.add_rack_tip"))
-        menu = QMenu(add)
-        for size in (24, 42):
-            act = QAction(f"{size}U", menu)
-            act.triggered.connect(lambda _=False, s=size: self.add_rack(s))
-            menu.addAction(act)
-        add.setMenu(menu)
+        self.add_menu = QMenu(add)
+        self._add_menu_rooms: list[str] | None = None
+        self._fill_add_menu([])
+        add.setMenu(self.add_menu)
         bar.addWidget(add)
         self.copy_btn = button(tr("rk.copy_names"), None, "copy", tr("rk.copy_names_tip"))
         self.copy_btn.clicked.connect(
@@ -254,6 +261,12 @@ class RacksView(QWidget):
         self.size.setFixedWidth(px(90))
         self.size.currentIndexChanged.connect(lambda _i: self._set_prop("size_u", int(self.size.currentData())))
         self.rack_card.add(FieldRow(tr("rk.size"), self.size))
+        self.rack_room = QComboBox()
+        self.rack_room.setToolTip(tr("rk.rack_room_tip"))
+        self.rack_room.setMinimumWidth(px(190))
+        self.rack_room.currentIndexChanged.connect(lambda i: self.set_rack_room(i))
+        self.rack_room_row = FieldRow(tr("rk.rack_room"), self.rack_room)
+        self.rack_card.add(self.rack_room_row)
         self.rack_info = label("", "caption", wrap=True)
         self.rack_card.add(self.rack_info)
         add_row = QHBoxLayout()
@@ -339,6 +352,7 @@ class RacksView(QWidget):
     # result → widgets
     # =====================================================================================
     def on_result(self, r: SiteResult) -> None:
+        self._fill_add_menu(list(r.rack.rooms))
         self._redraw()
         lines = {line.model: line.qty or 0 for line in r.bom}
         rules = self.state.catalog.rules
@@ -462,6 +476,13 @@ class RacksView(QWidget):
                     self.size.addItem(f"{plan.size_u}U", plan.size_u)
                     idx = self.size.count() - 1
                 self.size.setCurrentIndex(idx)
+                r = self.state.result
+                rooms = list(r.rack.rooms) if r is not None else []
+                if [self.rack_room.itemText(i) for i in range(self.rack_room.count())] != rooms:
+                    self.rack_room.clear()
+                    self.rack_room.addItems(rooms)
+                self.rack_room.setCurrentIndex(min(plan.room, self.rack_room.count() - 1))
+                self.rack_room_row.setVisible(len(rooms) > 1)
                 self.rack_info.setText(
                     tr("rk.rack_info", name=plan.name, used=plan.used_u, free=plan.free_u, model=plan.model or "—")
                 )
@@ -723,7 +744,7 @@ class RacksView(QWidget):
         self._layout(tr("rk.item_delete"), fn)
 
     def add_extra(
-        self, kind: str, u: int | None = None, height: int = 1, model: str = "", label: str = ""
+        self, kind: str, u: int | None = None, height: int = 1, model: str = "", label: str = "", role: str = ""
     ) -> str | None:
         """Put an item into the selected cabinet at ``u`` (or the highest free slot); returns its id."""
         plan = self.editor.plan(self.editor.sel_rack)
@@ -743,6 +764,8 @@ class RacksView(QWidget):
             item["model"] = model
         if label:
             item["label"] = label
+        if role:
+            item["role"] = role
         self.editor.sel_item = new_id
         self._layout(tr(f"rack.extra.{kind}"), lambda lay: lay["extras"].append(item))
         return new_id
@@ -753,9 +776,33 @@ class RacksView(QWidget):
         dlg = AddDeviceDialog(self.state, self)
         if dlg.exec():
             model, label_text, height = dlg.values()
-            self.add_extra("device" if model else "custom", u, height, model, label_text)
+            self.add_extra("device" if model else "custom", u, height, model, label_text, dlg.role_value())
 
-    def add_rack(self, size: int) -> None:
+    def _fill_add_menu(self, rooms: list[str]) -> None:
+        """24U / 42U; with several telecom rooms — a submenu per room."""
+        if rooms == self._add_menu_rooms:
+            return
+        self._add_menu_rooms = list(rooms)
+        menu = self.add_menu
+        menu.clear()
+        if len(rooms) <= 1:
+            for size in (24, 42):
+                act = QAction(f"{size}U", menu)
+                act.triggered.connect(lambda _=False, s=size: self.add_rack(s))
+                menu.addAction(act)
+            return
+        for i, name in enumerate(rooms):
+            sub = menu.addMenu(icons.icon("server", size=16), name)
+            for size in (24, 42):
+                act = QAction(f"{size}U", sub)
+                act.triggered.connect(lambda _=False, s=size, room=i: self.add_rack(s, room))
+                sub.addAction(act)
+
+    def set_rack_room(self, room: int) -> None:
+        if room >= 0:
+            self._set_prop("room", room)
+
+    def add_rack(self, size: int, room: int | None = None) -> None:
         taken = {p.key for p in (self.editor.diagram.plans if self.editor.diagram else [])}
         taken |= set(self.state.site.layout.added)
         n = 1
@@ -763,7 +810,9 @@ class RacksView(QWidget):
             n += 1
         key = f"user-{n}"
 
-        room = self.current_room()
+        if room is None:
+            room = self.current_room()
+        self.view_room = room if self.view_room is not None else None
 
         def fn(lay: dict[str, Any]) -> None:
             lay["added"].append(key)

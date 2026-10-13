@@ -780,3 +780,87 @@ def test_topology_editor(app: QApplication, window) -> None:
     st.recompute()
     pump(app)
     assert st.site.topology.is_empty and st.site.topology.access == "ring"
+
+
+def test_location_equipment_choices(app: QApplication, window, tmp_path: Path) -> None:
+    from sitesizer.gui.views.catalog_view import new_model
+
+    st = window.state
+    loc = window.location
+    window.navigate("location")
+    st.set_field("sockets", 96, merge=False)
+    pump(app)
+    # firewall model and number
+    fws = [m for m, d in st.catalog.models.items() if d.kind == "firewall"]
+    other = next(m for m in fws if m != st.result.firewall.model)
+    loc.fw_model.setCurrentIndex(loc.fw_model.findData(other))
+    pump(app)
+    assert st.site.firewall_model == other and st.result.firewall.model == other
+    loc.fw_count.changed.emit(2)
+    pump(app)
+    assert st.result.firewall.count == 2 and not loc.fw_count.reset.isHidden()
+    loc.fw_count.changed.emit(None)
+    pump(app)
+    assert st.site.firewall_count is None
+    # core switches typed
+    loc.core_count.changed.emit(2)
+    pump(app)
+    assert st.result.core.count == 2
+    # switch count typed in the room block, then back to the calculation
+    block = loc._room_blocks[0]
+    block.counts["access_switch"].changed.emit(4)
+    pump(app)
+    assert st.result.categories["access_switch"].count == 4
+    assert block.counts["access_switch"].stepper.value() == 4
+    block.counts["access_switch"].changed.emit(None)
+    pump(app)
+    assert st.result.categories["access_switch"].count == 2
+    # UPS of the room's cabinet
+    ups = [m for m, _d in st.catalog.ups_models()]
+    block.ups_model.setCurrentIndex(block.ups_model.findData(ups[0]))
+    block.ups_count.changed.emit(1)
+    pump(app)
+    assert [it.model for p in st.result.rack.plans for it in p.items if it.id.startswith("ups:")] == [ups[0]]
+    # a further device: in the cabinet, the specification and the topology
+    block._add_device()
+    pump(app)
+    assert len(st.site.rooms[0].devices) == 1 and len(block.dev_rows) == 1
+    row = block.dev_rows[0]
+    row.model.setCurrentIndex(row.model.findData("FS-148F"))
+    pump(app)
+    assert st.site.rooms[0].devices[0].model == "FS-148F"
+    assert any(it.id.startswith("dev:") for p in st.result.rack.plans for it in p.items)
+    row.remove.click()
+    pump(app)
+    assert not st.site.rooms[0].devices
+    # a switch added to the catalog is offered for the room right away
+    assert window.catalog.insert_model("MY-SW-48", new_model("switch"))
+    pump(app)
+    block = loc._room_blocks[0]
+    assert block.combos["access_switch"].findData("MY-SW-48") > 0
+    assert loc.core_model.findData("MY-SW-48") > 0
+    window.state.reset_catalog()
+    pump(app)
+
+
+def test_ap_wiring_dialog(app: QApplication, window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from sitesizer.gui.widgets.ap_wiring_dialog import ApWiringDialog, location_wiring
+
+    st = window.state
+    st.edit("zones", lambda d: d.update(ap_groups=[{"zone": "low_density", "qty": 40}]))
+    pump(app)
+    w = location_wiring(st)
+    assert len(w.rooms[0].aps) == 40 and w.rooms[0].shared_pairs == 0
+    dlg = ApWiringDialog(st, window.topology.export_requested.emit, window)
+    dlg.columns.setValue(5)
+    pump(app)
+    assert st.site.ap_columns == 5
+    out = tmp_path / "ap.xlsx"
+    monkeypatch.setattr(window, "_ask_path", lambda *a, **k: out)
+    window.export_diagram("apw_xlsx")
+    assert out.exists()
+    out_png = tmp_path / "ap.png"
+    monkeypatch.setattr(window, "_ask_path", lambda *a, **k: out_png)
+    window.export_diagram("apw_png")
+    assert out_png.exists()
+    dlg.accept()

@@ -67,6 +67,10 @@ class TopologyView(QWidget):
         bar.addWidget(png)
         bar.addWidget(svg)
         bar.addWidget(drawio)
+        bar.addWidget(vline())
+        apw = button(tr("apw.open"), None, "wifi", tr("apw.open_tip"))
+        apw.clicked.connect(self.open_ap_wiring)
+        bar.addWidget(apw)
         root.addLayout(bar)
 
         # ---- design of the location's network (editable scope only) --------------------------
@@ -155,6 +159,13 @@ class TopologyView(QWidget):
         if result is None:
             return None
         return TopologyDiagram(result, self.state.catalog, lang, title=export, edits=self.edits, **kwargs)
+
+    def open_ap_wiring(self) -> None:
+        """The scheme of which switch port every access point goes to (for the installers)."""
+        from ..widgets.ap_wiring_dialog import ApWiringDialog
+
+        dlg = ApWiringDialog(self.state, self.export_requested.emit, self)
+        dlg.exec()
 
     def _on_result(self, _result: object) -> None:
         self.refresh()

@@ -592,7 +592,37 @@ class MainWindow(QMainWindow):
             "vat_pct": s.vat_pct if s.show_vat else 0.0,
         }
 
+    def export_ap_wiring(self, fmt: str) -> None:
+        from ..exporters.ap_wiring import ApWiringDiagram, export_ap_wiring_xlsx
+        from ..exporters.diagram import export_png, export_svg
+        from .widgets.ap_wiring_dialog import location_wiring
+
+        wiring = location_wiring(self.state)
+        if wiring.empty:
+            self.toasts.show("warning", tr("ui.nothing_to_export"))
+            return
+        ext = {"apw_png": "png", "apw_svg": "svg", "apw_xlsx": "xlsx"}[fmt]
+        filt = "Excel (*.xlsx)" if ext == "xlsx" else f"{ext.upper()} (*.{ext})"
+        path = self._ask_path(ext, filt, "AP_wiring")
+        if not path:
+            return
+        lang = self.state.settings.language
+        title = f"{self.state.location_name} — {tr('apw.title')}"
+        try:
+            if ext == "xlsx":
+                export_ap_wiring_xlsx(wiring, path, lang, title)
+            else:
+                diagram = ApWiringDiagram(wiring, lang, title=title)
+                (export_png if ext == "png" else export_svg)(diagram, path)  # type: ignore[arg-type]
+        except OSError as err:
+            self.toasts.show("error", tr("ui.export_failed", err=err), 9000)
+            return
+        self._after_export(path)
+
     def export_diagram(self, fmt: str) -> None:
+        if fmt.startswith("apw_"):
+            self.export_ap_wiring(fmt)
+            return
         diagram = self.topology.build_diagram(export=True)
         if diagram is None:
             self.toasts.show("warning", tr("ui.nothing_to_export"))

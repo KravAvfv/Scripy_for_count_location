@@ -37,6 +37,16 @@ VSW_EXTRA_KEYS = ("ajax", "skud", "other")
 """Devices besides cameras that take a port of a video (VSW) switch."""
 
 
+class RoomDevice(BaseModel):
+    """Any catalog device the user wants in a telecom room's cabinet (server, NVR, extra switch…)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    model: str
+    qty: int = Field(default=1, ge=0, le=100)
+    label: str = ""
+
+
 class RoomInput(BaseModel):
     """Endpoints served by one telecom room (closet) and the switch models chosen for it."""
 
@@ -52,6 +62,14 @@ class RoomInput(BaseModel):
     """Any other devices on the video switch."""
     models: dict[str, str] = Field(default_factory=dict)
     """Switch category (``access_switch``…) -> model used in this room instead of the calculated one."""
+    counts: dict[str, int] = Field(default_factory=dict)
+    """Switch category -> switches typed by the user for this room (replaces the calculated number)."""
+    ups_model: str | None = None
+    """UPS model of this room's cabinet; ``None`` = sized by power."""
+    ups_count: int | None = Field(default=None, ge=0, le=20)
+    """UPS units in this room; ``None`` = automatic (the main room by tier / add-on, others none)."""
+    devices: list[RoomDevice] = Field(default_factory=list)
+    """Further devices placed in this room's first cabinet (they are in the specification and topology)."""
 
     @property
     def vsw_extra(self) -> int:
@@ -133,7 +151,7 @@ class RackProps(BaseModel):
     letter: str | None = None
     name: str | None = None
     room: int | None = Field(default=None, ge=0, le=49)
-    """Telecom room (closet) of a cabinet added by the user; 0 = the main one."""
+    """Telecom room (closet) the cabinet stands in (any cabinet may be moved to another room)."""
 
 
 class RackPos(BaseModel):
@@ -156,6 +174,8 @@ class RackExtra(BaseModel):
     label: str = ""
     model: str = ""
     """Catalog model of a ``device`` (it is added to the bill of materials)."""
+    role: str = ""
+    """Network role of a ``device``: ``firewall``, ``core_switch``, ``wifi_switch``… (empty = from the model)."""
 
 
 class RackLayout(BaseModel):
@@ -265,6 +285,16 @@ class SiteInput(BaseModel):
     """Endpoints per telecom room; empty = everything is entered for the floor (older files)."""
     ap_groups: list[ApGroup] = Field(default_factory=list)
     tier: int = Field(default=3, ge=1, le=4)
+    firewall_model: str | None = None
+    """FortiGate chosen by the user; ``None`` = the first model of the ladder that fits."""
+    firewall_count: int | None = Field(default=None, ge=0, le=8)
+    """FortiGates; ``None`` = by tier (2 in HA or 1), 0 = none."""
+    core_model: str | None = None
+    """Core (DSW) switch model; ``None`` = the catalog's core model."""
+    core_count: int | None = Field(default=None, ge=0, le=16)
+    """Core switches; ``None`` = calculated (aggregation setting), 0 = no core."""
+    ap_columns: int = Field(default=0, ge=0, le=200)
+    """Access points per row on the floor plan for the AP wiring scheme (0 = one line)."""
     aggregation: Aggregation = "auto"
     reserve: bool = False
     reserve_percent: float | None = Field(default=None, ge=0, le=500)

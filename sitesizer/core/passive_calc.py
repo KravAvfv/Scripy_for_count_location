@@ -24,12 +24,12 @@ from pathlib import Path
 from .catalog import Catalog
 
 ROLE_KEYS = {"W": "wifi", "A": "access", "V": "video", "C": "core", "F": "firewall"}
-NAME_ROLES = {"WSW": "wifi", "ASW": "access", "VSW": "video", "CSW": "core", "FW": "firewall"}
+NAME_ROLES = {"WSW": "wifi", "ASW": "access", "VSW": "video", "DSW": "core", "CSW": "core", "FW": "firewall"}
 CATEGORY_ROLES = {"wifi_switch": "wifi", "access_switch": "access", "camera_switch": "video", "core_switch": "core"}
 LOOKALIKE = str.maketrans("АВСЕНКМОРТХІавсенкмортхі", "ABCEHKMOPTXIABCEHKMOPTXI")
 """Cyrillic letters that look like Latin ones (cabinet tags are often typed in Cyrillic)."""
 
-DEVICE_RE = re.compile(r"(?<![\w-])[\w]+-(?P<tag>-?\d{1,3}[A-Z]{1,3})-(?P<role>WSW|ASW|VSW|CSW|FW)(?P<n>\d{1,3})\b")
+DEVICE_RE = re.compile(r"(?<![\w-])[\w]+-(?P<tag>-?\d{1,3}[A-Z]{1,3})-(?P<role>WSW|ASW|VSW|DSW|CSW|FW)(?P<n>\d{1,3})\b")
 MODEL_RE = re.compile(
     r"\b(?:FS|FG)-?\d{2,4}[A-Z]?(?:-F?POE)?\b|\bFortiSwitch[\s-]*\d{2,4}[A-Z]?(?:-F?POE)?\b", re.IGNORECASE
 )

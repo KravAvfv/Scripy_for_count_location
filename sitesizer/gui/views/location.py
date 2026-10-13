@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...core.models import ADDON_KEYS, SiteResult
+from ...core.models import ADDON_KEYS, RoomInput, SiteResult
 from ...core.passive import ROLE_CODES, drop_room, drop_room_inputs
 from ...core.presets import load_presets
 from ...core.sizing import addon_enabled, ap_model_for
@@ -173,6 +173,109 @@ ROOM_FIELDS = ("sockets", "cameras", "ajax", "skud", "other")
 SWITCH_KEYS = ("access_switch", "camera_switch", "wifi_switch")
 
 
+class CountBox(QWidget):
+    """A quantity that is calculated until the user types one: [−][n][+] and ↺ back to automatic."""
+
+    changed = Signal(object)
+    """int typed by the user, or ``None`` = calculated again."""
+
+    def __init__(self, tip: str, maximum: int = 999, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(px(2))
+        self.stepper = Stepper(0, maximum, width=104)
+        self.stepper.setToolTip(tip)
+        self.reset = icon_button("undo-2", tr("ui.count_auto"), size=14)
+        self.reset.setFixedSize(px(22), px(22))
+        lay.addWidget(self.stepper)
+        lay.addWidget(self.reset)
+        self.stepper.valueChanged.connect(lambda v: self.changed.emit(int(v)))
+        self.reset.clicked.connect(lambda: self.changed.emit(None))
+
+    def set(self, value: int, typed: bool) -> None:
+        self.stepper.setValue(int(value))
+        self.reset.setVisible(typed)
+        f = self.stepper.field.font()
+        f.setBold(typed)
+        self.stepper.field.setFont(f)
+
+
+def rack_device_models(state: AppState) -> list[tuple[str, str]]:
+    """(model, text) of the catalog devices that can stand in a cabinet."""
+    t = current()
+    out = []
+    for key, dev in state.catalog.models.items():
+        if dev.kind in ("license", "work", "ap") or dev.rack_size_u:
+            continue
+        if dev.kind == "accessory" and not dev.rack_units and dev.order is None:
+            continue
+        out.append((key, f"{key} — {dev.spec_name or t.pick(dev.name)}"[:90]))
+    return out
+
+
+class DeviceRow(QWidget):
+    """One further device of a telecom room: catalog model, quantity, optional name."""
+
+    changed = Signal()
+    removed = Signal(object)
+
+    def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(px(6))
+        self.model = QComboBox()
+        self.model.setEditable(True)
+        self.model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        for key, text in rack_device_models(state):
+            self.model.addItem(text, key)
+        comp = self.model.completer()
+        if comp is not None:
+            comp.setFilterMode(Qt.MatchFlag.MatchContains)
+            comp.setCompletionMode(comp.CompletionMode.PopupCompletion)
+        self.model.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.model.setMinimumContentsLength(10)
+        self.model.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.model.view().setMinimumWidth(px(460))
+        self.qty = Stepper(1, 100, width=96)
+        self.name = QLineEdit()
+        self.name.setPlaceholderText(tr("ui.room_device_name"))
+        self.name.setMaximumWidth(px(150))
+        self.remove = icon_button("trash-2", tr("ui.room_device_remove"), size=14)
+        lay.addWidget(self.model, 1)
+        lay.addWidget(self.qty)
+        lay.addWidget(self.name)
+        lay.addWidget(self.remove)
+        self._loading = False
+        self.model.currentIndexChanged.connect(self._emit)
+        self.qty.valueChanged.connect(self._emit)
+        self.name.editingFinished.connect(self._emit)
+        self.remove.clicked.connect(lambda: self.removed.emit(self))
+
+    def load(self, d: dict[str, Any]) -> None:
+        self._loading = True
+        i = self.model.findData(d.get("model"))
+        if i < 0:
+            self.model.addItem(str(d.get("model")), d.get("model"))
+            i = self.model.count() - 1
+        self.model.setCurrentIndex(i)
+        edit = self.model.lineEdit()
+        if edit is not None and not edit.hasFocus():
+            edit.setCursorPosition(0)  # the model, not the tail of its description
+        self.qty.setValue(int(d.get("qty", 1)))
+        if not self.name.hasFocus():
+            self.name.setText(d.get("label", ""))
+        self._loading = False
+
+    def data(self) -> dict[str, Any]:
+        return {"model": self.model.currentData() or "", "qty": self.qty.value(), "label": self.name.text().strip()}
+
+    def _emit(self, *_a: object) -> None:
+        if not self._loading:
+            self.changed.emit()
+
+
 class RoomBlock(QFrame):
     """One telecom room: its endpoints and the switch models standing in it."""
 
@@ -180,12 +283,20 @@ class RoomBlock(QFrame):
     """(room, field, value)"""
     modelChanged = Signal(int, str, object)
     """(room, switch category, model or None = calculated)"""
+    countChanged = Signal(int, str, object)
+    """(room, switch category, switches typed or None = calculated)"""
+    upsChanged = Signal(int, str, object)
+    """(room, "model" | "count", value or None = automatic)"""
+    devicesChanged = Signal(int, list)
     removed = Signal(int)
 
     def __init__(self, index: int, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.index = index
         self.state = state
+        self.typed: dict[str, int] = {}
+        self.ups_typed: int | None = None
+        self._loading = True
         self.setObjectName("SoftCard")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(px(14), px(10), px(10), px(12))
@@ -271,13 +382,48 @@ class RoomBlock(QFrame):
             load.setObjectName("PortLoad")
             rl.addWidget(load)
             self.loads[key] = load
-            n = label("", None)
-            n.setMinimumWidth(px(34))
-            n.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            n.setStyleSheet("font-weight: 600;")
+            n = CountBox(tr("ui.room_count_tip"))
+            n.changed.connect(lambda v, k=key: self._emit_count(k, v))
             rl.addWidget(n)
             self.sw_box.addWidget(row)
             self.combos[key], self.counts[key], self.rows[key] = combo, n, row
+        self.sw_empty.hide()
+
+        # ---- UPS of the room's cabinet ---------------------------------------------------
+        ups_row = QHBoxLayout()
+        ups_row.setSpacing(px(8))
+        ups_label = label(tr("ui.room_ups"), "muted")
+        ups_label.setMinimumWidth(px(112))
+        ups_row.addWidget(ups_label)
+        self.ups_model = QComboBox()
+        self.ups_model.setToolTip(tr("ui.room_ups_tip"))
+        self.ups_model.addItem(tr("ui.room_ups_auto"), None)
+        for model, dev in state.catalog.ups_models():
+            self.ups_model.addItem(f"{model} — {t.pick(dev.name) or ''} ({dev.ups_va} VA)", model)
+        self.ups_model.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.ups_model.setMinimumContentsLength(12)
+        self.ups_model.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.ups_model.currentIndexChanged.connect(self._emit_ups_model)
+        ups_row.addWidget(self.ups_model, 1)
+        self.ups_count = CountBox(tr("ui.room_ups_count_tip"), 20)
+        self.ups_count.changed.connect(
+            lambda v: None if self._loading else self.upsChanged.emit(self.index, "count", v)
+        )
+        ups_row.addWidget(self.ups_count)
+        lay.addLayout(ups_row)
+
+        # ---- further devices -------------------------------------------------------------
+        dev_head = QHBoxLayout()
+        dev_head.addWidget(label(tr("ui.room_devices"), "caption"), 1)
+        add_dev = button(tr("ui.room_device_add"), "ghost", "plus")
+        add_dev.setToolTip(tr("ui.room_device_add_tip"))
+        add_dev.clicked.connect(self._add_device)
+        dev_head.addWidget(add_dev)
+        lay.addLayout(dev_head)
+        self.dev_box = QVBoxLayout()
+        self.dev_box.setSpacing(px(4))
+        lay.addLayout(self.dev_box)
+        self.dev_rows: list[DeviceRow] = []
         self._loading = False
 
     def _place_cells(self) -> None:
@@ -295,18 +441,69 @@ class RoomBlock(QFrame):
             self._columns = columns
             self._place_cells()
 
-    def load(self, title: str, values: dict[str, int], models: dict[str, str], show_title: bool) -> None:
+    def load(self, title: str, room: RoomInput, show_title: bool) -> None:
         self._loading = True
         self.badge.setText(str(self.index + 1))
         self.badge.setVisible(show_title)
         self.title.setText(title)
         self.title.setVisible(show_title)
         self.remove.setVisible(show_title and self.index > 0)
+        values = room.model_dump()
         for key, st in self.fields.items():
             st.setValue(int(values.get(key, 0)))
         for key, combo in self.combos.items():
-            j = combo.findData(models.get(key))
+            j = combo.findData(room.models.get(key))
             combo.setCurrentIndex(j if j > 0 else 0)
+        self.typed = dict(room.counts)
+        j = self.ups_model.findData(room.ups_model)
+        self.ups_model.setCurrentIndex(j if j > 0 else 0)
+        self.ups_typed = room.ups_count
+        if room.ups_count is not None:
+            self.ups_count.set(room.ups_count, True)
+        devices = [d.model_dump() for d in room.devices]
+        while len(self.dev_rows) > len(devices):
+            self.dev_rows.pop().deleteLater()
+        while len(self.dev_rows) < len(devices):
+            row = DeviceRow(self.state)
+            row.changed.connect(self._emit_devices)
+            row.removed.connect(self._remove_device)
+            self.dev_box.addWidget(row)
+            self.dev_rows.append(row)
+        for row, d in zip(self.dev_rows, devices, strict=True):
+            row.load(d)
+        self._loading = False
+
+    def _emit_count(self, key: str, value: int | None) -> None:
+        if not self._loading:
+            self.countChanged.emit(self.index, key, value)
+
+    def _emit_ups_model(self) -> None:
+        if not self._loading:
+            self.upsChanged.emit(self.index, "model", self.ups_model.currentData())
+
+    def _devices(self) -> list[dict[str, Any]]:
+        return [row.data() for row in self.dev_rows if row.data()["model"]]
+
+    def _emit_devices(self) -> None:
+        if not self._loading:
+            self.devicesChanged.emit(self.index, self._devices())
+
+    def _add_device(self) -> None:
+        models = rack_device_models(self.state)
+        if not models:
+            return
+        self.devicesChanged.emit(self.index, [*self._devices(), {"model": models[0][0], "qty": 1, "label": ""}])
+
+    def _remove_device(self, row: DeviceRow) -> None:
+        if row in self.dev_rows:
+            devices = [r.data() for r in self.dev_rows if r is not row and r.data()["model"]]
+            self.devicesChanged.emit(self.index, devices)
+
+    def set_ups(self, placed: int) -> None:
+        """UPS units standing in this room's cabinets (shown while the number is automatic)."""
+        self._loading = True
+        if self.ups_typed is None:
+            self.ups_count.set(placed, False)
         self._loading = False
 
     def set_switches(
@@ -325,18 +522,14 @@ class RoomBlock(QFrame):
             load.setProperty("full", "true" if cap and used / cap > 0.9 else "false")
             load.style().unpolish(load)
             load.style().polish(load)
-        any_row = False
         for key in SWITCH_KEYS:
             here = placed.get(key, {})
             combo = self.combos[key]
             combo.setItemText(0, tr("ui.room_model_auto", model=auto.get(key) or "—"))
-            visible = bool(here) or combo.currentIndex() > 0
-            self.rows[key].setVisible(visible)
-            any_row = any_row or visible
-            self.counts[key].setText(f"× {sum(here.values())}" if here else "× 0")
+            typed = self.typed.get(key)
+            self.counts[key].set(sum(here.values()) if here or typed is None else typed, typed is not None)
             extra = [m for m in here if m != (combo.currentData() or auto.get(key))]
             self.counts[key].setToolTip(", ".join(f"{m} × {n}" for m, n in here.items()) if extra else "")
-        self.sw_empty.setVisible(not any_row)
         self.sub.setText(summary)
         self._loading = False
 
@@ -417,7 +610,7 @@ class LocationView(QWidget):
         # event filters run last-installed first: on show the inputs reload before the result
         state.resultChanged.connect(when_shown(self, self.on_result))
         state.siteChanged.connect(when_shown(self, self.load_from_site))
-        state.catalogChanged.connect(self._rebuild_zone_rows)
+        state.catalogChanged.connect(self._on_catalog)
         theme_manager.changed.connect(self._on_theme)
 
     # =====================================================================================
@@ -517,6 +710,28 @@ class LocationView(QWidget):
         self.zones_summary = label("", "caption", wrap=True)
         self.wifi_card.add(self.zones_summary)
         f.addWidget(self.wifi_card)
+
+        # --- firewall and core: the user's model and number -----------------------------
+        self.net_card = Card(tr("ui.net_core"), tr("ui.net_core_sub"))
+        self.fw_model = QComboBox()
+        self.fw_model.setToolTip(tr("ui.fw_model_tip"))
+        self.fw_model.currentIndexChanged.connect(
+            lambda _i: self._set_choice("firewall_model", self.fw_model.currentData(), tr("ui.fw_model"))
+        )
+        self.fw_count = CountBox(tr("ui.fw_count_tip"), 8)
+        self.fw_count.changed.connect(lambda v: self._set_choice("firewall_count", v, tr("ui.fw_count")))
+        self.net_card.add(self._choice_row(tr("ui.fw_model"), self.fw_model, self.fw_count))
+        self.core_model = QComboBox()
+        self.core_model.setToolTip(tr("ui.core_model_tip"))
+        self.core_model.currentIndexChanged.connect(
+            lambda _i: self._set_choice("core_model", self.core_model.currentData(), tr("ui.core_model"))
+        )
+        self.core_count = CountBox(tr("ui.core_count_tip"), 16)
+        self.core_count.changed.connect(lambda v: self._set_choice("core_count", v, tr("ui.core_count")))
+        self.net_card.add(self._choice_row(tr("ui.core_model"), self.core_model, self.core_count))
+        self.net_card.add(label(tr("ui.net_core_note"), "faint", wrap=True))
+        self._fill_choice_models()
+        f.addWidget(self.net_card)
 
         # --- criticality ------------------------------------------------------------------
         tier_card = Card(tr("ui.tier"), tr("ui.tier_sub"))
@@ -714,6 +929,76 @@ class LocationView(QWidget):
         f.addWidget(notes_card)
         f.addStretch(1)
 
+    def _choice_row(self, title: str, combo: QComboBox, count: CountBox) -> QWidget:
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(px(8))
+        name = label(title, "muted")
+        name.setMinimumWidth(px(96))
+        lay.addWidget(name)
+        combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        combo.setMinimumContentsLength(12)
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        combo.view().setMinimumWidth(px(420))
+        lay.addWidget(combo, 1)
+        lay.addWidget(count)
+        return w
+
+    def _fill_choice_models(self) -> None:
+        """FortiGates and switches of the catalog (models added there show up here too)."""
+        t = current()
+        cat = self.state.catalog
+        was = self._loading
+        self._loading = True
+        for combo, kind in ((self.fw_model, "firewall"), (self.core_model, "switch")):
+            keep = combo.currentData()
+            combo.clear()
+            combo.addItem(tr("ui.room_model_auto", model="—"), None)
+            for key, dev in cat.models.items():
+                if dev.kind == kind:
+                    combo.addItem(f"{key} — {t.pick(dev.name)}", key)
+            j = combo.findData(keep)
+            combo.setCurrentIndex(j if j > 0 else 0)
+        self._loading = was
+
+    def _set_choice(self, field: str, value: object, text: str) -> None:
+        if self._loading or getattr(self.state.site, field) == value:
+            return
+        self.state.set_field(field, value, text, merge=field.endswith("_count") and value is not None)
+
+    def _load_choices(self) -> None:
+        s = self.state.site
+        for combo, value in ((self.fw_model, s.firewall_model), (self.core_model, s.core_model)):
+            j = combo.findData(value)
+            combo.setCurrentIndex(j if j > 0 else 0)
+        r = self.state.result
+        fw_auto = r.firewall.model if r is not None and r.firewall else "—"
+        core_auto = (r.core.model if r is not None and r.core.model else "") or self.state.catalog.categories[
+            "core_switch"
+        ].base
+        self.fw_model.setItemText(0, tr("ui.room_model_auto", model=fw_auto if not s.firewall_model else "…"))
+        self.core_model.setItemText(0, tr("ui.room_model_auto", model=core_auto if not s.core_model else "…"))
+        fw_n = r.firewall.count if r is not None and r.firewall and r.firewall.fits else 0
+        self.fw_count.set(s.firewall_count if s.firewall_count is not None else fw_n, s.firewall_count is not None)
+        core_n = r.core.count if r is not None else 0
+        self.core_count.set(s.core_count if s.core_count is not None else core_n, s.core_count is not None)
+        entry = self.state.project.site(self.state.current_id)
+        self.net_card.setVisible(bool(entry and entry.is_hub) or len(self.state.project.sites) <= 1)
+
+    def _on_catalog(self) -> None:
+        self._rebuild_zone_rows()
+        self._fill_choice_models()
+        for block in self._room_blocks:
+            block.deleteLater()
+        self._room_blocks = []
+        self._loading = True
+        try:
+            self._sync_rooms()
+            self._load_choices()
+        finally:
+            self._loading = False
+
     # =====================================================================================
     # preview
     # =====================================================================================
@@ -796,6 +1081,7 @@ class LocationView(QWidget):
             self.mode.setValue(s.mode, animate=True)
             self.mode_caption.setText(tr("ui.mode_quick_tip") if s.mode == "quick" else tr("ui.mode_extended_tip"))
             self._sync_rooms()
+            self._load_choices()
             self._sync_zones([g.model_dump() for g in s.ap_groups])
             self.tier.setValue(s.tier, animate=True)
             tier = cat.tier(s.tier)
@@ -926,13 +1212,16 @@ class LocationView(QWidget):
             block = RoomBlock(len(self._room_blocks), self.state)
             block.changed.connect(self._on_room_field)
             block.modelChanged.connect(self._on_room_model)
+            block.countChanged.connect(self._on_room_count_typed)
+            block.upsChanged.connect(self._on_room_ups)
+            block.devicesChanged.connect(self._on_room_devices)
             block.removed.connect(self._on_room_removed)
             self.rooms_box.addWidget(block)
             self._room_blocks.append(block)
         titles = self._room_titles()
         for i, block in enumerate(self._room_blocks):
             room = s.room(i)
-            block.load(titles[i], room.model_dump(), dict(room.models), n > 1)
+            block.load(titles[i], room, n > 1)
         for row in self._zone_rows:
             row.set_rooms(titles)
         if self.state.result is not None:
@@ -963,6 +1252,9 @@ class LocationView(QWidget):
                     n = sum(here.get(key, {}).values())
                     ports[key] = (used[key], n * cats[key].endpoints_per_switch)
             block.set_switches(auto, here, summary, ports)
+            block.set_ups(
+                sum(1 for p in result.rack.plans if p.room == i for it in p.items if it.id.startswith("ups:"))
+            )
 
     def _fold_floor_counts(self, d: dict[str, Any]) -> None:
         """Older files keep the main room's sockets/cameras on the floor: move them into ``rooms[0]``."""
@@ -1003,6 +1295,44 @@ class LocationView(QWidget):
                 models.pop(key, None)
 
         self.state.edit(tr("ui.room_model"), mutate)
+
+    def _room_edit(self, text: str, room: int, fn: Any, merge_key: str | None = None) -> None:
+        """An undoable change of telecom room ``room``'s input (``fn`` edits its dict)."""
+        if self._loading:
+            return
+
+        def mutate(d: dict[str, Any]) -> None:
+            self._fold_floor_counts(d)
+            rooms = d["rooms"]
+            while len(rooms) <= room:
+                rooms.append({})
+            fn(rooms[room])
+
+        if merge_key:
+            self.state.edit(text, mutate, merge_key=merge_key)
+        else:
+            self.state.edit(text, mutate)
+
+    def _on_room_count_typed(self, room: int, key: str, value: int | None) -> None:
+        def fn(r: dict[str, Any]) -> None:
+            counts = r.setdefault("counts", {})
+            if value is None:
+                counts.pop(key, None)
+            else:
+                counts[key] = int(value)
+
+        self._room_edit(tr("ui.room_count"), room, fn, f"room{room}:count:{key}" if value is not None else None)
+
+    def _on_room_ups(self, room: int, what: str, value: object) -> None:
+        def fn(r: dict[str, Any]) -> None:
+            r["ups_model" if what == "model" else "ups_count"] = value
+
+        self._room_edit(
+            tr("ui.room_ups"), room, fn, f"room{room}:ups" if what == "count" and value is not None else None
+        )
+
+    def _on_room_devices(self, room: int, devices: list[dict[str, Any]]) -> None:
+        self._room_edit(tr("ui.room_devices"), room, lambda r: r.update(devices=devices))
 
     def _on_room_count(self, value: int) -> None:
         if self._loading:
@@ -1217,6 +1547,11 @@ class LocationView(QWidget):
             self.cat_list.addWidget(row)
 
         self._fill_room_switches(result)
+        if result.input is self.state.site:
+            was = self._loading
+            self._loading = True
+            self._load_choices()
+            self._loading = was
         titles = self._room_titles()
         for i, block in enumerate(self._room_blocks):
             if i < len(titles):

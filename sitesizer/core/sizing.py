@@ -213,20 +213,57 @@ def room_model(site: SiteInput, catalog: Catalog, key: str, room: int, default: 
     return default
 
 
+def room_count_override(site: SiteInput, key: str, room: int) -> int | None:
+    """Switches of category ``key`` the user typed for telecom room ``room`` (``None`` = calculated)."""
+    if room < len(site.rooms):
+        n = site.rooms[room].counts.get(key)
+        if n is not None and n >= 0:
+            return int(n)
+    return None
+
+
+def typed_switches(site: SiteInput, key: str) -> bool:
+    """The user typed a switch count of category ``key`` for some room (it is sized even without endpoints)."""
+    return any(room_count_override(site, key, i) for i in range(len(site.rooms)))
+
+
 def _split_rooms(ctx: _Ctx, res: CategoryResult, endpoints: list[int], loads: list[float] | None, label: str) -> None:
     """Switches per room: enough ports for the room's endpoints and enough PoE for its load."""
-    per_switch = res.endpoints_per_switch
     res.room_models = [room_model(ctx.site, ctx.catalog, res.key, i, res.model) for i in range(len(endpoints))]
-    per = [ceil_div(n, per_switch) for n in endpoints]
+    per = []
+    for i, n in enumerate(endpoints):
+        per_switch = res.endpoints_per_switch
+        dev = ctx.catalog.models.get(res.room_models[i])
+        if res.room_models[i] != res.model and dev is not None and dev.ports and dev.ports.count:
+            per_switch = dev.ports.count  # a model chosen for the room: its own port count
+        per.append(ceil_div(n, per_switch))
     before = sum(per)
     if loads is not None and ctx.rules.poe_autoscale:
         for i, load in enumerate(loads):
             dev = ctx.catalog.models.get(res.room_models[i])
             if dev and dev.poe and dev.poe.budget_w:
                 per[i] = max(per[i], ceil_div(load, dev.poe.budget_w))
+    auto = sum(per)
+    typed = False
+    for i in range(len(per)):
+        typed_n = room_count_override(ctx.site, res.key, i)
+        if typed_n is not None:
+            typed = typed or typed_n != per[i]
+            per[i] = typed_n
     res.per_room = per
     res.count = sum(per)
-    if res.count > before:
+    if typed:
+        ctx.check(
+            Severity.INFO,
+            "ROOM_COUNT",
+            "check.room_count",
+            "",
+            res.key,
+            cat=label,
+            auto=auto,
+            after=res.count,
+        )
+    elif res.count > before:
         ctx.check(
             Severity.INFO,
             "POE_AUTOSCALE",
@@ -300,7 +337,7 @@ def _poe_checks(ctx: _Ctx, res: CategoryResult, dev: Device, label: str) -> None
 def size_wifi(ctx: _Ctx) -> CategoryResult:
     cat = ctx.catalog.categories["wifi_switch"]
     res = CategoryResult(key="wifi_switch", endpoints=ctx.counts.aps, endpoints_per_switch=cat.endpoints_per_switch)
-    if ctx.counts.aps <= 0:
+    if ctx.counts.aps <= 0 and not typed_switches(ctx.site, "wifi_switch"):
         return res
     res.count = ceil_div(ctx.counts.aps, cat.endpoints_per_switch)
     res.model, res.premium = pick_variant(cat, res.count, ctx)
@@ -382,7 +419,7 @@ def size_access(ctx: _Ctx) -> CategoryResult:
     res = CategoryResult(
         key="access_switch", endpoints=ctx.counts.sockets, endpoints_per_switch=cat.endpoints_per_switch
     )
-    if ctx.counts.sockets <= 0:
+    if ctx.counts.sockets <= 0 and not typed_switches(ctx.site, "access_switch"):
         return res
     res.count = ceil_div(ctx.counts.sockets, cat.endpoints_per_switch)
     if ctx.counts.rooms:
@@ -403,7 +440,7 @@ def size_cameras(ctx: _Ctx) -> CategoryResult:
     cat = ctx.catalog.categories["camera_switch"]
     ports = ctx.counts.cameras + ctx.counts.vsw_extra
     res = CategoryResult(key="camera_switch", endpoints=ports, endpoints_per_switch=cat.endpoints_per_switch)
-    if ports <= 0:
+    if ports <= 0 and not typed_switches(ctx.site, "camera_switch"):
         return res
     res.count = ceil_div(ports, cat.endpoints_per_switch)
     if ctx.counts.rooms:
@@ -449,7 +486,12 @@ def size_core(ctx: _Ctx, edge_count: int, fw_count_hint: int) -> CategoryResult:
     floors = ctx.floor.floors if ctx.floor else ctx.site.floors
     auto_need = edge_count > ctx.rules.core_min_switches and floors > ctx.rules.core_min_floors
     need = mode == "yes" or (mode == "auto" and auto_need)
+    typed = ctx.site.core_count
+    if typed is not None:
+        need = typed > 0
     if not need:
+        if typed == 0:
+            return res
         if mode == "no" and auto_need:
             ctx.check(
                 Severity.WARNING,
@@ -461,6 +503,9 @@ def size_core(ctx: _Ctx, edge_count: int, fw_count_hint: int) -> CategoryResult:
             )
         return res
     res.model = cat.base
+    chosen = ctx.catalog.models.get(ctx.site.core_model or "")
+    if chosen is not None and chosen.kind == "switch":
+        res.model = ctx.site.core_model or res.model
     dev = ctx.catalog.device(res.model)
     ports = dev.ports.count if dev.ports else cat.endpoints_per_switch
     redundant = ctx.tier.core_redundant
@@ -474,8 +519,11 @@ def size_core(ctx: _Ctx, edge_count: int, fw_count_hint: int) -> CategoryResult:
         capacity = free // links if free > 0 else 0
     groups = max(1, ceil_div(edge_count, capacity)) if capacity > 0 and ctx.rules.core_port_check else 1
     per_group = 2 if redundant else 1
-    res.count = apply_count_override(ctx, "core_switch", res.model, groups * per_group)
+    count = groups * per_group if typed is None else typed
+    res.count = apply_count_override(ctx, "core_switch", res.model, count)
     res.premium = redundant
+    if typed is not None:
+        groups = 1  # the user decided how many cores there are
     if groups > 1:
         ctx.check(
             Severity.WARNING,
@@ -550,6 +598,43 @@ def pick_firewall(ctx: _Ctx, total_switches: int, total_aps: int, requires_10g: 
     )
 
 
+def _user_firewall(ctx: _Ctx, fw: FirewallChoice, switches: int, aps: int) -> None:
+    """The FortiGate model and number chosen on the location page replace the calculated ones."""
+    t = ctx.t
+    model = ctx.site.firewall_model
+    dev = ctx.catalog.models.get(model or "")
+    if model and dev is not None and dev.firewall is not None:
+        version = ctx.site.fortios_version or ctx.rules.fortios_default
+        limit = dev.firewall.switch_limit(version)
+        fw.model, fw.fits = model, True
+        fw.switch_limit, fw.ap_limit = limit, dev.firewall.max_aps
+        fw.reasons = [t.t("reason.fw_user", model=model)]
+        if switches > limit:
+            ctx.check(
+                Severity.WARNING,
+                "FW_USER_LIMIT",
+                "check.fw_user_limit",
+                "",
+                "firewall",
+                model=model,
+                limit=limit,
+                need=switches,
+            )
+        if aps > dev.firewall.max_aps:
+            ctx.check(
+                Severity.WARNING,
+                "FW_USER_APS",
+                "check.fw_user_aps",
+                "",
+                "firewall",
+                model=model,
+                limit=dev.firewall.max_aps,
+                need=aps,
+            )
+    if ctx.site.firewall_count is not None:
+        fw.count = ctx.site.firewall_count
+
+
 # =========================================================================================
 # main entry point
 # =========================================================================================
@@ -594,6 +679,13 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk", floor: FloorC
         for ex in site.layout.extras
         if ex.kind == "device" and ex.model in catalog.models
     ]
+    ctx.manual_devices += [
+        (d.model, catalog.models[d.model])
+        for i in range(site.room_count())
+        for d in site.room(i).devices
+        if d.model in catalog.models
+        for _ in range(d.qty)
+    ]
     addons = resolve_addons(site, tier)
 
     if catalog.rules.variant_mode == "dual_psu" and not confirmed and tier.dual_psu:
@@ -629,8 +721,10 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk", floor: FloorC
     # by the same FortiGate
     managed_switches = total_switches + ctx.manual_count("switch") + ctx.other("switches")
     managed_aps = counts.aps + ctx.manual_count("ap") + ctx.other("aps")
-    if managed_switches > 0 and ctx.has_firewall:
+    wants_fw = managed_switches > 0 or bool(site.firewall_model) or bool(site.firewall_count)
+    if wants_fw and ctx.has_firewall:
         firewall = pick_firewall(ctx, managed_switches, managed_aps, requires_10g=core.count > 0)
+        _user_firewall(ctx, firewall, managed_switches, managed_aps)
         firewall.count = apply_count_override(ctx, "firewall", firewall.model, firewall.count)
         if not firewall.fits:
             ctx.check(
@@ -928,7 +1022,26 @@ def _bom_tier_lines(
         return
     in_racks = [it.id for p in rack.plans for it in p.items]
     ups_in_racks = sum(1 for i in in_racks if i.startswith("ups:"))
-    if (ctx.tier.ups or addons["ups"]) and (ups_in_racks or not rack.plans):
+    ups_models: dict[str, int] = {}
+    for p in rack.plans:
+        for it in p.items:
+            if it.id.startswith("ups:"):
+                ups_models[it.model] = ups_models.get(it.model, 0) + 1
+    wanted = ctx.tier.ups or addons["ups"] or bool(ups_in_racks)
+    if wanted and len(ups_models) > 1 and ctx.rules.power_model != "legacy":
+        # UPS models chosen per telecom room: one line per model
+        for model, n in ups_models.items():
+            bom.append(
+                BomLine(
+                    group="power",
+                    category=t.t("cat.ups"),
+                    model=model or t.t("model.ups_todo"),
+                    qty=n,
+                    reason=t.t("reason.ups_rooms", va=power.ups_va, w=round(power.total_w)),
+                    tags=["tier"] if ctx.tier.ups else ["addon"],
+                )
+            )
+    elif wanted and (ups_in_racks or not rack.plans):
         if ctx.rules.power_model == "legacy":
             bom.append(
                 BomLine(
@@ -942,7 +1055,7 @@ def _bom_tier_lines(
             )
         else:
             qty = 1
-            model = power.ups_model
+            model = next(iter(ups_models), "") or power.ups_model
             ups_dev = ctx.catalog.models.get(model)
             if ups_dev and ups_dev.ups_va and power.ups_va > ups_dev.ups_va:
                 qty = math.ceil(power.ups_va / ups_dev.ups_va)
@@ -1225,9 +1338,12 @@ def _bom_rack_devices(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
     found: dict[str, list[str]] = {}
     for plan in rack.plans:
         for it in plan.items:
+            if it.id.startswith("dev:") and it.model:
+                found.setdefault(it.model, []).append(plan.tag)  # chosen for the room on the location page
+                continue
             if not it.extra:
                 continue
-            if it.group == "device" and it.model:
+            if it.model and it.group not in ("custom", "manager", "panel", "shelf", "blank", "fiber"):
                 found.setdefault(it.model, []).append(plan.tag)
             elif it.group == "custom" and it.label:
                 found.setdefault(it.label, []).append(plan.tag)
@@ -1411,6 +1527,9 @@ def compute_power(
     else:
         if ups_models:
             ps.ups_model = ups_models[-1][0]
+    chosen = ctx.site.room(0).ups_model
+    if chosen and chosen in ctx.catalog.models:
+        ps.ups_model = chosen
     return ps
 
 
