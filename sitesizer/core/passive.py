@@ -397,8 +397,10 @@ def plan_passive(
     for plan in plans:
         plan.items.sort(key=lambda it: -it.u)
     rs.plans = plans
+    active = {*EDGE_KEYS, "core_switch", "firewall"}
     for plan in plans:
         for it in plan.items:
+            ps.mount_sets += pr.mount_kit_active if it.group in active else pr.mount_kit_other
             if it.group == "pdu":
                 ps.pdus += 1
             elif it.group == "panel" and it.model:

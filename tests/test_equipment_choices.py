@@ -241,3 +241,36 @@ def test_typed_switch_count_gives_way_when_the_endpoints_change(catalog: Catalog
     assert site.bom.overrides["wifi_switch:FS-624F-FPOE"].qty is None
     assert site.bom.overrides["wifi_switch:FS-624F-FPOE"].price == 5.0
     assert size_site(site, catalog).categories["wifi_switch"].count == 6
+
+
+def test_m6_mounting_sets(catalog: Catalog) -> None:
+    from sitesizer.core.location import size_location
+
+    pr = catalog.passive
+    active = {"wifi_switch", "access_switch", "camera_switch", "core_switch", "firewall"}
+
+    def expected(r) -> int:
+        items = [it for p in r.rack.plans for it in p.items]
+        n = sum(1 for it in items if it.group in active)
+        return n * pr.mount_kit_active + (len(items) - n) * pr.mount_kit_other
+
+    r = size_site(make_site(sockets=96, aps=[("low_density", 10)]), catalog)
+    line = next(line for line in r.bom if line.model == "SM6.50")
+    assert line.qty == expected(r) and pr.mount_kit_active == 8 and pr.mount_kit_other == 4
+    # a hand-placed FortiGate takes 8, a shelf 4
+    key = r.rack.plans[0].key
+    fw = next(m for m, d in catalog.models.items() if d.kind == "firewall")
+    extras = [
+        {"id": "f", "kind": "device", "model": fw, "rack": key, "u": 20},
+        {"id": "s", "kind": "shelf", "rack": key, "u": 18},
+    ]
+    r2 = size_site(make_site(sockets=96, aps=[("low_density", 10)], layout={"extras": extras}), catalog)
+    assert next(line.qty for line in r2.bom if line.model == "SM6.50") == line.qty + 8 + 4
+    # a location: every floor's cabinets
+    floors = [
+        ("a", make_site(sockets=48, floor=1), True),
+        ("b", make_site(sockets=48, floor=2), False),
+    ]
+    loc = size_location(floors, catalog)
+    total = next(line.qty for line in loc.combined.bom if line.model == "SM6.50")
+    assert total == sum(expected(fr) for _i, fr in loc.floors)

@@ -1275,5 +1275,9 @@
   "topo.medium_dac_tip": "DAC cable: no modules, into SFP ports.",
   "topo.medium_fiber_tip": "A module (transceiver) at each end and a fibre patch cord.",
   "topo.medium_copper_tip": "A copper patch cord into RJ45 ports (from the end: 48, 47…).",
-  "topo.connection_auto": "All automatic"
+  "topo.connection_auto": "All automatic",
+  "reason.mount_kit": "M6 mounting sets for everything in the cabinets: {active} switches / FortiGates × {per_active} + {other} other items (panels, organizers, ODF, PDU, UPS…) × {per_other}.",
+  "passive.mount_kit": "M6 mounting set",
+  "passive.mount_kit_active": "M6 sets per switch / FortiGate",
+  "passive.mount_kit_other": "M6 sets per other item in a cabinet"
 }

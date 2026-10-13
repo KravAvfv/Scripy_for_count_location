@@ -1283,5 +1283,9 @@
   "topo.medium_dac_tip": "DAC-кабель: без модулів, у SFP-порти.",
   "topo.medium_fiber_tip": "Модуль (трансивер) на кожному кінці й оптичний патч-корд.",
   "topo.medium_copper_tip": "Мідний патч-корд у RJ45-порти (з кінця: 48, 47…).",
-  "topo.connection_auto": "Усе автоматично"
+  "topo.connection_auto": "Усе автоматично",
+  "reason.mount_kit": "Набори кріплення М6 на все в шафах: {active} комутаторів / FortiGate × {per_active} + {other} інших позицій (ПП, органайзери, ODF, PDU, ДБЖ…) × {per_other}.",
+  "passive.mount_kit": "Набір кріплення М6",
+  "passive.mount_kit_active": "Наборів М6 на комутатор / FortiGate",
+  "passive.mount_kit_other": "Наборів М6 на іншу позицію в шафі"
 }

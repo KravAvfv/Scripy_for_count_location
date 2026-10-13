@@ -327,6 +327,12 @@ class PassiveRules(_Strict):
     fiber_rack_fibers: int = Field(default=12, gt=0)
     """Fibres of a cable between two other cabinets (12 or 6)."""
     splice_protector: str = "HSP-45S100-1"
+    mount_kit: str = "SM6.50"
+    """Mounting set M6 (screw, washer, cage nut) for everything in a cabinet."""
+    mount_kit_active: int = Field(default=8, ge=0)
+    """Sets per switch / FortiGate."""
+    mount_kit_other: int = Field(default=4, ge=0)
+    """Sets per any other item (panel, organizer, ODF, PDU, UPS, shelf…)."""
     pdu: str = "PDU-8-C13"
     pdu_outlets: int = Field(default=8, gt=0)
 

@@ -811,6 +811,7 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk", floor: FloorC
     if addons["rack"] and rack.plans:
         _bom_rack(ctx, bom, rack)
     _bom_rack_devices(ctx, bom, rack)
+    _bom_mounting(ctx, bom, rack)
     if addons["licensing"]:
         _bom_licensing(ctx, bom, categories, core, firewall)
     if addons["spares"]:
@@ -1375,6 +1376,32 @@ def _bom_rack(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
                 tags=["addon"],
             )
         )
+
+
+def _bom_mounting(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
+    """M6 mounting sets for everything standing in the cabinets."""
+    pr = ctx.catalog.passive
+    if not rack.passive.mount_sets or not pr.mount_kit:
+        return
+    active = {*EDGE_CATEGORIES, "core_switch", "firewall"}
+    n_active = sum(1 for p in rack.plans for it in p.items if it.group in active)
+    n_other = sum(len(p.items) for p in rack.plans) - n_active
+    bom.append(
+        BomLine(
+            group="rack",
+            category=ctx.t.t("cat.rack"),
+            model=pr.mount_kit,
+            qty=rack.passive.mount_sets,
+            reason=ctx.t.t(
+                "reason.mount_kit",
+                active=n_active,
+                per_active=pr.mount_kit_active,
+                other=n_other,
+                per_other=pr.mount_kit_other,
+            ),
+            tags=["addon"],
+        )
+    )
 
 
 def _bom_rack_devices(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:

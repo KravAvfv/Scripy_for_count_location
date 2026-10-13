@@ -630,6 +630,8 @@ class PassiveSummary:
     fiber_cords: int = 0
     splices: int = 0
     pdus: int = 0
+    mount_sets: int = 0
+    """M6 mounting sets: per switch / FortiGate and per any other item in the cabinets."""
     backbone_m: list[int] = field(default_factory=list)
     """Estimated fibre run per remote closet."""
 

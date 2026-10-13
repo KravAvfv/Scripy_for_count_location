@@ -279,6 +279,7 @@
 
     "RACK-24U": {"kind": "accessory", "family": "Rack", "name": {"uk": "Шафа 19\" 24U підлогова, 600×1000 мм", "en": "19\" floor cabinet 24U, 600×1000 mm"}, "rack_size_u": 24, "verified": "assumption", "notes": "Напр. CMS UA-MGSE24610MB (610×1055) або 800 мм завширшки для щільної комутації (UA-MGSE24810MB)."},
     "RACK-42U": {"kind": "accessory", "family": "Rack", "name": {"uk": "Шафа 19\" 42U підлогова, 800×1000 мм", "en": "19\" floor cabinet 42U, 800×1000 mm"}, "rack_size_u": 42, "verified": "assumption", "notes": "Напр. CMS серії MGSE 42U; 800 мм завширшки — місце для вертикальних органайзерів."},
+    "SM6.50": {"kind": "accessory", "family": "Rack", "spec_name": "Набір кріплення М6 гвинт, шайба, гайка SM6.50", "name": {"uk": "Набір кріплення М6 (гвинт, шайба, гайка)", "en": "M6 mounting set (screw, washer, cage nut)"}, "verified": "assumption", "notes": "8 шт. на комутатор / FortiGate, 4 шт. на будь-що інше в шафі."},
     "PDU-8-C13": {"kind": "accessory", "family": "Rack", "name": {"uk": "Блок розеток (PDU) 19\" 1U, 8× C13, 16 А", "en": "PDU 19\" 1U, 8× C13, 16 A"}, "rack_units": 1, "verified": "assumption", "notes": "Напр. KD-IEC1008WKPB19A-C14. Для обладнання з двома БЖ — два PDU (живлення A і B)."},
 
     "UPS-1000": {"kind": "accessory", "family": "UPS", "name": {"uk": "ДБЖ on-line 1000 VA, 1U/2U", "en": "On-line UPS 1000 VA"}, "ups_va": 1000, "rack_units": 2, "verified": "assumption"},
@@ -432,6 +433,7 @@
     },
     "fiber_spare_ratio": 1.0, "fiber_slack_m": 20, "fiber_fw_fibers": 24, "fiber_rack_fibers": 12,
     "splice_protector": "HSP-45S100-1",
+    "mount_kit": "SM6.50", "mount_kit_active": 8, "mount_kit_other": 4,
     "pdu": "PDU-8-C13", "pdu_outlets": 8
   }
 }
