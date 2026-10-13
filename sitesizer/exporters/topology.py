@@ -10,13 +10,15 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from PySide6.QtCore import QPointF, QRectF, QSizeF, Qt
+from PySide6.QtCore import QByteArray, QPointF, QRectF, QSizeF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
+from PySide6.QtSvg import QSvgRenderer
 
 from ..core.catalog import Catalog
 from ..core.models import SiteResult, TopologyEdits
 from ..core.topology import Rect, TopoLinkResult, Topology, TopoNode, build_topology
 from ..i18n import Translator
+from .device_icons import ICON_H, ICON_W, icon_svg
 from .diagram import EXPORT_STYLE, DiagramStyle, _font, ensure_gui_app
 
 
@@ -105,6 +107,7 @@ class TopologyDiagram:
         self.f_caption = _font(12, italic=True)
         self.f_title = _font(18, QFont.Weight.DemiBold)
         self.title_h = 40.0 if title else 0.0
+        self._icons: dict[str, QSvgRenderer] = {}
 
     # ---- geometry ---------------------------------------------------------------------------
     @property
@@ -280,12 +283,19 @@ class TopologyDiagram:
                 self._tag(p, QRectF(x, y, w, 12), port, self.f_port, color, bg)
             if not module:
                 continue
-            if upright and not vertical:  # a slanted line: the module next to the port
-                w = fm_m.horizontalAdvance(module) + 4
-                y = y0 - 26 if y1 < y0 else y0 + 14
-                self._tag(p, QRectF(x0 + 4, y, w, 11), module, self.f_module, color, bg)
-                continue
             length = fm_m.horizontalAdvance(module) + 4
+            if upright and not vertical:  # a slanted line: the module along it, past the port number
+                angle = math.degrees(math.atan2(y1 - y0, x1 - x0))
+                d = math.hypot(x1 - x0, y1 - y0) or 1.0
+                ux, uy = (x1 - x0) / d, (y1 - y0) / d
+                p.save()
+                p.translate(x0 + ux * 18, y0 + uy * 18)
+                flip = abs(angle) > 90  # keep the text readable (never upside down)
+                p.rotate(angle + 180 if flip else angle)
+                rect = QRectF(-length, -12, length, 11) if flip else QRectF(0, -12, length, 11)
+                self._tag(p, rect, module, self.f_module, color, bg)
+                p.restore()
+                continue
             p.save()
             if vertical:
                 down = y1 > y0
@@ -308,6 +318,13 @@ class TopologyDiagram:
         p.setFont(font)
         p.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
 
+    def _icon(self, kind: str) -> QSvgRenderer:
+        renderer = self._icons.get(kind)
+        if renderer is None:
+            renderer = QSvgRenderer(QByteArray(icon_svg(kind).encode()))
+            self._icons[kind] = renderer
+        return renderer
+
     def _paint_node(self, p: QPainter, n: TopoNode) -> None:
         fill, edge, text = self.c.node(n.kind)
         r = QRectF(n.rect.x, n.rect.y, n.rect.w, n.rect.h)
@@ -321,30 +338,35 @@ class TopologyDiagram:
         p.setBrush(QColor(fill))
         radius = r.height() / 2 if n.kind == "wan" else 8.0
         p.drawRoundedRect(r, radius, radius)
+        # the device's figure on the left, its texts beside it
+        ih = min(ICON_H, r.height() - 10)
+        iw = ih * ICON_W / ICON_H
+        self._icon(n.kind).render(p, QRectF(r.x() + 8, r.center().y() - ih / 2, iw, ih))
+        body = QRectF(r.x() + iw + 14, r.y(), r.width() - iw - 20, r.height())
         p.setPen(QColor(text))
         if n.kind == "wan" or not n.model:
             p.setFont(self.f_name)
-            p.drawText(r, Qt.AlignmentFlag.AlignCenter, n.label)
+            p.drawText(body, Qt.AlignmentFlag.AlignCenter, n.label)
             return
         fm = QFontMetricsF(self.f_name)
-        name = fm.elidedText(n.label, Qt.TextElideMode.ElideMiddle, r.width() - 14)
+        name = fm.elidedText(n.label, Qt.TextElideMode.ElideMiddle, body.width())
         rows = 3 if n.endpoints else 2
         row_h = (r.height() - 8) / rows
         p.setFont(self.f_name)
-        p.drawText(QRectF(r.x() + 7, r.y() + 4, r.width() - 14, row_h), Qt.AlignmentFlag.AlignCenter, name)
+        p.drawText(QRectF(body.x(), r.y() + 4, body.width(), row_h), Qt.AlignmentFlag.AlignCenter, name)
         muted = QColor(text)
         muted.setAlphaF(0.72)
         p.setPen(muted)
         p.setFont(self.f_model)
-        p.drawText(QRectF(r.x() + 7, r.y() + 4 + row_h, r.width() - 14, row_h), Qt.AlignmentFlag.AlignCenter, n.model)
+        p.drawText(QRectF(body.x(), r.y() + 4 + row_h, body.width(), row_h), Qt.AlignmentFlag.AlignCenter, n.model)
         if n.endpoints:
             p.setPen(QColor(self.c.link("fortilink")))
             p.setFont(self.f_endpoints)
             fe = QFontMetricsF(self.f_endpoints)
             p.drawText(
-                QRectF(r.x() + 5, r.y() + 4 + 2 * row_h, r.width() - 10, row_h),
+                QRectF(body.x(), r.y() + 4 + 2 * row_h, body.width(), row_h),
                 Qt.AlignmentFlag.AlignCenter,
-                fe.elidedText(n.endpoints, Qt.TextElideMode.ElideRight, r.width() - 10),
+                fe.elidedText(n.endpoints, Qt.TextElideMode.ElideRight, body.width()),
             )
 
 

@@ -26,6 +26,7 @@ from .. import icons
 from ..lazy import when_shown
 from ..state import AppState
 from ..theme import theme_manager, tokens
+from ..widgets.connection_panel import ConnectionPanel
 from ..widgets.controls import SegmentedControl, SpinBox, ToggleSwitch, button, icon_button, label, px, vline
 from ..widgets.topology_canvas import TopologyCanvas
 
@@ -115,7 +116,16 @@ class TopologyView(QWidget):
         fl.setContentsMargins(1, 1, 1, 1)
         self.canvas = TopologyCanvas()
         fl.addWidget(self.canvas)
-        root.addWidget(frame, 1)
+        body = QHBoxLayout()
+        body.setSpacing(px(12))
+        body.addWidget(frame, 1)
+        # the selected link for the installers: medium, ports, modules, cable
+        self.panel = ConnectionPanel(state.catalog)
+        self.panel.connectionChanged.connect(self.set_connection)
+        self.panel.mediumChanged.connect(self.set_medium)
+        self.panel.endpointsChanged.connect(self.set_endpoints)
+        body.addWidget(self.panel)
+        root.addLayout(body, 1)
         self.hint = label(tr("topo.hint"), "caption", wrap=True)
         root.addWidget(self.hint)
 
@@ -129,6 +139,7 @@ class TopologyView(QWidget):
         self.canvas.renameRequested.connect(self.rename)
         self.canvas.contextRequested.connect(self._context)
         self.canvas.selectionChanged.connect(self._sync_buttons)
+        self.canvas.selectionChanged.connect(self._sync_panel)
         state.resultChanged.connect(when_shown(self, self._on_result))
         state.projectChanged.connect(when_shown(self, self.refresh))
         theme_manager.changed.connect(self._on_theme)
@@ -184,6 +195,23 @@ class TopologyView(QWidget):
             self._loading = False
         self.canvas.set_diagram(self.build_diagram())
         self._sync_buttons()
+        self._sync_panel()
+
+    def _sync_panel(self) -> None:
+        """The panel shows the one link or switch selected (several / none: its hint)."""
+        d = self.canvas.diagram
+        links, nodes = self.canvas.selected_ids("link"), self.canvas.selected_ids("node")
+        editable = self.scope.value() == "site" and isinstance(d, TopologyDiagram)
+        self.panel.setVisible(editable)
+        if not editable:
+            return
+        assert isinstance(d, TopologyDiagram)
+        if len(links) == 1 and not nodes:
+            self.panel.show_item(d.topo, "link", links[0], self.edits)
+        elif len(nodes) == 1 and not links:
+            self.panel.show_item(d.topo, "node", nodes[0], self.edits)
+        else:
+            self.panel.show_item(None, "", "", None)
 
     def _sync_buttons(self) -> None:
         self.connect_btn.setEnabled(len(self.canvas.selected_ids("node")) >= 1)
@@ -206,6 +234,7 @@ class TopologyView(QWidget):
                 ("ports", {}),
                 ("modules", {}),
                 ("endpoints", {}),
+                ("media", {}),
             ):
                 topo.setdefault(key, empty)
             fn(topo)
@@ -286,7 +315,7 @@ class TopologyView(QWidget):
 
     def reset(self) -> None:
         def fn(t: dict[str, Any]) -> None:
-            for key in ("positions", "labels", "kinds", "groups", "ports", "modules", "endpoints"):
+            for key in ("positions", "labels", "kinds", "groups", "ports", "modules", "endpoints", "media"):
                 t[key] = {}
             t["hidden"], t["links"] = [], []
 
@@ -315,9 +344,7 @@ class TopologyView(QWidget):
                     store[lk.end(node)] = text
                 else:
                     store.pop(lk.end(node), None)
-            cable = values.get("cable", "").strip()
-            if cable == lk.label and link_id not in t["labels"]:
-                return  # the automatic cable: keep following the cabinets (DAC length, fibre type)
+            cable = values.get("cable", "").strip()  # empty: the automatic cable (DAC length, fibre type)
             for ul in t["links"]:
                 if ul["id"] == link_id:
                     ul["label"] = cable
@@ -329,17 +356,22 @@ class TopologyView(QWidget):
 
         self._edit(tr("topo.connection"), fn)
 
-    def edit_connection(self, link_id: str) -> None:
-        d = self.canvas.diagram
-        lk = d.topo.link(link_id) if d is not None else None
-        if lk is None:
-            return
-        from ..widgets.connection_dialog import ConnectionDialog
+    def set_medium(self, link_id: str, medium: str | None) -> None:
+        """How a link is made: ``dac``, ``fiber`` (modules + fibre), ``copper``; ``None`` = automatic."""
 
-        names = {n.id: n.label for n in d.topo.nodes}
-        dlg = ConnectionDialog(lk, names.get(lk.a, lk.a), names.get(lk.b, lk.b), self.state.catalog, self.edits, self)
-        if dlg.exec():
-            self.set_connection(link_id, dlg.values())
+        def fn(t: dict[str, Any]) -> None:
+            if medium:
+                t["media"][link_id] = medium
+            else:
+                t["media"].pop(link_id, None)
+
+        self._edit(tr("topo.medium"), fn)
+
+    def edit_connection(self, link_id: str) -> None:
+        """Select the link and put the cursor into the panel's first port field."""
+        self.canvas.select("link", link_id)
+        self._sync_panel()
+        self.panel.ends["a"][1].setFocus()
 
     def set_endpoints(self, node_id: str, text: str) -> None:
         def fn(t: dict[str, Any]) -> None:

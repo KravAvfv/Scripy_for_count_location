@@ -36,13 +36,13 @@ SWITCH_KINDS = ("wifi_switch", "camera_switch", "access_switch")
 POE_KINDS = ("wifi_switch", "camera_switch")
 LINK_KINDS = ("fortilink", "stack", "uplink", "isl", "ha", "wan", "custom")
 
-NODE_W = 188.0
+NODE_W = 232.0
 NODE_H = 60.0
 """A switch: name, model and the line of what its ports serve."""
-HEAD_W = 196.0
+HEAD_W = 236.0
 HEAD_H = 58.0
-WAN_W = 112.0
-WAN_H = 30.0
+WAN_W = 140.0
+WAN_H = 40.0
 PAD = 40.0
 COL_GAP = 84.0
 STACK_GAP = 46.0
@@ -120,6 +120,10 @@ class TopoLinkResult:
     """Route: start on ``a``, end on ``b``, corners in between."""
     label_t: float = 0.5
     """Where the label sits along the route (0 = at ``a``, 1 = at ``b``)."""
+    speed: float = 10.0
+    """Gbit/s of the link (decides the cable's label)."""
+    medium: str = "dac"
+    """``dac`` (a DAC cable, no modules), ``fiber`` (a module at each end + a fibre cord) or ``copper``."""
     port_a: str = ""
     """Port of ``a`` the cable goes into (``49``, ``x1``)."""
     port_b: str = ""
@@ -167,6 +171,8 @@ class Topology:
     """Ports a device runs out of, and similar findings."""
     title: str = ""
     origin: tuple[float, float] = (0.0, 0.0)
+    fiber_module: str = ""
+    """The location's fibre transceiver (put at both ends of a fibre link)."""
     """Top-left corner of the drawing in node coordinates (negative when nodes were dragged up/left)."""
 
     def node(self, node_id: str) -> TopoNode | None:
@@ -230,7 +236,10 @@ def port_choices(model: str, catalog: Catalog) -> list[tuple[str, str]]:
     if dev is None:
         return []
     if dev.firewall is not None:
-        return [(f"x{i}", "sfp") for i in range(1, dev.firewall.ports_10g + 1)]
+        copper = dev.ports.count if dev.ports is not None else FW_COPPER_PORTS
+        return [(f"x{i}", "sfp") for i in range(1, dev.firewall.ports_10g + 1)] + [
+            (f"port{i}", "rj45") for i in range(copper, 0, -1)
+        ]
     if dev.ports is None:
         return []
     n_ports, n_up = dev.ports.count, dev.uplinks.count if dev.uplinks else 0
@@ -253,8 +262,50 @@ def _end_priority(lk: TopoLinkResult, node_id: str) -> int:
     return {"uplink": 3, "fortilink": 4}.get(lk.kind, 5)
 
 
-def assign_ports(topo: Topology, catalog: Catalog, fiber_module: str, ed: TopologyEdits) -> None:
-    """Port and module at both ends of every link; the user's ports / modules win (and are kept free)."""
+MEDIA = ("dac", "fiber", "copper")
+FW_COPPER_PORTS = 8
+"""Copper ports assumed on a FortiGate whose catalog entry does not list them."""
+
+
+def auto_medium(lk: TopoLinkResult, a: TopoNode, b: TopoNode) -> str:
+    """DAC in one cabinet, modules + fibre between cabinets and to the provider, copper for HA."""
+    if lk.kind == "ha":
+        return "copper"
+    if lk.kind == "isl":
+        return "dac"
+    if lk.kind == "wan" or (a.cabinet and b.cabinet and a.cabinet != b.cabinet):
+        return "fiber"
+    return "dac" if lk.speed >= 10 else "copper"  # a 1G link in one cabinet: a patch cord
+
+
+def provider_module(catalog: Catalog) -> str:
+    """The module of a FortiGate's port towards the provider's ODF (single-mode when the catalog has it)."""
+    spec = catalog.passive.fiber.get("os2") or next(iter(catalog.passive.fiber.values()), None)
+    return spec.transceiver if spec else ""
+
+
+def cable_label(lk: TopoLinkResult, a: TopoNode, b: TopoNode, fiber: str, catalog: Catalog, t: Translator) -> str:
+    """What joins the two ends: ``10G DAC 1 м`` (by the units apart), ``10G OM4``, ``1G Cat6A``."""
+    if lk.kind == "isl":
+        return "ISL · MCLAG"
+    if lk.kind == "ha":
+        return "HA"
+    sp = f"{lk.speed:g}G"
+    if lk.medium == "copper":
+        return f"{sp} Cat6A"
+    if lk.medium == "fiber":
+        return t.t("topo.cable_provider") if lk.kind == "wan" else f"{sp} {fiber}".strip()
+    metres = 1 if abs(a.u - b.u) <= catalog.rules.dac_short_max_u else 3
+    return f"{sp} DAC {t.t('topo.metres', n=metres)}"
+
+
+def assign_ports(topo: Topology, catalog: Catalog, ed: TopologyEdits) -> None:
+    """Port and module at both ends of every link; the user's ports / modules win (and are kept free).
+
+    DAC and fibre take SFP ports (the ISL the QSFP ones), copper the RJ45 ones — from the end, as
+    :func:`port_choices` lists them. Fibre gets a module at each end (towards the provider: on the
+    FortiGate's side only), DAC and copper none.
+    """
     nodes = {n.id: n for n in topo.nodes}
     used: dict[str, set[str]] = {nid: set() for nid in nodes}
     for lk in topo.links:
@@ -266,10 +317,11 @@ def assign_ports(topo: Topology, catalog: Catalog, fiber_module: str, ed: Topolo
     wan_no = {n.id: i for i, n in enumerate((n for n in topo.nodes if n.kind == "wan"), 1)}
     ends = [(lk, nid) for lk in topo.links for nid in (lk.a, lk.b) if nid in nodes]
     ends.sort(key=lambda e: _end_priority(e[0], e[1]))  # stable: link order within a priority
+    provider = provider_module(catalog)
 
     def take(nid: str, want: str, count: int) -> str:
         picked: list[str] = []
-        tiers = [want, "sfp", "rj45", "qsfp"] if want == "qsfp" else [want, "qsfp", "rj45"]
+        tiers = {"qsfp": ["qsfp", "sfp", "rj45"], "sfp": ["sfp", "qsfp", "rj45"], "rj45": ["rj45", "sfp", "qsfp"]}[want]
         for tier in tiers:
             for name, cls in choices[nid]:
                 if len(picked) == count:
@@ -280,7 +332,7 @@ def assign_ports(topo: Topology, catalog: Catalog, fiber_module: str, ed: Topolo
         return ", ".join(sorted(picked, key=lambda p: (len(p), p)))
 
     for lk, nid in ends:
-        node, other = nodes[nid], nodes.get(lk.b if nid == lk.a else lk.a)
+        node = nodes[nid]
         typed = ed.ports.get(lk.end(nid))
         if typed is not None:
             port = typed
@@ -290,16 +342,14 @@ def assign_ports(topo: Topology, catalog: Catalog, fiber_module: str, ed: Topolo
             port = f"wan{wan_no.get(lk.b if nid == lk.a else lk.a, 1)}"
         elif lk.kind == "ha":
             port = "ha"
+        elif lk.kind == "isl" and lk.medium != "copper":
+            port = take(nid, "qsfp", 2)
         else:
-            port = take(nid, "qsfp" if lk.kind == "isl" else "sfp", 2 if lk.kind == "isl" else 1)
-        fibre = (
-            other is not None
-            and node.kind != "wan"
-            and other.kind != "wan"
-            and lk.kind not in ("ha", "isl")
-            and node.cabinet != other.cabinet
-        )
-        module = ed.modules.get(lk.end(nid), fiber_module if fibre else "")
+            port = take(nid, "rj45" if lk.medium == "copper" else "sfp", 1)
+        auto = ""
+        if lk.medium == "fiber" and node.kind != "wan":
+            auto = provider if lk.kind == "wan" else topo.fiber_module
+        module = ed.modules.get(lk.end(nid), auto)
         if nid == lk.a:
             lk.port_a, lk.module_a = port, module
         else:
@@ -415,7 +465,7 @@ def build_topology(
         for w in wans:
             w.rect.x, w.rect.y = x, y
             x += WAN_W + 60
-        y += WAN_H + 54
+        y += WAN_H + 150  # room for the port, the module and the cable towards the provider
 
     def place_pair(nodes: list[TopoNode], y: float) -> None:
         total = sum(n.rect.w for n in nodes) + (len(nodes) - 1) * PAIR_GAP
@@ -466,13 +516,6 @@ def build_topology(
     links: list[TopoLinkResult] = []
     fiber = result.rack.passive.fiber_type.upper() if result.rack.passive.fiber_type else ""
 
-    def medium(a: TopoNode, b: TopoNode, speed: float) -> str:
-        sp = f"{speed:g}G"
-        if a.cabinet and a.cabinet == b.cabinet:
-            metres = 1 if abs(a.u - b.u) <= catalog.rules.dac_short_max_u else 3
-            return f"{sp} DAC {t.t('topo.metres', n=metres)}"
-        return f"{sp} {fiber}".strip() if fiber else sp
-
     def speed_of(n: TopoNode, parent: TopoNode) -> float:
         dev = catalog.models.get(n.model)
         up = dev.uplinks.speed_gbps if dev and dev.uplinks else 1.0
@@ -485,22 +528,22 @@ def build_topology(
             port = pdev.ports.speed_gbps if pdev and pdev.ports else up
         return min(up, port, 10.0)
 
-    def add(kind: str, a: TopoNode, b: TopoNode, label: str = "") -> None:
-        links.append(TopoLinkResult(link_id(kind, a.id, b.id), a.id, b.id, kind, label))
+    def add(kind: str, a: TopoNode, b: TopoNode, label: str = "", speed: float = 10.0) -> None:
+        links.append(TopoLinkResult(link_id(kind, a.id, b.id), a.id, b.id, kind, label, speed=speed))
 
     for w in wans:
         for f in fws:
-            add("wan", f, w)
+            add("wan", f, w, speed=1.0)
     if len(fws) > 1:
         for i in range(len(fws) - 1):
-            add("ha", fws[i], fws[i + 1], "HA")
+            add("ha", fws[i], fws[i + 1], "HA", speed=1.0)
     if cores:
         if len(cores) > 1:
             for i in range(len(cores) - 1):
-                add("isl", cores[i], cores[i + 1], "ISL · MCLAG")
+                add("isl", cores[i], cores[i + 1], "ISL · MCLAG", speed=100.0)
         for c in cores:
             for f in fws:
-                add("uplink", c, f, medium(c, f, speed_of(c, f) if c.model else 10.0))
+                add("uplink", c, f, speed=speed_of(c, f) if c.model else 10.0)
     parents = cores or fws
     if parents:
         first, last = parents[0], parents[-1]
@@ -510,14 +553,14 @@ def build_topology(
             if ed.access == "dual":
                 for n in col:
                     for p in (first, last) if last is not first else (first,):
-                        add("fortilink", n, p, medium(n, p, speed_of(n, p)))
+                        add("fortilink", n, p, speed=speed_of(n, p))
                 continue
             top_sw, bottom_sw = col[0], col[-1]
-            add("fortilink", top_sw, first, medium(top_sw, first, speed_of(top_sw, first)))
+            add("fortilink", top_sw, first, speed=speed_of(top_sw, first))
             for a, b in itertools.pairwise(col):
-                add("stack", b, a, medium(a, b, speed_of(b, a)))
+                add("stack", b, a, speed=speed_of(b, a))
             if len(col) > 1 or last is not first:
-                add("fortilink", bottom_sw, last, medium(bottom_sw, last, speed_of(bottom_sw, last)))
+                add("fortilink", bottom_sw, last, speed=speed_of(bottom_sw, last))
     hidden = set(ed.hidden)
     nodes_by_id = {n.id: n for n in all_nodes}
     out = []
@@ -525,14 +568,21 @@ def build_topology(
         if lk.id in hidden:
             continue
         lk.kind = ed.kinds.get(lk.id, lk.kind)
-        lk.label = ed.labels.get(lk.id, lk.label)
         out.append(lk)
     for ul in ed.links:
         if ul.a in nodes_by_id and ul.b in nodes_by_id and ul.a != ul.b:
             out.append(TopoLinkResult(ul.id, ul.a, ul.b, ul.kind, ul.label, auto=False))
-    topo.links = out
+    # the medium (DAC / modules + fibre / copper) decides the ports, modules and the cable's label
     fspec = catalog.passive.fiber.get(result.rack.passive.fiber_type)
-    assign_ports(topo, catalog, fspec.transceiver if fspec else "", ed)
+    topo.fiber_module = fspec.transceiver if fspec else ""
+    fiber = result.rack.passive.fiber_type.upper()
+    for lk in out:
+        a, b = nodes_by_id[lk.a], nodes_by_id[lk.b]
+        lk.medium = ed.media.get(lk.id) or auto_medium(lk, a, b)
+        typed = ed.labels.get(lk.id) if lk.auto else (lk.label or None)
+        lk.label = typed if typed is not None else cable_label(lk, a, b, fiber, catalog, t)
+    topo.links = out
+    assign_ports(topo, catalog, ed)
 
     # ---- ports ---------------------------------------------------------------------------------
     for n in (*cores, *fws):
@@ -585,8 +635,10 @@ def _label_t(lk: TopoLinkResult) -> float:
         return 0.5
     lens = [math.hypot(x2 - x1, y2 - y1) for (x1, y1), (x2, y2) in zip(lk.points, lk.points[1:], strict=False)]
     total = sum(lens) or 1.0
-    if lk.kind in ("uplink", "wan"):
-        return 0.3
+    if lk.kind == "wan":
+        return 0.9  # the FortiGate's end carries its port and the module along the line
+    if lk.kind == "uplink":
+        return 0.5 if lk.medium == "fiber" else 0.3  # modules run along both ends of a fibre
     if lk.kind == "fortilink" and len(lens) > 2:
         (x1, _y1), (x2, _y2) = lk.points[0], lk.points[1]
         if abs(x1 - x2) < 0.5:  # leaves the switch upwards: just above its column

@@ -888,42 +888,62 @@ def test_wifi_switches_follow_the_aps(app: QApplication, window) -> None:
     assert "access_switch" not in st.site.rooms[0].counts
 
 
-def test_topology_ports_modules_and_cable(app: QApplication, window) -> None:
-    from sitesizer.gui.widgets.connection_dialog import ConnectionDialog
-
+def test_topology_connection_panel(app: QApplication, window) -> None:
     st = window.state
     st.edit("t", lambda d: d.update(sockets=240, cameras=30, tier=1, aggregation="yes", location_code="BO123"))
     st.recompute()
     window.navigate("topology")
     pump(app)
     view = window.topology
+    panel = view.panel
+    assert not panel.hint.isHidden() and panel.link_box.isHidden()  # nothing selected: the hint
     topo = view.canvas.diagram.topo
     stack = next(lk for lk in topo.links if lk.kind == "stack")
-    assert stack.port_a and stack.port_b
-    names = {n.id: n.label for n in topo.nodes}
-    dlg = ConnectionDialog(stack, names[stack.a], names[stack.b], st.catalog, st.site.topology, view)
-    assert dlg.fields["port_a"].text() == ""  # automatic: shown as the placeholder
-    assert dlg.fields["port_a"].placeholderText() == stack.port_a
-    dlg.fields["port_a"].setText("sfp+3")
-    dlg.fields["module_b"].setCurrentText("SFP Foxgate 1330nm")
-    dlg.cable.setCurrentText("10G DAC 0.5 м")
-    view.set_connection(stack.id, dlg.values())
+    view.canvas.select("link", stack.id)
+    pump(app)
+    assert not panel.link_box.isHidden() and panel.link is not None and panel.link.id == stack.id
+    port_a = panel.ends["a"][1]
+    assert port_a.text() == "" and port_a.placeholderText() == stack.port_a  # automatic
+    assert panel.medium.value() == "auto"
+    # modules + fibre: a transceiver at both ends
+    panel.medium.setValue("fiber")
+    panel.medium.valueChanged.emit("fiber")
     st.recompute()
     pump(app)
     lk = view.canvas.diagram.topo.link(stack.id)
-    assert lk.port_a == "sfp+3" and lk.module_b == "SFP Foxgate 1330nm" and lk.label == "10G DAC 0.5 м"
-    # unchanged fields stay automatic
-    assert stack.end(stack.b) not in st.site.topology.ports and stack.end(stack.a) not in st.site.topology.modules
-    # back to automatic: empty fields
-    view.set_connection(stack.id, {"port_a": "", "port_b": "", "module_a": "", "module_b": "", "cable": ""})
+    assert st.site.topology.media == {stack.id: "fiber"} and lk.module_a and lk.module_b
+    # typed port, module and cable
+    view.canvas.select("link", stack.id)
+    pump(app)
+    port_a = panel.ends["a"][1]
+    port_a.setText("sfp+3")
+    panel.ends["b"][2].setCurrentText("SFP Foxgate 1330nm")
+    panel.cable.setCurrentText("LC-LC OM4 2 м")
+    panel._emit()
     st.recompute()
     pump(app)
-    assert not st.site.topology.ports and not st.site.topology.modules and stack.id not in st.site.topology.labels
-    # what a switch's ports serve
+    lk = view.canvas.diagram.topo.link(stack.id)
+    assert lk.port_a == "sfp+3" and lk.module_b == "SFP Foxgate 1330nm" and lk.label == "LC-LC OM4 2 м"
+    assert stack.end(stack.b) not in st.site.topology.ports  # an untouched field stays automatic
+    # everything automatic again
+    view.canvas.select("link", stack.id)
+    pump(app)
+    panel._reset()
+    st.recompute()
+    pump(app)
+    ed = st.site.topology
+    assert not ed.ports and not ed.modules and not ed.media and stack.id not in ed.labels
+    # a switch: what its ports serve
     sw = next(n for n in view.canvas.diagram.topo.nodes if n.kind == "access_switch")
-    assert sw.endpoints.endswith("Розетки")
-    view.set_endpoints(sw.id, "1–40 Розетки · 48 UPS")
+    view.canvas.select("node", sw.id)
+    pump(app)
+    assert not panel.node_box.isHidden() and panel.endpoints.placeholderText().endswith("Розетки")
+    panel.endpoints.setText("1–40 Розетки · 48 UPS")
+    panel._emit_endpoints()
     st.recompute()
     pump(app)
     assert view.canvas.diagram.topo.node(sw.id).endpoints == "1–40 Розетки · 48 UPS"
-    dlg.reject()
+    # double-click on a link: the panel's first port field
+    view.rename("link", stack.id)
+    pump(app)
+    assert panel.link is not None and panel.link.id == stack.id

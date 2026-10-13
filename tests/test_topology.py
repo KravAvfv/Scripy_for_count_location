@@ -175,7 +175,8 @@ def test_ports_modules_and_cables(catalog: Catalog) -> None:
     # the last ports first, alternating uplink / copper: 49, 48, 50, 47…; FortiGate: x1…
     assert [p for p, _c in port_choices("FS-148F", catalog)[:6]] == ["49", "48", "50", "47", "51", "46"]
     assert [p for p, c in port_choices("FS-148F", catalog) if c == "sfp"] == ["49", "50", "51", "52"]
-    assert [p for p, _c in port_choices("FG-120G", catalog)] == ["x1", "x2", "x3", "x4"]
+    assert [p for p, c in port_choices("FG-120G", catalog) if c == "sfp"] == ["x1", "x2", "x3", "x4"]
+    assert [p for p, c in port_choices("FG-120G", catalog) if c == "rj45"][:2] == ["port8", "port7"]
     t = Translator("uk")
     text = endpoints_text([("cameras", 38), ("other", 0), ("ajax", 4), ("skud", 1)], 48, t)
     assert text == "1–38 Камери · 44–47 Ajax · 48 СКУД"
@@ -228,3 +229,44 @@ def test_ports_modules_and_cables(catalog: Catalog) -> None:
     asw01 = [lk for lk in topo2.links if fl.a in (lk.a, lk.b)]
     ports = [lk.port_a if lk.a == fl.a else lk.port_b for lk in asw01]
     assert ports.count("49") == 1  # typed on one link, so the other gets another port
+
+
+def test_link_medium_decides_ports_modules_and_cable(catalog: Catalog) -> None:
+    r = size_site(make_site(sockets=200, tier=2, redundant_psu=False, location_code="BO1"), catalog)
+    topo = build_topology(r, catalog)
+    wan = next(lk for lk in topo.links if lk.kind == "wan")
+    # towards the provider's ODF: a single-mode module in the FortiGate's WAN port
+    assert wan.medium == "fiber" and wan.port_a == "wan1" and wan.module_a == catalog.passive.fiber["os2"].transceiver
+    assert not wan.port_b and not wan.module_b
+    stack = next(lk for lk in topo.links if lk.kind == "stack")
+    assert stack.medium == "dac" and "DAC" in stack.label and not (stack.module_a or stack.module_b)
+    # copper: RJ45 ports from the end (48, 47…), a patch cord
+    t2 = build_topology(r, catalog, edits=TopologyEdits(media={stack.id: "copper"}))
+    lk = t2.link(stack.id)
+    assert lk is not None and lk.medium == "copper" and lk.label.endswith("Cat6A")
+    assert lk.port_a == lk.port_b == "48" and not lk.module_a
+    # modules + fibre: the transceiver at both ends, SFP ports
+    t3 = build_topology(r, catalog, edits=TopologyEdits(media={stack.id: "fiber"}))
+    lk = t3.link(stack.id)
+    om4 = catalog.passive.fiber[r.rack.passive.fiber_type].transceiver
+    assert lk is not None and lk.module_a == lk.module_b == om4 and lk.port_a in ("49", "50")
+    # the user's cable text still wins over the medium's
+    t4 = build_topology(r, catalog, edits=TopologyEdits(media={stack.id: "fiber"}, labels={stack.id: "LC-LC 2 м"}))
+    assert t4.link(stack.id).label == "LC-LC 2 м"
+
+
+def test_device_figures_in_drawio(tmp_path: Path, catalog: Catalog) -> None:
+    import base64
+
+    from sitesizer.exporters.device_icons import icon_svg
+
+    r = size_site(make_site(**BIG), catalog)
+    topo = build_topology(r, catalog)
+    xml = topology_drawio(topo)
+    root = ET.fromstring(xml)
+    fw = next(n for n in topo.nodes if n.kind == "firewall")
+    cell = next(c for c in root.iter("mxCell") if c.get("value", "").startswith(f"<b>{fw.label}"))
+    style = dict(kv.split("=", 1) for kv in cell.get("style", "").split(";") if "=" in kv)
+    assert style["shape"] == "label" and style["imageAlign"] == "left"
+    data = style["image"].removeprefix("data:image/svg+xml,")
+    assert base64.b64decode(data).decode() == icon_svg("firewall")

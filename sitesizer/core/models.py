@@ -214,6 +214,7 @@ class RackLayout(BaseModel):
 
 TopoLinkKind = Literal["wan", "ha", "isl", "uplink", "fortilink", "stack", "custom"]
 TopoAccess = Literal["ring", "dual"]
+TopoMedium = Literal["dac", "fiber", "copper"]
 
 
 class TopoPos(BaseModel):
@@ -263,6 +264,8 @@ class TopologyEdits(BaseModel):
     """``<link id>@<node id>`` -> module (transceiver) in that port, typed by the user."""
     endpoints: dict[str, str] = Field(default_factory=dict)
     """Switch node id -> what its ports serve, as typed by the user (``1–38 Камери · 48 СКУД``)."""
+    media: dict[str, TopoMedium] = Field(default_factory=dict)
+    """Link id -> how it is made: ``dac``, ``fiber`` (modules + fibre cord) or ``copper``."""
 
     @property
     def is_empty(self) -> bool:
@@ -276,6 +279,7 @@ class TopologyEdits(BaseModel):
             or self.ports
             or self.modules
             or self.endpoints
+            or self.media
         )
 
 

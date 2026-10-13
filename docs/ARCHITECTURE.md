@@ -23,6 +23,7 @@ sitesizer/
     diagram.py   SiteDiagram / ProjectDiagram QPainter renderers → screen, PNG, SVG, PDF, Excel
     rack.py      RackDiagram: front elevation of every cabinet (same renderer for screen and exports)
     topology.py  TopologyDiagram: painter of core.topology (editor, PNG/SVG, Excel, PDF), hit tests
+    device_icons.py  SVG figures of the devices (switch, core, FortiGate, cloud) for the painter and draw.io
     ap_wiring.py ApWiringDiagram (AP plan coloured by switch + port cards) and the Excel table
     drawio.py    the same topology as an editable .drawio file (stacks = containers, glued edges)
     xlsx.py      openpyxl workbook: Слаботрумка (template), Схема+шафи (cells), IP, prices, inputs
@@ -36,7 +37,7 @@ sitesizer/
                  feedback (toasts, checks panel), overlays (dialogs, command palette, tour), diagram views
     views/       location, racks (telecom rooms → cabinets, drag & drop editor), bom (inline edits), ipplan (VLAN edits), topology, power,
                  compare, projects, catalog_view (template import), settings_view, help_view
-    widgets/rack_editor.py  interactive cabinet canvas; widgets/topology_canvas.py  editable network diagram; widgets/export_dialog.py  export choices
+    widgets/rack_editor.py  interactive cabinet canvas; widgets/topology_canvas.py  editable network diagram; widgets/connection_panel.py  the selected link (medium, ports, modules, cable); widgets/export_dialog.py  export choices
     main_window.py, app.py (entry point, logging, crash safety), workers.py (background exports)
   i18n/        uk.json / en.json + Translator (formatting, Ukrainian plural forms)
   data/        catalog.json (default, datasheet-verified), presets.json
@@ -141,7 +142,8 @@ positions survive recalculation.
 4. Ports: `port_choices()` lists a device's ports the way links take them — the last ones first, alternating
    uplink / copper (`49, 48, 50, 47…`; a 10G link only takes SFP ports, the ISL the QSFP ones, FortiGate
    `x1…`); `assign_ports()` gives each link end a port (ISL, stack down, stack up, core, the rest) and a module
-   (the fibre transceiver between cabinets). `TopologyEdits.ports / modules / endpoints` keep the user's
+   (by the link's medium: `dac` none, `fiber` the transceiver — towards the provider a single-mode one on the
+   FortiGate's side —, `copper` none, RJ45 ports). `TopologyEdits.media / ports / modules / endpoints` keep the user's
    values; `RackItem.endpoints` (from `passive.assign_endpoints`) becomes the switch's "what is in its ports".
 5. `route_links()` routes orthogonally: up-links of the top switch leave upwards, the others run up a lane
    beside their column and sideways in a band above the columns; ports along a side are spread. The painter

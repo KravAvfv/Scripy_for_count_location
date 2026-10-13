@@ -13,6 +13,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from ..core.topology import Rect, TopoLinkResult, Topology, TopoNode
+from .device_icons import ICON_H, ICON_W, drawio_image
 from .topology import LIGHT, TopoColors
 
 FONT = "Inter,Segoe UI,Helvetica,Arial,sans-serif"
@@ -156,6 +157,13 @@ def topology_drawio(topo: Topology, colors: TopoColors = LIGHT, name: str = "Top
         if n.endpoints:
             value += f'<br><font style="font-size:10px" color="{colors.link("fortilink")}">{_esc(n.endpoints)}</font>'
         style = _style(
+            shape="label",  # a box with the device's figure on the left (switch, FortiGate, cloud)
+            image=drawio_image(n.kind),
+            imageWidth=round(ICON_W),
+            imageHeight=round(ICON_H),
+            imageAlign="left",
+            imageVerticalAlign="middle",
+            spacingLeft=round(ICON_W) + 8,
             rounded=1,
             arcSize=50 if n.kind == "wan" else 16,
             whiteSpace="wrap",
