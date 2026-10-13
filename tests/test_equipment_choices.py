@@ -186,3 +186,58 @@ def test_every_cabinet_has_an_optical_panel_with_an_organizer(catalog: Catalog) 
         assert p.used_u <= p.size_u
     fw_cab = next(p for p in r.rack.plans if any(it.group == "firewall" for it in p.items))
     assert any(it.id.endswith(":isp") for it in fw_cab.items)
+
+
+def test_optical_panels_always_on_top(catalog: Catalog) -> None:
+    from sitesizer.core.models import RackItem, RackPlan
+    from sitesizer.core.passive import odfs_on_top
+
+    # many cabinets, a hand-added one, a provider ODF: every cabinet starts with its ODFs
+    layout = {"added": ["user-1"], "props": {"user-1": {"room": 1, "size_u": 24}}}
+    r = size_site(make_site(rooms=[{"sockets": 400}, {"sockets": 48}], rack_size_u=24, layout=layout), catalog)
+    for p in r.rack.plans:
+        items = sorted(p.items, key=lambda it: -it.u)
+        n = sum(1 for it in items if it.group == "fiber")
+        top = items[: 2 * n]
+        assert [it.group for it in top] == ["fiber", "manager"] * n, p.key
+        assert top[0].u + top[0].height - 1 == p.size_u
+    # an ODF that ended up under a switch goes up, the rest moves down; the user's items stay
+    plan = RackPlan(name="", role="mdf", size_u=10, model="", key="k")
+    plan.items = [
+        RackItem(u=10, height=1, label="", group="access_switch", id="access_switch:1"),
+        RackItem(u=9, height=1, label="", group="manager", id="org:access_switch:1"),
+        RackItem(u=6, height=1, label="", group="fiber", id="odf:k:isp"),
+        RackItem(u=5, height=1, label="", group="manager", id="org:odf:k:isp"),
+        RackItem(u=3, height=1, label="", group="shelf", id="x", manual=True, extra=True),
+        RackItem(u=1, height=1, label="", group="pdu", id="pdu:k:1"),
+    ]
+    odfs_on_top(plan)
+    u = {it.id: it.u for it in plan.items}
+    assert u == {
+        "odf:k:isp": 10,
+        "org:odf:k:isp": 9,
+        "access_switch:1": 8,
+        "org:access_switch:1": 7,
+        "x": 3,
+        "pdu:k:1": 1,
+    }
+
+
+def test_typed_switch_count_gives_way_when_the_endpoints_change(catalog: Catalog) -> None:
+    from sitesizer.core.models import SiteInput
+    from sitesizer.core.sizing import release_typed_counts
+
+    data = make_site(
+        aps=[("low_density", 122)],
+        rooms=[{"sockets": 48, "counts": {"wifi_switch": 1, "access_switch": 3}}],
+        bom={"overrides": {"wifi_switch:FS-624F-FPOE": {"qty": 1, "price": 5.0}}},
+    ).model_dump(mode="json")
+    stuck = size_site(SiteInput.model_validate(data), catalog)
+    assert stuck.categories["wifi_switch"].count == 1
+    assert any(c.code == "ROOM_COUNT_PORTS" for c in stuck.checks)  # 122 APs on one switch: warned
+    release_typed_counts(data, "wifi_switch")
+    site = SiteInput.model_validate(data)
+    assert site.rooms[0].counts == {"access_switch": 3}  # other roles keep the typed number
+    assert site.bom.overrides["wifi_switch:FS-624F-FPOE"].qty is None
+    assert site.bom.overrides["wifi_switch:FS-624F-FPOE"].price == 5.0
+    assert size_site(site, catalog).categories["wifi_switch"].count == 6

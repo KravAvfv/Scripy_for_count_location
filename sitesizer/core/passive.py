@@ -654,7 +654,52 @@ def link_cabinets(
                 problems.append(t.t("check.rack_no_space", item=lab or t.t("rack.manager")))
                 continue
             plan.items.append(RackItem(u=slot, height=h, label=lab, group=group, model=m, id=item_id))
+    for plan in plans:
+        odfs_on_top(plan)
     return pairs, problems, fibers
+
+
+def _is_odf(it: RackItem) -> bool:
+    return it.id.startswith(("odf:", "org:odf:"))
+
+
+def odfs_on_top(plan: RackPlan) -> None:
+    """Optical patch panels (each with its organizer under it) always at the top of the cabinet.
+
+    When an automatic ODF ended up below other automatic equipment, the automatic items are laid
+    out again top-down: the provider's ODF, the other ODFs, then everything else in its order.
+    Items the user placed, PDUs and UPS keep their units; if it does not fit, nothing moves.
+    """
+    auto = [it for it in plan.items if not it.manual and not it.extra and not it.id.startswith(("pdu:", "ups:"))]
+    odf = [it for it in auto if _is_odf(it)]
+    others = [it for it in auto if not _is_odf(it)]
+    if not odf or not others or max(it.top for it in others) < min(it.u for it in odf):
+        return
+    panels = sorted(
+        (it for it in odf if it.id.startswith("odf:")), key=lambda it: (not it.id.endswith(f":{ISP}"), -it.u)
+    )
+    orgs = {it.id: it for it in odf if it.id.startswith("org:odf:")}
+    seq: list[RackItem] = []
+    for it in panels:
+        seq.append(it)
+        org = orgs.pop("org:" + it.id, None)
+        if org is not None:
+            seq.append(org)
+    seq += sorted(orgs.values(), key=lambda it: -it.u)
+    seq += sorted(others, key=lambda it: -it.u)
+    keep = {id(it) for it in seq}
+    taken = {u for it in plan.items if id(it) not in keep for u in range(it.u, it.top + 1)}
+    cursor = plan.size_u
+    new_u: list[int] = []
+    for it in seq:
+        while cursor - it.height + 1 >= 1 and any(u in taken for u in range(cursor - it.height + 1, cursor + 1)):
+            cursor -= 1
+        if cursor - it.height + 1 < 1:
+            return  # no room to lay it out again: leave the cabinet as it is
+        new_u.append(cursor - it.height + 1)
+        cursor -= it.height
+    for it, u in zip(seq, new_u, strict=True):
+        it.u = u
 
 
 def room_names(n: int, layout: RackLayout, t: Translator) -> list[str]:

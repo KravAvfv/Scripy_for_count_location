@@ -11,6 +11,7 @@ import copy
 import logging
 import math
 from dataclasses import dataclass, field
+from typing import Any
 
 from ..i18n import Translator
 from .catalog import EDGE_CATEGORIES, Catalog, Category, Device, Tier, parse_version
@@ -222,6 +223,29 @@ def room_count_override(site: SiteInput, key: str, room: int) -> int | None:
     return None
 
 
+ENDPOINT_SWITCH = {
+    "sockets": "access_switch",
+    "cameras": "camera_switch",
+    "ajax": "camera_switch",
+    "skud": "camera_switch",
+    "other": "camera_switch",
+    "aps": "wifi_switch",
+}
+"""Endpoint field -> the switch role that serves it."""
+
+
+def release_typed_counts(site: dict[str, Any], key: str, room: int | None = None) -> None:
+    """Edit a raw ``SiteInput`` dict after the endpoints of ``key`` switches changed: a switch count the
+    user typed (for room ``room`` or every room) and a hand-typed specification quantity of that role
+    give way to the calculation again — otherwise the number of switches would not follow the endpoints."""
+    for i, r in enumerate(site.get("rooms") or []):
+        if room is None or i == room:
+            (r.get("counts") or {}).pop(key, None)
+    for line_key, ov in (site.get("bom") or {}).get("overrides", {}).items():
+        if line_key.startswith(f"{key}:") and isinstance(ov, dict):
+            ov.pop("qty", None)
+
+
 def typed_switches(site: SiteInput, key: str) -> bool:
     """The user typed a switch count of category ``key`` for some room (it is sized even without endpoints)."""
     return any(room_count_override(site, key, i) for i in range(len(site.rooms)))
@@ -252,6 +276,24 @@ def _split_rooms(ctx: _Ctx, res: CategoryResult, endpoints: list[int], loads: li
             per[i] = typed_n
     res.per_room = per
     res.count = sum(per)
+    for i, n in enumerate(endpoints):
+        if room_count_override(ctx.site, res.key, i) is None:
+            continue
+        dev = ctx.catalog.models.get(res.room_models[i])
+        ports = dev.ports.count if dev is not None and dev.ports else res.endpoints_per_switch
+        if n > per[i] * ports:
+            ctx.check(
+                Severity.WARNING,
+                "ROOM_COUNT_PORTS",
+                "check.room_count_ports",
+                "",
+                res.key,
+                cat=label,
+                room=i + 1,
+                n=n,
+                sw=per[i],
+                ports=per[i] * ports,
+            )
     if typed:
         ctx.check(
             Severity.INFO,

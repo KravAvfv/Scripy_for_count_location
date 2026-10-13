@@ -5,8 +5,9 @@ The picture follows the Fortinet "HA-mode FortiGates + MCLAG core" design:
 * the FortiGate pair on top, joined by the HA link;
 * the core pair (FS-1024E, MCLAG peers) under it, joined by the ISL (MCLAG ICL, at least two links);
   every FortiGate is linked to every core switch (FortiLink, full mesh);
-* access switches stand in columns — one stack per cabinet and role (PoE: WSW/VSW, then ASW), at most
-  ``rules.topology_group_size`` switches each. ``ring``: switches of a column are daisy-chained, the
+* access switches stand in columns — one stack per cabinet, in the order they stand in it (WSW, VSW,
+  ASW top-down), at most ``rules.topology_group_size`` switches each (several stacks of a cabinet get a
+  common cabinet frame). ``ring``: switches of a column are daisy-chained, the
   top one goes to the first core and the bottom one to the second (both ends dual-homed, the stack
   is a ring); ``dual``: every switch has a link to each core.
 
@@ -189,8 +190,10 @@ def build_topology(
     """Stack id -> its title without the cabinet (used inside a cabinet frame)."""
     col_cab: dict[str, str] = {}
     cab_titles: dict[str, str] = {}
+    codes = {"wifi_switch": "WSW", "camera_switch": "VSW", "access_switch": "ASW"}
     for plan in result.rack.plans:
-        per_class: dict[str, list[TopoNode]] = {}
+        # the switches of a cabinet form its stack(s) in the order they stand in it, top-down
+        members: list[TopoNode] = []
         for item_id, group, label, model in _plan_switches(plan):
             node = TopoNode(f"{plan.tag}/{item_id}", group, label, model, plan.tag)
             if group == "firewall":
@@ -198,20 +201,18 @@ def build_topology(
             elif group == "core_switch":
                 cores.append(node)
             else:
-                per_class.setdefault("poe" if group in POE_KINDS else "asw", []).append(node)
-        for cls in ("poe", "asw"):
-            members = per_class.get(cls, [])
-            chunks = [members[i : i + size] for i in range(0, len(members), size)]
-            for k, chunk in enumerate(chunks, 1):
-                gid = f"{plan.tag}:{cls}" + (f":{k}" if len(chunks) > 1 else "")
-                kind = t.t("topo.group_poe") if cls == "poe" else t.t("topo.group_asw")
-                col_titles[gid] = f"{plan.tag} · {kind}" + (f" {k}" if len(chunks) > 1 else "")
-                col_kind[gid] = kind + (f" {k}" if len(chunks) > 1 else "")
-                col_cab[gid] = plan.tag
-                cab_titles[plan.tag] = t.t("topo.cabinet", tag=plan.tag)
-                for n in chunk:
-                    n.group = gid
-                columns[gid] = chunk
+                members.append(node)
+        chunks = [members[i : i + size] for i in range(0, len(members), size)]
+        cab_titles[plan.tag] = t.t("topo.cabinet", tag=plan.tag)
+        for k, chunk in enumerate(chunks, 1):
+            gid = f"{plan.tag}:sw" + (f":{k}" if len(chunks) > 1 else "")
+            roles = " · ".join(dict.fromkeys(codes.get(n.kind, "") for n in chunk))
+            col_titles[gid] = cab_titles[plan.tag]
+            col_kind[gid] = t.t("topo.stack", n=k, roles=roles)
+            col_cab[gid] = plan.tag
+            for n in chunk:
+                n.group = gid
+            columns[gid] = chunk
     # the user's moves between columns
     switches = {n.id: n for col in columns.values() for n in col}
     for node_id, gid in ed.groups.items():
@@ -246,7 +247,7 @@ def build_topology(
     for gid, _col in col_list:
         if gid in col_cab:
             per_cab[col_cab[gid]] = per_cab.get(col_cab[gid], 0) + 1
-    framed = set(per_cab)  # every cabinet is drawn as a frame around its stacks
+    framed = {tag for tag, n in per_cab.items() if n > 1}  # a cabinet with several stacks: a frame around them
     gaps = [
         COL_GAP
         + (

@@ -141,18 +141,23 @@ def test_painter_and_hit(catalog: Catalog) -> None:
     assert d.hit(QPointF(x, y) + d.offset) == ("link", lk.id)
 
 
-def test_stacks_of_one_cabinet_share_its_frame(catalog: Catalog) -> None:
-    from sitesizer.core.sizing import size_site
-    from sitesizer.core.topology import build_topology
-
-    from .conftest import make_site
-
-    # one cabinet with Wi-Fi, video and access switches: two stacks (PoE, ASW) in one cabinet frame
+def test_a_cabinet_is_one_stack_in_its_rack_order(catalog: Catalog) -> None:
+    # one cabinet with Wi-Fi, video and access switches: one stack, in the order they stand in the cabinet
     r = size_site(make_site(sockets=96, cameras=20, aps=[("low_density", 10)], location_code="BO1"), catalog)
     assert len(r.rack.plans) == 1
+    plan = r.rack.plans[0]
+    rack_order = [it.label for it in sorted(plan.items, key=lambda i: -i.u) if it.group.endswith("_switch")]
+    rack_order = [n for n in rack_order if "DSW" not in n]
     topo = build_topology(r, catalog)
-    assert [g.title for g in topo.groups] == ["PoE (WSW · VSW)", "ASW"]
-    assert len(topo.cabinets) == 1 and topo.cabinets[0].title == f"Шафа {r.rack.plans[0].tag}"
-    frame = topo.cabinets[0].rect
-    for g in topo.groups:
+    assert [g.title for g in topo.groups] == [f"Шафа {plan.tag}"] and not topo.cabinets
+    labels = {n.id: n.label for n in topo.nodes}
+    assert [labels[i] for i in topo.groups[0].nodes] == rack_order
+    assert [c[-5:-2] for c in rack_order] == ["WSW", "VSW", "ASW", "ASW"]
+    # more switches than a stack holds: several stacks in one cabinet frame
+    small = build_topology(r, catalog, edits=TopologyEdits(group_size=2))
+    assert len(small.groups) == 2 and len(small.cabinets) == 1
+    assert small.cabinets[0].title == f"Шафа {plan.tag}"
+    assert [g.title for g in small.groups] == ["Стек 1 · WSW · VSW", "Стек 2 · ASW"]
+    frame = small.cabinets[0].rect
+    for g in small.groups:
         assert frame.x < g.rect.x and g.rect.right < frame.right and frame.y < g.rect.y < frame.bottom

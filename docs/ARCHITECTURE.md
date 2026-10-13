@@ -130,8 +130,8 @@ positions survive recalculation.
 ## Network topology (core/topology.py)
 
 1. Nodes come from the cabinets of the whole location (`combine()` keeps every floor's plans), so names match
-   the racks: FortiGates, core switches, and the access switches grouped into columns (stacks) per cabinet and
-   class — PoE (WSW, VSW) apart from ASW — at most `rules.topology_group_size` each (editable on the page).
+   the racks: FortiGates, core switches, and the switches of every cabinet as one column (stack) in the order
+   they stand in it, at most `rules.topology_group_size` each (several stacks of a cabinet share a frame).
 2. Links: WAN → each FortiGate, HA between FortiGates, ISL (MCLAG ICL) between cores, every FortiGate to every
    core. Access: `ring` — a column is daisy-chained, its top switch to core 1 and its bottom one to core 2;
    `dual` — every switch to both cores. Without a core the FortiGates take that role. Labels: speed and

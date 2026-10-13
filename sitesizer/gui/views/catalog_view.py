@@ -492,9 +492,10 @@ class CatalogView(QWidget):
         return w
 
     def _on_filter(self, *_args: object) -> None:
+        self.proxy.beginFilterChange()
         self.proxy.kind = self.kind_filter.value() or ""
         self.proxy.text = self.search.text().strip()
-        self.proxy.invalidateFilter()
+        self.proxy.endFilterChange()
 
     def select_model(self, model: str) -> None:
         self.tabs.setCurrentIndex(0)

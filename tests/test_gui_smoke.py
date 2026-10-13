@@ -864,3 +864,25 @@ def test_ap_wiring_dialog(app: QApplication, window, tmp_path: Path, monkeypatch
     window.export_diagram("apw_png")
     assert out_png.exists()
     dlg.accept()
+
+
+def test_wifi_switches_follow_the_aps(app: QApplication, window) -> None:
+    st = window.state
+    loc = window.location
+    st.edit("zones", lambda d: d.update(ap_groups=[{"zone": "low_density", "qty": 12}]))
+    pump(app)
+    loc._room_blocks[0].counts["wifi_switch"].changed.emit(1)  # typed by hand
+    pump(app)
+    assert st.site.rooms[0].counts == {"wifi_switch": 1}
+    row = loc._zone_rows[0]
+    row.qty.setValue(122)
+    row._emit_qty(122)
+    pump(app)
+    assert st.site.rooms[0].counts == {}
+    assert st.result.categories["wifi_switch"].count == 6
+    # sockets: the access switches follow too
+    loc._room_blocks[0].counts["access_switch"].changed.emit(4)
+    pump(app)
+    loc._room_blocks[0].fields["sockets"].valueChanged.emit(200)
+    pump(app)
+    assert "access_switch" not in st.site.rooms[0].counts

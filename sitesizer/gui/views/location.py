@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 from ...core.models import ADDON_KEYS, RoomInput, SiteResult
 from ...core.passive import ROLE_CODES, drop_room, drop_room_inputs
 from ...core.presets import load_presets
-from ...core.sizing import addon_enabled, ap_model_for
+from ...core.sizing import ENDPOINT_SWITCH, addon_enabled, ap_model_for, release_typed_counts
 from ...exporters.diagram import SiteDiagram, style_from_tokens
 from ...i18n import current, tr
 from .. import icons
@@ -1276,6 +1276,7 @@ class LocationView(QWidget):
             while len(rooms) <= room:
                 rooms.append({})
             rooms[room][key] = value
+            release_typed_counts(d, ENDPOINT_SWITCH[key], room)  # the switches follow the endpoints
 
         self.state.edit(tr(f"ui.room_{key}"), mutate, merge_key=f"room{room}:{key}")
 
@@ -1420,7 +1421,12 @@ class LocationView(QWidget):
         zone = "low_density"
         if self.state.site.ap_groups:
             zone = self.state.site.ap_groups[-1].zone
-        self.state.edit(tr("ui.zone_add"), lambda d: d["ap_groups"].append({"zone": zone, "qty": 1}))
+
+        def mutate(d: dict[str, Any]) -> None:
+            d["ap_groups"].append({"zone": zone, "qty": 1})
+            release_typed_counts(d, "wifi_switch")
+
+        self.state.edit(tr("ui.zone_add"), mutate)
         if self._zone_rows:
             self._zone_rows[-1].qty.setFocus()
             self._zone_rows[-1].qty.field.selectAll()
@@ -1434,12 +1440,18 @@ class LocationView(QWidget):
                 g = d["ap_groups"][index]
                 if g.get("zone") != data["zone"]:
                     data["model"] = None  # new zone → its default model
+                if g.get("qty") != data["qty"] or (g.get("room") or 0) != data["room"]:
+                    release_typed_counts(d, "wifi_switch")  # the Wi-Fi switches follow the APs
                 g.update(data)
 
         self.state.edit(tr("ui.wifi"), mutate, merge_key=f"zone{index}")
 
     def _on_zone_removed(self, index: int) -> None:
-        self.state.edit(tr("ui.zone_remove"), lambda d: d["ap_groups"].pop(index))
+        def mutate(d: dict[str, Any]) -> None:
+            d["ap_groups"].pop(index)
+            release_typed_counts(d, "wifi_switch")
+
+        self.state.edit(tr("ui.zone_remove"), mutate)
 
     def _set_addon(self, key: str, value: bool) -> None:
         if self._loading:
