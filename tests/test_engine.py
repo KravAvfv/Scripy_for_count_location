@@ -261,7 +261,7 @@ def test_tier_effects_configurable(catalog: Catalog) -> None:
 def test_quick_mode_has_only_passive_addons(catalog: Catalog) -> None:
     r = size_site(make_site(sockets=100, cameras=20, aps=[("corridor", 6)]), catalog)
     addon_groups = {line.group for line in r.bom if "addon" in line.tags}
-    assert addon_groups == {"cabling", "rack", "transceiver"}
+    assert addon_groups == {"cabling", "fiber", "rack", "transceiver"}  # the ODF of every cabinet is passive too
 
 
 def test_extended_mode_addons(catalog: Catalog) -> None:
@@ -509,11 +509,12 @@ def test_fibre_backbone_to_idf(catalog: Catalog) -> None:
     fibre = {line.model: line.qty for line in r.lines("fiber")}
     om4 = catalog.passive.fiber["om4"]
     # both remote rooms link to the firewall's cabinet: 24-fibre cables and 24-fibre panels
-    assert fibre[om4.cable_for(24)] == ps.fiber_m and fibre[om4.cord] == ps.fiber_links * 2
-    assert fibre[om4.housing_24] == ps.fiber_links * 2 and om4.housing_12 not in fibre
+    # + the provider's ODF in the firewall's cabinet (a cord and a transceiver, no splices of ours)
+    assert fibre[om4.cable_for(24)] == ps.fiber_m and fibre[om4.cord] == ps.fiber_links * 2 + 1
+    assert fibre[om4.housing_24] == ps.fiber_links * 2 + 1 and om4.housing_12 not in fibre
     assert ps.splices == ps.fiber_links * 2 * 24
     sr = next(line for line in r.bom if line.model == om4.transceiver)
-    assert sr.qty == ps.fiber_links * 2
+    assert sr.qty == ps.fiber_links * 2 + 1
 
 
 def test_fibre_between_cabinets_is_12_or_6(catalog: Catalog) -> None:
@@ -545,7 +546,8 @@ def test_closet_count_entered_by_the_user(catalog: Catalog) -> None:
     # more closets than switches: the empty ones still get a cabinet to switch to
     r3 = size_site(make_site(sockets=48, closets=3), catalog)
     assert [p.role for p in r3.rack.plans] == ["mdf", "idf", "idf"]
-    assert r3.rack.plans[2].items == []
+    # an empty cabinet still gets its optical patch panel with an organizer
+    assert [it.group for it in r3.rack.plans[2].items] == ["fiber", "manager"]
     # 0 = automatic, as before
     assert size_site(make_site(sockets=300, closets=0), catalog).rack.idf_count == 1
 

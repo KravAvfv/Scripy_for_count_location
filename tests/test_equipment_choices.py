@@ -170,3 +170,19 @@ def test_ap_wiring_exports(catalog: Catalog, tmp_path) -> None:
 
     ws = load_workbook(path).active
     assert ws.max_row >= 30
+
+
+def test_every_cabinet_has_an_optical_panel_with_an_organizer(catalog: Catalog) -> None:
+    layout = {"added": ["user-1"], "props": {"user-1": {"room": 1, "size_u": 24}}}
+    site = make_site(rooms=[{"sockets": 400}, {"sockets": 48}], rack_size_u=24, layout=layout)
+    r = size_site(site, catalog)
+    assert len(r.rack.plans) >= 4
+    for p in r.rack.plans:
+        items = sorted(p.items, key=lambda it: -it.u)
+        odfs = [i for i, it in enumerate(items) if it.group == "fiber"]
+        assert odfs, p.key
+        for i in odfs:  # each ODF has its organizer right under it
+            assert items[i + 1].group == "manager" and items[i + 1].u == items[i].u - 1
+        assert p.used_u <= p.size_u
+    fw_cab = next(p for p in r.rack.plans if any(it.group == "firewall" for it in p.items))
+    assert any(it.id.endswith(":isp") for it in fw_cab.items)

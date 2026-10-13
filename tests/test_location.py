@@ -36,7 +36,8 @@ def test_optical_panel_towards_the_firewall_floor(catalog: Catalog) -> None:
     assert f7 is not None and f5 is not None
     odf5 = [it for it in f5.rack.plans[0].items if it.group == "fiber"]
     odf7 = [it for it in f7.rack.plans[0].items if it.group == "fiber"]
-    assert [it.label for it in odf5] == ["ODF 7A"] and [it.label for it in odf7] == ["ODF 5A"]
+    # the firewall's cabinet also takes the provider's fibre
+    assert [it.label for it in odf5] == ["ODF 7A"] and [it.label for it in odf7] == ["ODF до провайдера", "ODF 5A"]
     # each optical panel has its organizer right under it
     items = f5.rack.plans[0].items
     i = items.index(odf5[0])
@@ -44,8 +45,8 @@ def test_optical_panel_towards_the_firewall_floor(catalog: Catalog) -> None:
     combined = loc.combined
     assert combined is not None
     om = catalog.passive.fiber[combined.rack.passive.fiber_type]
-    # the link to the firewall floor is a 24-fibre cable with a 24-fibre panel at each end
-    assert qty(combined, om.housing_24) == 2 and qty(combined, om.transceiver) == 2
+    # the link to the firewall floor is a 24-fibre cable with a 24-fibre panel at each end (+ the provider's)
+    assert qty(combined, om.housing_24) == 3 and qty(combined, om.transceiver) == 3
     assert qty(combined, om.cable_for(24)) > 0 and qty(combined, om.housing_12) == 0
     assert combined.rack.passive.fiber_links == 1
 
@@ -65,14 +66,17 @@ def test_single_floor_project_is_a_standalone_location(catalog: Catalog) -> None
     plain = size_site(site, catalog)
     assert loc.combined is not None
     assert [(line.key, line.qty) for line in loc.combined.bom] == [(line.key, line.qty) for line in plain.bom]
-    assert not any(it.group == "fiber" for p in plain.rack.plans for it in p.items)
+    # one cabinet: its only optical patch panel is the provider's one, with an organizer
+    odf = [it for p in plain.rack.plans for it in p.items if it.group == "fiber"]
+    assert [it.id for it in odf] == ["odf:mdf-1:isp"]
+    assert not plain.rack.passive.fiber_links and plain.rack.passive.splices == 0
 
 
 def test_patch_panels_and_organizers_per_switch(catalog: Catalog) -> None:
     r = size_site(floor(1, sockets=48, ap_groups=[{"zone": "corridor", "qty": 4}]), catalog)
     pr = catalog.passive
     # Wi-Fi switch: 1 panel + 1 organizer; access switch: 2 panels + 2 organizers
-    assert qty(r, pr.panel) == 3 and qty(r, pr.manager) == 3
+    assert qty(r, pr.panel) == 3 and qty(r, pr.manager) == 3 + 1  # + the organizer of the provider's ODF
     assert not any(line.model == pr.outlet for line in r.bom)
 
 

@@ -66,6 +66,8 @@ EXTRA_GROUPS = {
     "device": "device",
 }
 DEFAULT_USER_RACK_U = 42
+ISP = "isp"
+"""Peer of the ODF where the provider's fibre comes in (the firewall's cabinet)."""
 
 
 def _ceil_div(a: float, b: float) -> int:
@@ -266,7 +268,13 @@ def plan_passive(
         extra = sum(u.height for u in (*closet.head, *closet.bottom)) if first else 0
         cords = len(sws) + (len(closet.head) if first else 0)
         pdus = feeds * max(1, _ceil_div(cords, pr.pdu_outlets)) if cords else 0
-        return body + extra + pdus + odf_pair * (2 if first else 1)
+        isp = first and any(u.group == "firewall" for u in closet.head)  # the provider's ODF
+        odfs = first_odfs.get(closet.index, 2) if first else 1
+        return body + extra + pdus + odf_pair * (odfs + (1 if isp else 0))
+
+    # the first cabinet of a room has an ODF towards each further cabinet and one upstream
+    first_odfs: dict[int, int] = {}
+    upstream = 1 + (len(fctx.remote) if fctx is not None and fctx.has_firewall else 0)
 
     layouts: list[tuple[_Closet, list[list[_Switch]], int]] = []
     for closet in closets:
@@ -275,9 +283,14 @@ def plan_passive(
         need = math.ceil(cabinet_u(closet, closet.switches, True) * (1 + r.rack_spare_ratio))
         size = _pick_size(ctx.site.rack_size_u, need, sizes)
         usable = max(1, size - math.floor(size * r.rack_spare_ratio / (1 + r.rack_spare_ratio)))
-        groups = _fill(closet, usable, cabinet_u)
-        if len(groups) > 1:
-            groups = _split_poe(closet, groups, usable, cabinet_u) or _balance(closet, groups, usable, cabinet_u)
+        for _ in range(6):
+            groups = _fill(closet, usable, cabinet_u)
+            if len(groups) > 1:
+                groups = _split_poe(closet, groups, usable, cabinet_u) or _balance(closet, groups, usable, cabinet_u)
+            odfs = max(2, len(groups) - 1 + upstream)
+            if odfs <= first_odfs.get(closet.index, 2):
+                break
+            first_odfs[closet.index] = odfs  # more cabinets than reserved for: lay the room out again
         layouts.append((closet, groups, size))
 
     # fibre links of the automatic structure (re-checked after the manual layout)
@@ -286,12 +299,16 @@ def plan_passive(
 
     peers: dict[str, list[str]] = {}
     structure = [
-        (cab_key(c, gi), c.index, bool(sws or (gi == 0 and c.head)))
+        (cab_key(c, gi), c.index, True)  # every cabinet gets its optical patch panel
         for c, groups, _s in layouts
         for gi, sws in enumerate(groups)
     ]
     if odf_model:
         peers = cabinet_links(structure, fctx)
+        fw_closet = next((c for c, _g, _s in layouts if any(u.group == "firewall" for u in c.head)), None)
+        if fw_closet is not None:
+            # the provider's fibre comes into the firewall's cabinet
+            peers.setdefault(cab_key(fw_closet, 0), []).insert(0, ISP)
 
     plans: list[RackPlan] = []
     for closet, groups, size in layouts:
@@ -422,7 +439,10 @@ def plan_passive(
         # every fibre of a cable is spliced at each of its ends (a hand-added ODF: a 12-fibre one)
         ends = {f"odf:{a}:{b}": n for (a, b), n in fibers.items()} | {f"odf:{b}:{a}": n for (a, b), n in fibers.items()}
         ps.splices = sum(
-            ends.get(it.id, fspec.cable_fibers) for p in plans for it in p.items if it.group == "fiber" and it.model
+            ends.get(it.id, fspec.cable_fibers)
+            for p in plans
+            for it in p.items
+            if it.group == "fiber" and it.model and not it.id.endswith(f":{ISP}")  # the provider splices its own
         )
         ps.fiber_cords = housings
 
@@ -575,7 +595,8 @@ def link_cabinets(
     Returns the (child, parent) links, the placement problems and the fibres of every link.
     """
     problems: list[str] = []
-    cabinets = [(p.key, p.room, any(it.group in POWERED_GROUPS for it in p.items)) for p in plans]
+    # every cabinet has an optical patch panel with an organizer, an empty one too
+    cabinets = [(p.key, p.room, True) for p in plans]
     pairs = cabinet_link_pairs(cabinets, fctx)
     by_key = {p.key: p for p in plans}
     fw_racks = {p.key for p in plans if any(it.group == "firewall" for it in p.items)}
@@ -591,6 +612,10 @@ def link_cabinets(
         if b in by_key:
             ends.append((b, a))
             end_fibers[(b, a)] = fibers[(a, b)]
+    for key in fw_racks:
+        # the provider's fibre (not a cable of ours): its ODF stands in the firewall's cabinet
+        ends.insert(0, (key, ISP))
+        end_fibers[(key, ISP)] = fw_fibers
     want_ids = {f"odf:{k}:{peer}" for k, peer in ends} | {f"org:odf:{k}:{peer}" for k, peer in ends}
     for plan in plans:
         plan.items = [
@@ -604,7 +629,9 @@ def link_cabinets(
     remote = dict(fctx.remote) if fctx else {}
     for key, peer in ends:
         plan = by_key[key]
-        if peer == "fw":
+        if peer == ISP:
+            to = t.t("rack.odf_isp")
+        elif peer == "fw":
             to = fctx.fw_tag if fctx else ""
         elif peer.startswith("floor"):
             to = remote.get(int(peer[5:]), peer[5:])
