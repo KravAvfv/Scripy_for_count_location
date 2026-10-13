@@ -393,6 +393,7 @@ def plan_passive(
     if not ctx.site.layout.is_empty:
         rs.layout_problems += top_up_pdus(plans, feeds, pr.pdu_outlets, pr.pdu, set(ctx.site.layout.hidden), t)
     name_items(plans, ctx.site.layout, ctx.site.location_code, t, pr.panel_ports)
+    assign_endpoints(plans, ctx.counts, cat)
     for plan in plans:
         plan.items.sort(key=lambda it: -it.u)
     rs.plans = plans
@@ -525,6 +526,58 @@ def device_roles(cat: Any) -> Callable[[str, str], str]:
         return by_model.get(model, "access_switch")
 
     return role
+
+
+def copper_ports(model: str, cat: Any, default: int = 48) -> int:
+    dev = cat.models.get(model)
+    return dev.ports.count if dev is not None and dev.ports is not None else default
+
+
+def assign_endpoints(plans: list[RackPlan], counts: Any, cat: Any) -> None:
+    """Spread every telecom room's endpoints over its switches (``RackItem.endpoints``).
+
+    Sockets and cameras fill the switches in their cabinet order; APs are spread evenly (neighbouring
+    APs alternate switches, see ``core.ap_wiring``); Ajax, access control and other devices take the
+    last copper ports of the room's last video switch.
+    """
+    pools: list[tuple[int | None, int, int, int, int, int, int]]
+    if counts.rooms:
+        pools = [(i, rc.sockets, rc.cameras, rc.aps, rc.other, rc.ajax, rc.skud) for i, rc in enumerate(counts.rooms)]
+    else:
+        pools = [(None, counts.sockets, counts.cameras, counts.aps, counts.other, counts.ajax, counts.skud)]
+
+    def switches(room: int | None, key: str) -> list[RackItem]:
+        here = [p for p in plans if room is None or p.room == room]
+        return [it for p in here for it in sorted(p.items, key=lambda i: -i.u) if it.group == key]
+
+    for room, sockets, cameras, aps, other, ajax, skud in pools:
+        for key in ("access_switch", "wifi_switch", "camera_switch"):
+            for it in switches(room, key):
+                it.endpoints = []
+        sws = switches(room, "access_switch")
+        left = sockets
+        for it in sws:
+            n = min(left, copper_ports(it.model, cat)) if it is not sws[-1] else left
+            if n:
+                it.endpoints.append(("sockets", n))
+            left -= n
+        sws = switches(room, "wifi_switch")
+        for j, it in enumerate(sws):
+            n = (aps - j + len(sws) - 1) // len(sws)  # round robin: AP k goes to switch k mod n
+            if n > 0:
+                it.endpoints.append(("aps", n))
+        sws = switches(room, "camera_switch")
+        if not sws:
+            continue
+        tail = [(k, n) for k, n in (("other", other), ("ajax", ajax), ("skud", skud)) if n]
+        left = cameras
+        for it in sws:
+            cap = copper_ports(it.model, cat) - (sum(n for _k, n in tail) if it is sws[-1] else 0)
+            n = min(left, max(0, cap)) if it is not sws[-1] else left
+            if n:
+                it.endpoints.append(("cameras", n))
+            left -= n
+        sws[-1].endpoints += tail
 
 
 def floor_run(floor: int, other: int, per_floor_m: int) -> int:

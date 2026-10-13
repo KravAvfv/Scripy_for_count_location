@@ -82,6 +82,9 @@ def apply_reserve(site: SiteInput, catalog: Catalog) -> EffectiveCounts:
                 sockets=scale(r.sockets),
                 cameras=scale(r.cameras),
                 vsw_extra=scale(r.vsw_extra),
+                ajax=scale(r.ajax),
+                skud=scale(r.skud),
+                other=scale(r.other),
                 ap_groups=[g for g in groups if min(g.room, n - 1) == i],
             )
             rc.aps = sum(g.qty for g in rc.ap_groups)

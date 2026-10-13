@@ -110,9 +110,14 @@ def test_drawio_file(tmp_path: Path, catalog: Catalog) -> None:
     root = ET.parse(path).getroot()
     assert root.tag == "mxfile"
     cells = root.findall(".//mxCell")
-    vertices = [c for c in cells if c.get("vertex") == "1"]
+    edge_ids = {c.get("id") for c in cells if c.get("edge") == "1"}
+    port_labels = [c for c in cells if c.get("vertex") == "1" and c.get("parent") in edge_ids]
+    vertices = [c for c in cells if c.get("vertex") == "1" and c not in port_labels]
     edges = [c for c in cells if c.get("edge") == "1"]
     assert len(vertices) == len(topo.nodes) + len(topo.groups) + len(topo.cabinets)  # cabinet frames too
+    # every port (and module) is a label of its edge
+    ends = sum(bool(p or m) for lk in topo.links for p, m in ((lk.port_a, lk.module_a), (lk.port_b, lk.module_b)))
+    assert len(port_labels) == ends > 0
     assert len(edges) == len(topo.links)
     ids = {c.get("id") for c in cells}
     for e in edges:
@@ -161,3 +166,65 @@ def test_a_cabinet_is_one_stack_in_its_rack_order(catalog: Catalog) -> None:
     frame = small.cabinets[0].rect
     for g in small.groups:
         assert frame.x < g.rect.x and g.rect.right < frame.right and frame.y < g.rect.y < frame.bottom
+
+
+def test_ports_modules_and_cables(catalog: Catalog) -> None:
+    from sitesizer.core.topology import endpoints_text, port_choices
+    from sitesizer.i18n import Translator
+
+    # the last ports first, alternating uplink / copper: 49, 48, 50, 47…; FortiGate: x1…
+    assert [p for p, _c in port_choices("FS-148F", catalog)[:6]] == ["49", "48", "50", "47", "51", "46"]
+    assert [p for p, c in port_choices("FS-148F", catalog) if c == "sfp"] == ["49", "50", "51", "52"]
+    assert [p for p, _c in port_choices("FG-120G", catalog)] == ["x1", "x2", "x3", "x4"]
+    t = Translator("uk")
+    text = endpoints_text([("cameras", 38), ("other", 0), ("ajax", 4), ("skud", 1)], 48, t)
+    assert text == "1–38 Камери · 44–47 Ajax · 48 СКУД"
+
+    site = make_site(
+        rooms=[{"sockets": 150, "cameras": 60, "ajax": 4, "skud": 1}, {"sockets": 48}],
+        aps=[("low_density", 30)],
+        tier=2,
+        redundant_psu=False,
+        core_count=2,
+        location_code="BO1",
+    )
+    r = size_site(site, catalog)
+    topo = build_topology(r, catalog)
+    names = {n.id: n.label for n in topo.nodes}
+    by = {(names[lk.a], names[lk.b], lk.kind): lk for lk in topo.links}
+    isl = by[("BO1-1A-DSW01", "BO1-1A-DSW02", "isl")]
+    assert isl.port_a == isl.port_b == "25, 26"  # the 100G QSFP28 ports
+    # a stack: the link down from a switch takes 49, the one up 50; DAC in one cabinet, no modules
+    down = by[("BO1-1B-ASW02", "BO1-1B-ASW01", "stack")]
+    assert (down.port_a, down.port_b) == ("50", "49") and not down.module_a and "DAC" in down.label
+    # between cabinets: fibre, the transceiver at both ends
+    om4 = catalog.passive.fiber["om4"].transceiver
+    fl = by[("BO1-1C-ASW01", "BO1-1A-DSW01", "fortilink")]
+    assert fl.module_a == fl.module_b == om4 and fl.label == "10G OM4"
+    # no port is used twice on a device
+    seen: dict[str, list[str]] = {}
+    for lk in topo.links:
+        for node, port in ((lk.a, lk.port_a), (lk.b, lk.port_b)):
+            for p in filter(None, (x.strip() for x in port.split(","))):
+                seen.setdefault(node, []).append(p)
+    assert all(len(v) == len(set(v)) for v in seen.values())
+    # what the switch ports serve
+    nodes = {n.label: n for n in topo.nodes}
+    assert nodes["BO1-1A-VSW02"].endpoints == "1–12 Камери · 44–47 Ajax · 48 СКУД"
+    assert nodes["BO1-1A-VSW01"].endpoints == "1–48 Камери"
+    # the user's ports, modules, cable and endpoints win; an auto port is not given out twice
+    key_a, key_b = down.end(down.a), down.end(down.b)
+    edits = TopologyEdits(
+        ports={key_a: "sfp+3", fl.end(fl.a): "49"},
+        modules={key_b: "SFP Foxgate 1330nm"},
+        labels={down.id: "Cat6A 0.5 м"},
+        endpoints={nodes["BO1-1A-VSW01"].id: "1–40 Камери"},
+    )
+    topo2 = build_topology(r, catalog, edits=edits)
+    lk2 = topo2.link(down.id)
+    assert lk2 is not None and lk2.port_a == "sfp+3" and lk2.module_b == "SFP Foxgate 1330nm"
+    assert lk2.label == "Cat6A 0.5 м"
+    assert next(n for n in topo2.nodes if n.label == "BO1-1A-VSW01").endpoints == "1–40 Камери"
+    asw01 = [lk for lk in topo2.links if fl.a in (lk.a, lk.b)]
+    ports = [lk.port_a if lk.a == fl.a else lk.port_b for lk in asw01]
+    assert ports.count("49") == 1  # typed on one link, so the other gets another port

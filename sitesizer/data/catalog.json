@@ -136,7 +136,7 @@
       "code": "000081176", "datasheet": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/og-fortiswitch.pdf",
       "family": "FortiSwitch 1000E",
       "name": {"uk": "24× 10G SFP+, 2× 100G QSFP28, 2× hot-swap БЖ", "en": "24× 10G SFP+, 2× 100G QSFP28, 2× hot-swap PSU"},
-      "ports": {"count": 24, "speed_gbps": 10},
+      "ports": {"count": 24, "speed_gbps": 10, "type": "SFP+"},
       "uplinks": {"count": 2, "speed_gbps": 100, "type": "QSFP28"},
       "psu": {"count": 2, "hot_swap": true, "redundant": true},
       "power_base_w": 176, "power_max_w": 176, "rack_units": 1,

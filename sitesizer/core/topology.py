@@ -24,24 +24,34 @@ from __future__ import annotations
 import itertools
 import math
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from .catalog import Catalog
-from .models import RackPlan, SiteResult, TopologyEdits
+from .models import RackItem, RackPlan, SiteResult, TopologyEdits
+
+if TYPE_CHECKING:
+    from ..i18n import Translator
 
 SWITCH_KINDS = ("wifi_switch", "camera_switch", "access_switch")
 POE_KINDS = ("wifi_switch", "camera_switch")
 LINK_KINDS = ("fortilink", "stack", "uplink", "isl", "ha", "wan", "custom")
 
-NODE_W = 172.0
-NODE_H = 48.0
+NODE_W = 188.0
+NODE_H = 60.0
+"""A switch: name, model and the line of what its ports serve."""
 HEAD_W = 196.0
 HEAD_H = 58.0
 WAN_W = 112.0
 WAN_H = 30.0
 PAD = 40.0
 COL_GAP = 84.0
-STACK_GAP = 22.0
+STACK_GAP = 46.0
+"""Room for the port numbers at both ends of a stack link and the cable between them."""
+STACK_X = 30.0
+"""Where a stack link runs, from the left edge of its switches (port labels go left of it)."""
 PAIR_GAP = 220.0
+PORT_STEP = 30.0
+"""Room per link along the bottom of a FortiGate / core (its port number sits there)."""
 LANE_STEP = 7.0
 GROUP_PAD = 12.0
 GROUP_TITLE_H = 22.0
@@ -91,6 +101,10 @@ class TopoNode:
     """Column (stack) of an access switch."""
     rect: Rect = field(default_factory=lambda: Rect(0, 0, NODE_W, NODE_H))
     manual: bool = False
+    u: int = 0
+    """Unit of the device in its cabinet (decides the DAC length)."""
+    endpoints: str = ""
+    """What its copper ports serve (``1–38 Камери · 44–47 Ajax · 48 СКУД``)."""
 
 
 @dataclass
@@ -106,6 +120,16 @@ class TopoLinkResult:
     """Route: start on ``a``, end on ``b``, corners in between."""
     label_t: float = 0.5
     """Where the label sits along the route (0 = at ``a``, 1 = at ``b``)."""
+    port_a: str = ""
+    """Port of ``a`` the cable goes into (``49``, ``x1``)."""
+    port_b: str = ""
+    module_a: str = ""
+    """Module (transceiver) in ``a``'s port; empty for a DAC or copper."""
+    module_b: str = ""
+
+    def end(self, node_id: str) -> str:
+        """``<link id>@<node id>`` — the key of one end in :class:`TopologyEdits` ports / modules."""
+        return f"{self.id}@{node_id}"
 
     def point_at(self, t: float) -> tuple[float, float]:
         """Point at fraction ``t`` of the route's length."""
@@ -160,13 +184,126 @@ def link_id(kind: str, a: str, b: str) -> str:
     return f"{kind}:{a}|{b}"
 
 
-def _plan_switches(plan: RackPlan) -> list[tuple[str, str, str, str]]:
-    """(item id, group, label, model) of the active devices of a cabinet, top-down."""
-    out = []
-    for it in sorted(plan.items, key=lambda i: -i.u):
-        if it.group in (*SWITCH_KINDS, "firewall", "core_switch"):
-            out.append((it.id, it.group, it.label or it.model, it.model))
+def _plan_switches(plan: RackPlan) -> list[RackItem]:
+    """The active devices of a cabinet, top-down."""
+    return [
+        it for it in sorted(plan.items, key=lambda i: -i.u) if it.group in (*SWITCH_KINDS, "firewall", "core_switch")
+    ]
+
+
+ENDPOINT_ORDER = ("sockets", "aps", "cameras", "other", "ajax", "skud")
+TAIL_KINDS = ("other", "ajax", "skud")
+"""Taken from the last copper port down (``48`` СКУД, ``44–47`` Ajax)."""
+
+
+def endpoints_text(endpoints: list[tuple[str, int]], ports: int, t: Translator) -> str:
+    """``1–38 Камери · 44–47 Ajax · 48 СКУД``: the main devices from port 1, the rest from the last copper port."""
+
+    def rng(a: int, b: int) -> str:
+        return str(a) if a == b else f"{a}–{b}"
+
+    parts: list[tuple[int, str]] = []
+    start = 1
+    for kind, n in endpoints:
+        if kind not in TAIL_KINDS and n > 0:
+            parts.append((start, f"{rng(start, start + n - 1)} {t.t(f'topo.ep.{kind}')}"))
+            start += n
+    end = ports
+    for kind in reversed(TAIL_KINDS):
+        n = sum(k for e, k in endpoints if e == kind)
+        if n > 0:
+            parts.append((end - n + 1, f"{rng(end - n + 1, end)} {t.t(f'topo.ep.{kind}')}"))
+            end -= n
+    return " · ".join(text for _s, text in sorted(parts))
+
+
+def _port_class(kind: str) -> str:
+    k = kind.upper()
+    return "qsfp" if "QSFP" in k else "sfp" if "SFP" in k else "rj45"
+
+
+def port_choices(model: str, catalog: Catalog) -> list[tuple[str, str]]:
+    """(port, class) of a device in the order links take them: the last ports first, alternating
+    between the first uplink ports and the last copper ones — ``49, 48, 50, 47…`` on a 48+4 switch
+    (a DAC / fibre link only takes the SFP ones: 49, 50, 51, 52). FortiGate: ``x1…`` (10G SFP+)."""
+    dev = catalog.models.get(model)
+    if dev is None:
+        return []
+    if dev.firewall is not None:
+        return [(f"x{i}", "sfp") for i in range(1, dev.firewall.ports_10g + 1)]
+    if dev.ports is None:
+        return []
+    n_ports, n_up = dev.ports.count, dev.uplinks.count if dev.uplinks else 0
+    pc, uc = _port_class(dev.ports.type), _port_class(dev.uplinks.type) if dev.uplinks else "rj45"
+    out: list[tuple[str, str]] = []
+    for k in range(max(n_ports, n_up)):
+        if k < n_up:
+            out.append((str(n_ports + 1 + k), uc))
+        if k < n_ports:
+            out.append((str(n_ports - k), pc))
     return out
+
+
+def _end_priority(lk: TopoLinkResult, node_id: str) -> int:
+    """Which links of a device take its ports first: ISL, the stack link down, the one up, the core…"""
+    if lk.kind == "isl":
+        return 0
+    if lk.kind == "stack":
+        return 1 if lk.b == node_id else 2
+    return {"uplink": 3, "fortilink": 4}.get(lk.kind, 5)
+
+
+def assign_ports(topo: Topology, catalog: Catalog, fiber_module: str, ed: TopologyEdits) -> None:
+    """Port and module at both ends of every link; the user's ports / modules win (and are kept free)."""
+    nodes = {n.id: n for n in topo.nodes}
+    used: dict[str, set[str]] = {nid: set() for nid in nodes}
+    for lk in topo.links:
+        for nid in (lk.a, lk.b):
+            typed = ed.ports.get(lk.end(nid))
+            if typed and nid in used:
+                used[nid].update(p.strip() for p in typed.split(","))
+    choices = {nid: port_choices(n.model, catalog) for nid, n in nodes.items()}
+    wan_no = {n.id: i for i, n in enumerate((n for n in topo.nodes if n.kind == "wan"), 1)}
+    ends = [(lk, nid) for lk in topo.links for nid in (lk.a, lk.b) if nid in nodes]
+    ends.sort(key=lambda e: _end_priority(e[0], e[1]))  # stable: link order within a priority
+
+    def take(nid: str, want: str, count: int) -> str:
+        picked: list[str] = []
+        tiers = [want, "sfp", "rj45", "qsfp"] if want == "qsfp" else [want, "qsfp", "rj45"]
+        for tier in tiers:
+            for name, cls in choices[nid]:
+                if len(picked) == count:
+                    break
+                if cls == tier and name not in used[nid] and name not in picked:
+                    picked.append(name)
+        used[nid].update(picked)
+        return ", ".join(sorted(picked, key=lambda p: (len(p), p)))
+
+    for lk, nid in ends:
+        node, other = nodes[nid], nodes.get(lk.b if nid == lk.a else lk.a)
+        typed = ed.ports.get(lk.end(nid))
+        if typed is not None:
+            port = typed
+        elif node.kind == "wan":
+            port = ""
+        elif lk.kind == "wan":
+            port = f"wan{wan_no.get(lk.b if nid == lk.a else lk.a, 1)}"
+        elif lk.kind == "ha":
+            port = "ha"
+        else:
+            port = take(nid, "qsfp" if lk.kind == "isl" else "sfp", 2 if lk.kind == "isl" else 1)
+        fibre = (
+            other is not None
+            and node.kind != "wan"
+            and other.kind != "wan"
+            and lk.kind not in ("ha", "isl")
+            and node.cabinet != other.cabinet
+        )
+        module = ed.modules.get(lk.end(nid), fiber_module if fibre else "")
+        if nid == lk.a:
+            lk.port_a, lk.module_a = port, module
+        else:
+            lk.port_b, lk.module_b = port, module
 
 
 def build_topology(
@@ -194,11 +331,15 @@ def build_topology(
     for plan in result.rack.plans:
         # the switches of a cabinet form its stack(s) in the order they stand in it, top-down
         members: list[TopoNode] = []
-        for item_id, group, label, model in _plan_switches(plan):
-            node = TopoNode(f"{plan.tag}/{item_id}", group, label, model, plan.tag)
-            if group == "firewall":
+        for it in _plan_switches(plan):
+            node = TopoNode(f"{plan.tag}/{it.id}", it.group, it.label or it.model, it.model, plan.tag, u=it.u)
+            if it.group in SWITCH_KINDS:
+                dev = catalog.models.get(it.model)
+                ports = dev.ports.count if dev is not None and dev.ports is not None else 48
+                node.endpoints = ed.endpoints.get(node.id, endpoints_text(it.endpoints, ports, t))
+            if it.group == "firewall":
                 fws.append(node)
-            elif group == "core_switch":
+            elif it.group == "core_switch":
                 cores.append(node)
             else:
                 members.append(node)
@@ -237,9 +378,15 @@ def build_topology(
         ]
 
     # ---- automatic layout ------------------------------------------------------------------
-    for n in (*fws, *cores):
-        n.rect = Rect(0, 0, HEAD_W, HEAD_H)
     col_list = list(columns.items())
+    # a head with many links below it gets wider, so that their port numbers do not overlap
+    parents_n = len(cores or fws) or 1
+    below = sum(len(col) if ed.access == "dual" else (2 if len(col) > 1 else 1) for _g, col in col_list)
+    head_w = max(HEAD_W, PORT_STEP * math.ceil(below / parents_n) + 24)
+    for n in fws:
+        n.rect = Rect(0, 0, HEAD_W if cores else head_w, HEAD_H)
+    for n in cores:
+        n.rect = Rect(0, 0, head_w, HEAD_H)
     # the stacks of one cabinet side by side, inside the cabinet's frame
     order = {tag: i for i, tag in enumerate(dict.fromkeys(col_cab.get(g, "") for g, _c in col_list))}
     col_list.sort(key=lambda gc: order[col_cab.get(gc[0], "")])
@@ -258,7 +405,7 @@ def build_topology(
         for (a, _ca), (b, _cb) in itertools.pairwise(col_list)
     ]
     cols_w = len(col_list) * NODE_W + sum(gaps)
-    pair_w = 2 * HEAD_W + PAIR_GAP
+    pair_w = 2 * head_w + PAIR_GAP
     width = max(cols_w, pair_w, 520.0) + 2 * PAD
     cx = width / 2
     y = PAD
@@ -271,14 +418,11 @@ def build_topology(
         y += WAN_H + 54
 
     def place_pair(nodes: list[TopoNode], y: float) -> None:
-        if len(nodes) == 1:
-            nodes[0].rect.x, nodes[0].rect.y = cx - HEAD_W / 2, y
-            return
-        total = len(nodes) * HEAD_W + (len(nodes) - 1) * PAIR_GAP
+        total = sum(n.rect.w for n in nodes) + (len(nodes) - 1) * PAIR_GAP
         x = cx - total / 2
         for n in nodes:
             n.rect.x, n.rect.y = x, y
-            x += HEAD_W + PAIR_GAP
+            x += n.rect.w + PAIR_GAP
 
     if fws:
         place_pair(fws, y)
@@ -325,7 +469,8 @@ def build_topology(
     def medium(a: TopoNode, b: TopoNode, speed: float) -> str:
         sp = f"{speed:g}G"
         if a.cabinet and a.cabinet == b.cabinet:
-            return f"{sp} DAC"
+            metres = 1 if abs(a.u - b.u) <= catalog.rules.dac_short_max_u else 3
+            return f"{sp} DAC {t.t('topo.metres', n=metres)}"
         return f"{sp} {fiber}".strip() if fiber else sp
 
     def speed_of(n: TopoNode, parent: TopoNode) -> float:
@@ -386,6 +531,8 @@ def build_topology(
         if ul.a in nodes_by_id and ul.b in nodes_by_id and ul.a != ul.b:
             out.append(TopoLinkResult(ul.id, ul.a, ul.b, ul.kind, ul.label, auto=False))
     topo.links = out
+    fspec = catalog.passive.fiber.get(result.rack.passive.fiber_type)
+    assign_ports(topo, catalog, fspec.transceiver if fspec else "", ed)
 
     # ---- ports ---------------------------------------------------------------------------------
     for n in (*cores, *fws):
@@ -540,7 +687,7 @@ def route_links(topo: Topology) -> None:
             continue
         sa, sb = plan[lk.id]
         if sa == "stack":
-            x = a.rect.x + 18
+            x = a.rect.x + STACK_X
             lo, hi = (a, b) if a.rect.y > b.rect.y else (b, a)
             pts = [(x, lo.rect.y), (x, hi.rect.bottom)]
             lk.points = pts if lo is a else pts[::-1]

@@ -153,6 +153,8 @@ def topology_drawio(topo: Topology, colors: TopoColors = LIGHT, name: str = "Top
         value = (
             n.label if not n.model else f'<b>{_esc(n.label)}</b><br><font style="font-size:10px">{_esc(n.model)}</font>'
         )
+        if n.endpoints:
+            value += f'<br><font style="font-size:10px" color="{colors.link("fortilink")}">{_esc(n.endpoints)}</font>'
         style = _style(
             rounded=1,
             arcSize=50 if n.kind == "wan" else 16,
@@ -231,6 +233,34 @@ def _edge(
         arr = _sub(geo, "Array", **{"as": "points"})
         for x, y in corners:
             _sub(arr, "mxPoint", x=f"{x + sx:.1f}", y=f"{y + sy:.1f}")
+    # port (and module) at each end: labels of the edge, so they move with it
+    for end, port, module in ((-0.9, lk.port_a, lk.module_a), (0.9, lk.port_b, lk.module_b)):
+        if not (port or module):
+            continue
+        value = "<br>".join(x for x in (f"<b>{_esc(port)}</b>" if port else "", _esc(module)) if x)
+        label = _sub(
+            root,
+            "mxCell",
+            id=_cell_id(f"p-{lk.id}{end}"),
+            value=value,
+            style=_style(
+                edgeLabel=1,
+                html=1,
+                align="left",
+                verticalAlign="middle",
+                resizable=0,
+                points="[]",
+                fontColor=color,
+                fontFamily=FONT,
+                fontSize=9,
+                labelBackgroundColor="#FFFFFF",
+            ),
+            vertex="1",
+            connectable="0",
+            parent=cell.get("id", ""),
+        )
+        lg = _sub(label, "mxGeometry", x=f"{end:.2f}", relative="1", **{"as": "geometry"})
+        _sub(lg, "mxPoint", x="6", y="0", **{"as": "offset"})
 
 
 def export_drawio(topo: Topology, path: str | Path, name: str = "") -> Path:

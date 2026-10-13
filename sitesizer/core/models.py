@@ -257,10 +257,26 @@ class TopologyEdits(BaseModel):
     """Automatic link id -> type chosen by the user (colour and meaning)."""
     groups: dict[str, str] = Field(default_factory=dict)
     """Switch node id -> stack (column) it was moved to."""
+    ports: dict[str, str] = Field(default_factory=dict)
+    """``<link id>@<node id>`` -> port of that end typed by the user (``49``, ``x1``, ``sfp+3``)."""
+    modules: dict[str, str] = Field(default_factory=dict)
+    """``<link id>@<node id>`` -> module (transceiver) in that port, typed by the user."""
+    endpoints: dict[str, str] = Field(default_factory=dict)
+    """Switch node id -> what its ports serve, as typed by the user (``1–38 Камери · 48 СКУД``)."""
 
     @property
     def is_empty(self) -> bool:
-        return not (self.positions or self.hidden or self.links or self.labels or self.kinds or self.groups)
+        return not (
+            self.positions
+            or self.hidden
+            or self.links
+            or self.labels
+            or self.kinds
+            or self.groups
+            or self.ports
+            or self.modules
+            or self.endpoints
+        )
 
 
 class SiteInput(BaseModel):
@@ -521,6 +537,9 @@ class RackItem:
     """Placed by the user (drag & drop) rather than automatically."""
     extra: bool = False
     """Added by the user."""
+    endpoints: list[tuple[str, int]] = field(default_factory=list)
+    """What the switch's copper ports serve: (``sockets`` / ``aps`` / ``cameras`` / ``other`` / ``ajax`` /
+    ``skud``, number), as the endpoints of its telecom room are spread over its switches."""
 
     @property
     def top(self) -> int:
@@ -693,6 +712,9 @@ class RoomCounts:
     sockets: int = 0
     cameras: int = 0
     vsw_extra: int = 0
+    ajax: int = 0
+    skud: int = 0
+    other: int = 0
     aps: int = 0
     ap_groups: list[ApGroup] = field(default_factory=list)
 

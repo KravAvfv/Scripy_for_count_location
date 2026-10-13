@@ -98,6 +98,9 @@ class TopologyDiagram:
         self.f_name = _font(12.5, QFont.Weight.DemiBold)
         self.f_model = _font(11)
         self.f_link = _font(10)
+        self.f_port = _font(10, QFont.Weight.DemiBold)
+        self.f_module = _font(9)
+        self.f_endpoints = _font(10)
         self.f_group = _font(11, QFont.Weight.DemiBold, spacing=0.3)
         self.f_caption = _font(12, italic=True)
         self.f_title = _font(18, QFont.Weight.DemiBold)
@@ -171,6 +174,7 @@ class TopologyDiagram:
             self._paint_node(p, n)
         for lk in self.topo.links:
             self._paint_link_label(p, lk)
+            self._paint_ports(p, lk)
         p.restore()
         # footer: legend of the access design and findings
         p.setFont(self.f_caption)
@@ -246,6 +250,64 @@ class TopologyDiagram:
         p.setFont(self.f_link)
         p.drawText(rect, Qt.AlignmentFlag.AlignCenter, lk.label)
 
+    def _paint_ports(self, p: QPainter, lk: TopoLinkResult) -> None:
+        """Port number at each end of a link, just outside the device; the module in that port is written
+        along the line (like the hand-drawn schemes), so that neighbouring ports do not overlap."""
+        if len(lk.points) < 2:
+            return
+        color = QColor(self.c.link(lk.kind))
+        bg = QColor(self.s.bg)
+        bg.setAlphaF(0.85)
+        fm_p, fm_m = QFontMetricsF(self.f_port), QFontMetricsF(self.f_module)
+        ends = (
+            (lk.points[0], lk.points[1], lk.port_a, lk.module_a, self.topo.node(lk.a)),
+            (lk.points[-1], lk.points[-2], lk.port_b, lk.module_b, self.topo.node(lk.b)),
+        )
+        for (x0, y0), (x1, y1), port, module, node in ends:
+            vertical = abs(x1 - x0) < 0.5
+            if node is not None:  # leaves the device through its top or bottom edge
+                upright = abs(y0 - node.rect.y) < 1 or abs(y0 - node.rect.bottom) < 1
+            else:
+                upright = abs(y1 - y0) > abs(x1 - x0)
+            if port:
+                w = fm_p.horizontalAdvance(port) + 4
+                if upright:
+                    x = x0 - 4 - w if lk.kind == "stack" else x0 + 4  # a stack's cable label is on its right
+                    y = y0 - 14 if y1 < y0 else y0 + 2
+                else:  # sideways: under the line (its cable label goes up the lane), HA / ISL above it
+                    x = x0 + 4 if x1 > x0 else x0 - 4 - w
+                    y = y0 - 14 if lk.kind in ("ha", "isl") else y0 + 2
+                self._tag(p, QRectF(x, y, w, 12), port, self.f_port, color, bg)
+            if not module:
+                continue
+            if upright and not vertical:  # a slanted line: the module next to the port
+                w = fm_m.horizontalAdvance(module) + 4
+                y = y0 - 26 if y1 < y0 else y0 + 14
+                self._tag(p, QRectF(x0 + 4, y, w, 11), module, self.f_module, color, bg)
+                continue
+            length = fm_m.horizontalAdvance(module) + 4
+            p.save()
+            if vertical:
+                down = y1 > y0
+                p.translate(x0 + 2 if lk.kind != "stack" else x0 - 14, y0 + (16 if down else -16))
+                p.rotate(90 if down else -90)
+                rect = QRectF(0, -12, length, 11) if down else QRectF(0, 1, length, 11)
+            else:
+                right = x1 > x0
+                p.translate(x0 + (6 if right else -6 - length), y0 - 13)
+                rect = QRectF(0, 0, length, 11)
+            self._tag(p, rect, module, self.f_module, color, bg)
+            p.restore()
+
+    @staticmethod
+    def _tag(p: QPainter, rect: QRectF, text: str, font: QFont, color: QColor, bg: QColor) -> None:
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(bg)
+        p.drawRoundedRect(rect.adjusted(-1, 0, 1, 0), 3, 3)
+        p.setPen(color)
+        p.setFont(font)
+        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+
     def _paint_node(self, p: QPainter, n: TopoNode) -> None:
         fill, edge, text = self.c.node(n.kind)
         r = QRectF(n.rect.x, n.rect.y, n.rect.w, n.rect.h)
@@ -266,13 +328,24 @@ class TopologyDiagram:
             return
         fm = QFontMetricsF(self.f_name)
         name = fm.elidedText(n.label, Qt.TextElideMode.ElideMiddle, r.width() - 14)
+        rows = 3 if n.endpoints else 2
+        row_h = (r.height() - 8) / rows
         p.setFont(self.f_name)
-        p.drawText(r.adjusted(7, 5, -7, -r.height() / 2), Qt.AlignmentFlag.AlignCenter, name)
+        p.drawText(QRectF(r.x() + 7, r.y() + 4, r.width() - 14, row_h), Qt.AlignmentFlag.AlignCenter, name)
         muted = QColor(text)
         muted.setAlphaF(0.72)
         p.setPen(muted)
         p.setFont(self.f_model)
-        p.drawText(r.adjusted(7, r.height() / 2 - 2, -7, -4), Qt.AlignmentFlag.AlignCenter, n.model)
+        p.drawText(QRectF(r.x() + 7, r.y() + 4 + row_h, r.width() - 14, row_h), Qt.AlignmentFlag.AlignCenter, n.model)
+        if n.endpoints:
+            p.setPen(QColor(self.c.link("fortilink")))
+            p.setFont(self.f_endpoints)
+            fe = QFontMetricsF(self.f_endpoints)
+            p.drawText(
+                QRectF(r.x() + 5, r.y() + 4 + 2 * row_h, r.width() - 10, row_h),
+                Qt.AlignmentFlag.AlignCenter,
+                fe.elidedText(n.endpoints, Qt.TextElideMode.ElideRight, r.width() - 10),
+            )
 
 
 def _rounded(points: list[tuple[float, float]], radius: float = 8.0) -> QPainterPath:

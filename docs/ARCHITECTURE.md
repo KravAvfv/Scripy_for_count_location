@@ -138,7 +138,12 @@ positions survive recalculation.
    medium (DAC in the same cabinet, the fibre type between cabinets). Core / FortiGate port counts are checked.
 3. `SiteInput.topology` (`TopologyEdits`, a location-wide field) applies the user's changes: positions,
    removed / added links, link types, labels, switches moved to another stack.
-4. `route_links()` routes orthogonally: up-links of the top switch leave upwards, the others run up a lane
+4. Ports: `port_choices()` lists a device's ports the way links take them — the last ones first, alternating
+   uplink / copper (`49, 48, 50, 47…`; a 10G link only takes SFP ports, the ISL the QSFP ones, FortiGate
+   `x1…`); `assign_ports()` gives each link end a port (ISL, stack down, stack up, core, the rest) and a module
+   (the fibre transceiver between cabinets). `TopologyEdits.ports / modules / endpoints` keep the user's
+   values; `RackItem.endpoints` (from `passive.assign_endpoints`) becomes the switch's "what is in its ports".
+5. `route_links()` routes orthogonally: up-links of the top switch leave upwards, the others run up a lane
    beside their column and sideways in a band above the columns; ports along a side are spread. The painter
    and the draw.io writer use the same routes and label positions.
 

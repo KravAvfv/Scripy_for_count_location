@@ -203,6 +203,9 @@ class TopologyView(QWidget):
                 ("labels", {}),
                 ("kinds", {}),
                 ("groups", {}),
+                ("ports", {}),
+                ("modules", {}),
+                ("endpoints", {}),
             ):
                 topo.setdefault(key, empty)
             fn(topo)
@@ -283,7 +286,7 @@ class TopologyView(QWidget):
 
     def reset(self) -> None:
         def fn(t: dict[str, Any]) -> None:
-            for key in ("positions", "labels", "kinds", "groups"):
+            for key in ("positions", "labels", "kinds", "groups", "ports", "modules", "endpoints"):
                 t[key] = {}
             t["hidden"], t["links"] = [], []
 
@@ -298,9 +301,70 @@ class TopologyView(QWidget):
             self.canvas.start_connect(nodes[0])
             self.state.message.emit("info", tr("topo.connect_hint"))
 
+    def set_connection(self, link_id: str, values: dict[str, str]) -> None:
+        """Ports / modules of both ends and the cable of a link (``""`` = automatic again)."""
+        lk = self.canvas.diagram.topo.link(link_id) if self.canvas.diagram else None
+        if lk is None:
+            return
+
+        def fn(t: dict[str, Any]) -> None:
+            for field, node in (("port_a", lk.a), ("port_b", lk.b), ("module_a", lk.a), ("module_b", lk.b)):
+                store = t["ports" if field.startswith("port") else "modules"]
+                text = values.get(field, "").strip()
+                if text:
+                    store[lk.end(node)] = text
+                else:
+                    store.pop(lk.end(node), None)
+            cable = values.get("cable", "").strip()
+            if cable == lk.label and link_id not in t["labels"]:
+                return  # the automatic cable: keep following the cabinets (DAC length, fibre type)
+            for ul in t["links"]:
+                if ul["id"] == link_id:
+                    ul["label"] = cable
+                    return
+            if cable:
+                t["labels"][link_id] = cable
+            else:
+                t["labels"].pop(link_id, None)
+
+        self._edit(tr("topo.connection"), fn)
+
+    def edit_connection(self, link_id: str) -> None:
+        d = self.canvas.diagram
+        lk = d.topo.link(link_id) if d is not None else None
+        if lk is None:
+            return
+        from ..widgets.connection_dialog import ConnectionDialog
+
+        names = {n.id: n.label for n in d.topo.nodes}
+        dlg = ConnectionDialog(lk, names.get(lk.a, lk.a), names.get(lk.b, lk.b), self.state.catalog, self.edits, self)
+        if dlg.exec():
+            self.set_connection(link_id, dlg.values())
+
+    def set_endpoints(self, node_id: str, text: str) -> None:
+        def fn(t: dict[str, Any]) -> None:
+            if text:
+                t["endpoints"][node_id] = text
+            else:
+                t["endpoints"].pop(node_id, None)
+
+        self._edit(tr("topo.endpoints"), fn)
+
+    def edit_endpoints(self, node_id: str) -> None:
+        d = self.canvas.diagram
+        n = d.topo.node(node_id) if d is not None else None
+        if n is None:
+            return
+        text, ok = QInputDialog.getText(self, tr("topo.endpoints"), tr("topo.endpoints_prompt"), text=n.endpoints)
+        if ok and text.strip() != n.endpoints:
+            self.set_endpoints(node_id, text.strip())
+
     def rename(self, kind: str, item_id: str) -> None:
         d = self.canvas.diagram
         if d is None:
+            return
+        if kind == "link":
+            self.edit_connection(item_id)
             return
         topo = d.topo
         current = ""
@@ -349,12 +413,14 @@ class TopologyView(QWidget):
                 a = QAction(tr("topo.new_group"), sub)
                 a.triggered.connect(lambda: self.move_to_group(nodes, "u-" + uuid.uuid4().hex[:6]))
                 sub.addAction(a)
+            if node is not None and node.kind in ("wifi_switch", "camera_switch", "access_switch"):
+                act(tr("topo.endpoints") + "…", lambda: self.edit_endpoints(item_id), "ethernet-port")
             if any((n := topo.node(i)) is not None and n.manual for i in nodes):
                 act(tr("topo.auto_place"), lambda: self.reset_positions(nodes), "refresh-ccw")
         elif kind == "link":
             links = self.canvas.selected_ids("link") or [item_id]
             lk = topo.link(item_id)
-            act(tr("topo.rename_link"), lambda: self.rename("link", item_id), "pencil")
+            act(tr("topo.connection") + "…", lambda: self.edit_connection(item_id), "cable")
             sub = menu.addMenu(icons.icon("sliders-horizontal", size=16), tr("topo.link_type"))
             for k in LINK_KINDS:
                 a = QAction(tr(f"topo.kind.{k}"), sub)

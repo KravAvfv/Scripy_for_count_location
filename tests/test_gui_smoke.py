@@ -886,3 +886,44 @@ def test_wifi_switches_follow_the_aps(app: QApplication, window) -> None:
     loc._room_blocks[0].fields["sockets"].valueChanged.emit(200)
     pump(app)
     assert "access_switch" not in st.site.rooms[0].counts
+
+
+def test_topology_ports_modules_and_cable(app: QApplication, window) -> None:
+    from sitesizer.gui.widgets.connection_dialog import ConnectionDialog
+
+    st = window.state
+    st.edit("t", lambda d: d.update(sockets=240, cameras=30, tier=1, aggregation="yes", location_code="BO123"))
+    st.recompute()
+    window.navigate("topology")
+    pump(app)
+    view = window.topology
+    topo = view.canvas.diagram.topo
+    stack = next(lk for lk in topo.links if lk.kind == "stack")
+    assert stack.port_a and stack.port_b
+    names = {n.id: n.label for n in topo.nodes}
+    dlg = ConnectionDialog(stack, names[stack.a], names[stack.b], st.catalog, st.site.topology, view)
+    assert dlg.fields["port_a"].text() == ""  # automatic: shown as the placeholder
+    assert dlg.fields["port_a"].placeholderText() == stack.port_a
+    dlg.fields["port_a"].setText("sfp+3")
+    dlg.fields["module_b"].setCurrentText("SFP Foxgate 1330nm")
+    dlg.cable.setCurrentText("10G DAC 0.5 м")
+    view.set_connection(stack.id, dlg.values())
+    st.recompute()
+    pump(app)
+    lk = view.canvas.diagram.topo.link(stack.id)
+    assert lk.port_a == "sfp+3" and lk.module_b == "SFP Foxgate 1330nm" and lk.label == "10G DAC 0.5 м"
+    # unchanged fields stay automatic
+    assert stack.end(stack.b) not in st.site.topology.ports and stack.end(stack.a) not in st.site.topology.modules
+    # back to automatic: empty fields
+    view.set_connection(stack.id, {"port_a": "", "port_b": "", "module_a": "", "module_b": "", "cable": ""})
+    st.recompute()
+    pump(app)
+    assert not st.site.topology.ports and not st.site.topology.modules and stack.id not in st.site.topology.labels
+    # what a switch's ports serve
+    sw = next(n for n in view.canvas.diagram.topo.nodes if n.kind == "access_switch")
+    assert sw.endpoints.endswith("Розетки")
+    view.set_endpoints(sw.id, "1–40 Розетки · 48 UPS")
+    st.recompute()
+    pump(app)
+    assert view.canvas.diagram.topo.node(sw.id).endpoints == "1–40 Розетки · 48 UPS"
+    dlg.reject()
