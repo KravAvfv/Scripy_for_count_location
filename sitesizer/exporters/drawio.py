@@ -87,7 +87,33 @@ def topology_drawio(topo: Topology, colors: TopoColors = LIGHT, name: str = "Top
             **{"as": "geometry"},
         )
 
-    # stacks (containers) first, so that they lie under the links
+    # cabinet frames under everything, then the stacks (containers), so that they lie under the links
+    for cab in topo.cabinets:
+        cell = _sub(
+            root,
+            "mxCell",
+            id=_cell_id("c-" + cab.id),
+            value=cab.title,
+            style=_style(
+                rounded=1,
+                arcSize=4,
+                whiteSpace="wrap",
+                html=1,
+                fillColor="#FAFBFC",
+                strokeColor="#9AA7B4",
+                fontColor="#1F2D3A",
+                fontFamily=FONT,
+                fontSize=12,
+                fontStyle=1,
+                align="left",
+                verticalAlign="top",
+                spacingLeft=10,
+                spacingTop=3,
+            ),
+            vertex="1",
+            parent="1",
+        )
+        geometry(cell, cab.rect)
     parent_of: dict[str, tuple[str, Rect]] = {}
     for g in topo.groups:
         gid = _cell_id("g-" + g.id)

@@ -1243,5 +1243,6 @@
   "apw.columns_tip": "APs in one row on the floor plan: then neighbours in a column go to different switches too (checkerboard).",
   "apw.open": "AP wiring",
   "apw.open_tip": "Which switch port each access point goes to, for the installers (PNG, SVG, Excel)",
-  "rack.odf_isp": "to provider"
+  "rack.odf_isp": "to provider",
+  "topo.cabinet": "Cabinet {tag}"
 }

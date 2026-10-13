@@ -44,6 +44,10 @@ PAIR_GAP = 220.0
 LANE_STEP = 7.0
 GROUP_PAD = 12.0
 GROUP_TITLE_H = 22.0
+CAB_PAD = 14.0
+CAB_TITLE_H = 24.0
+CAB_GAP = 40.0
+"""Extra space between the stacks of different cabinets."""
 
 
 @dataclass
@@ -128,6 +132,8 @@ class Topology:
     nodes: list[TopoNode] = field(default_factory=list)
     links: list[TopoLinkResult] = field(default_factory=list)
     groups: list[TopoGroup] = field(default_factory=list)
+    cabinets: list[TopoGroup] = field(default_factory=list)
+    """A frame around the stacks of one cabinet (when it has several: PoE and ASW)."""
     width: float = 0.0
     height: float = 0.0
     access: str = "ring"
@@ -179,6 +185,10 @@ def build_topology(
     cores: list[TopoNode] = []
     columns: dict[str, list[TopoNode]] = {}
     col_titles: dict[str, str] = {}
+    col_kind: dict[str, str] = {}
+    """Stack id -> its title without the cabinet (used inside a cabinet frame)."""
+    col_cab: dict[str, str] = {}
+    cab_titles: dict[str, str] = {}
     for plan in result.rack.plans:
         per_class: dict[str, list[TopoNode]] = {}
         for item_id, group, label, model in _plan_switches(plan):
@@ -196,6 +206,9 @@ def build_topology(
                 gid = f"{plan.tag}:{cls}" + (f":{k}" if len(chunks) > 1 else "")
                 kind = t.t("topo.group_poe") if cls == "poe" else t.t("topo.group_asw")
                 col_titles[gid] = f"{plan.tag} · {kind}" + (f" {k}" if len(chunks) > 1 else "")
+                col_kind[gid] = kind + (f" {k}" if len(chunks) > 1 else "")
+                col_cab[gid] = plan.tag
+                cab_titles[plan.tag] = t.t("topo.cabinet", tag=plan.tag)
                 for n in chunk:
                     n.group = gid
                 columns[gid] = chunk
@@ -226,7 +239,24 @@ def build_topology(
     for n in (*fws, *cores):
         n.rect = Rect(0, 0, HEAD_W, HEAD_H)
     col_list = list(columns.items())
-    cols_w = len(col_list) * NODE_W + max(0, len(col_list) - 1) * COL_GAP
+    # the stacks of one cabinet side by side, inside the cabinet's frame
+    order = {tag: i for i, tag in enumerate(dict.fromkeys(col_cab.get(g, "") for g, _c in col_list))}
+    col_list.sort(key=lambda gc: order[col_cab.get(gc[0], "")])
+    per_cab: dict[str, int] = {}
+    for gid, _col in col_list:
+        if gid in col_cab:
+            per_cab[col_cab[gid]] = per_cab.get(col_cab[gid], 0) + 1
+    framed = set(per_cab)  # every cabinet is drawn as a frame around its stacks
+    gaps = [
+        COL_GAP
+        + (
+            CAB_GAP
+            if col_cab.get(a) != col_cab.get(b) and (col_cab.get(a) in framed or col_cab.get(b) in framed)
+            else 0
+        )
+        for (a, _ca), (b, _cb) in itertools.pairwise(col_list)
+    ]
+    cols_w = len(col_list) * NODE_W + sum(gaps)
     pair_w = 2 * HEAD_W + PAIR_GAP
     width = max(cols_w, pair_w, 520.0) + 2 * PAD
     cx = width / 2
@@ -259,13 +289,15 @@ def build_topology(
     lanes = sum(1 for _g, col in col_list for _ in range(2 if len(col) > 1 or ed.access == "dual" else 1))
     band = 62 + LANE_STEP * min(lanes, 24)
     top = y + band + GROUP_TITLE_H + GROUP_PAD if (fws or cores) else y + GROUP_TITLE_H
+    if framed:
+        top += CAB_TITLE_H + CAB_PAD
     x = cx - cols_w / 2
-    for _gid, col in col_list:
+    for i, (_gid, col) in enumerate(col_list):
         yy = top
         for n in col:
             n.rect = Rect(x, yy, NODE_W, NODE_H)
             yy += NODE_H + STACK_GAP
-        x += NODE_W + COL_GAP
+        x += NODE_W + (gaps[i] if i < len(gaps) else 0)
 
     # ---- the user's positions --------------------------------------------------------------
     all_nodes = [*wans, *fws, *cores, *(n for _g, col in col_list for n in col)]
@@ -276,7 +308,13 @@ def build_topology(
             n.manual = True
     topo.nodes = all_nodes
     for gid, col in col_list:
-        topo.groups.append(TopoGroup(gid, ed.labels.get(gid, col_titles.get(gid, gid)), [n.id for n in col]))
+        tag = col_cab.get(gid, "")
+        title = col_kind.get(gid, gid) if tag in framed else col_titles.get(gid, gid)
+        topo.groups.append(TopoGroup(gid, ed.labels.get(gid, title), [n.id for n in col]))
+    for tag in framed:
+        nodes = [n.id for gid, col in col_list if col_cab.get(gid) == tag for n in col]
+        cid = f"cab:{tag}"
+        topo.cabinets.append(TopoGroup(cid, ed.labels.get(cid, cab_titles[tag]), nodes))
     _fit_groups(topo)
 
     # ---- links -------------------------------------------------------------------------------
@@ -377,6 +415,16 @@ def _fit_groups(topo: Topology) -> None:
         x1 = max(r.right for r in rects) + GROUP_PAD
         y1 = max(r.bottom for r in rects) + GROUP_PAD
         g.rect = Rect(x0, y0, x1 - x0, y1 - y0)
+    stacks = {nid: g for g in topo.groups for nid in g.nodes}
+    for cab in topo.cabinets:
+        rects = [stacks[i].rect for i in cab.nodes if i in stacks] or [by_id[i].rect for i in cab.nodes if i in by_id]
+        if not rects:
+            continue
+        x0 = min(r.x for r in rects) - CAB_PAD
+        y0 = min(r.y for r in rects) - CAB_PAD - CAB_TITLE_H
+        x1 = max(r.right for r in rects) + CAB_PAD
+        y1 = max(r.bottom for r in rects) + CAB_PAD
+        cab.rect = Rect(x0, y0, x1 - x0, y1 - y0)
 
 
 def _spread(count: int, k: int, lo: float, hi: float) -> float:
@@ -410,7 +458,7 @@ def route_links(topo: Topology) -> None:
     nodes = {n.id: n for n in topo.nodes}
     groups = {g.id: g for g in topo.groups}
     _fit_groups(topo)
-    columns_top = min((g.rect.y for g in topo.groups), default=0.0)
+    columns_top = min((g.rect.y for g in (*topo.groups, *topo.cabinets)), default=0.0)
     heads = [n for n in topo.nodes if n.kind in ("firewall", "core_switch")]
     heads_bottom = max((n.rect.bottom for n in heads), default=0.0)
 
@@ -522,7 +570,7 @@ def route_links(topo: Topology) -> None:
     for lk in topo.links:
         lk.label_t = _label_t(lk)
 
-    rects = [n.rect for n in topo.nodes] + [g.rect for g in topo.groups]
+    rects = [n.rect for n in topo.nodes] + [g.rect for g in (*topo.groups, *topo.cabinets)]
     pts = [p for lk in topo.links for p in lk.points]
     x0 = min([r.x for r in rects] + [p[0] for p in pts], default=PAD)
     y0 = min([r.y for r in rects] + [p[1] for p in pts], default=PAD)

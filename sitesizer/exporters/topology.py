@@ -161,6 +161,8 @@ class TopologyDiagram:
             return
         p.save()
         p.translate(self.offset)
+        for cab in self.topo.cabinets:
+            self._paint_cabinet(p, cab.rect, cab.title)
         for g in self.topo.groups:
             self._paint_group(p, g.rect, g.title, g.id in self.selected)
         for lk in self.topo.links:
@@ -176,6 +178,19 @@ class TopologyDiagram:
         mode = self.t.t("topo.mode_ring" if self.topo.access == "ring" else "topo.mode_dual")
         text = "   •   ".join([mode, *self.topo.problems])
         p.drawText(QRectF(0, size.height() - 34, size.width(), 20), Qt.AlignmentFlag.AlignCenter, text)
+
+    def _paint_cabinet(self, p: QPainter, r: Rect, title: str) -> None:
+        """The cabinet the stacks stand in (its PoE and ASW stacks are in one frame)."""
+        s = self.s
+        rect = QRectF(r.x, r.y, r.w, r.h)
+        p.setPen(QPen(QColor(s.light_edge), 1.4))
+        fill = QColor(s.light)
+        fill.setAlphaF(0.22)
+        p.setBrush(fill)
+        p.drawRoundedRect(rect, 12, 12)
+        p.setPen(QColor(s.light_text))
+        p.setFont(self.f_group)
+        p.drawText(rect.adjusted(12, 5, -8, 0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, title)
 
     def _paint_group(self, p: QPainter, r: Rect, title: str, selected: bool) -> None:
         s = self.s

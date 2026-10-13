@@ -112,7 +112,7 @@ def test_drawio_file(tmp_path: Path, catalog: Catalog) -> None:
     cells = root.findall(".//mxCell")
     vertices = [c for c in cells if c.get("vertex") == "1"]
     edges = [c for c in cells if c.get("edge") == "1"]
-    assert len(vertices) == len(topo.nodes) + len(topo.groups)
+    assert len(vertices) == len(topo.nodes) + len(topo.groups) + len(topo.cabinets)  # cabinet frames too
     assert len(edges) == len(topo.links)
     ids = {c.get("id") for c in cells}
     for e in edges:
@@ -139,3 +139,20 @@ def test_painter_and_hit(catalog: Catalog) -> None:
     lk = next(lk for lk in d.topo.links if lk.kind == "ha")
     x, y = lk.point_at(0.5)
     assert d.hit(QPointF(x, y) + d.offset) == ("link", lk.id)
+
+
+def test_stacks_of_one_cabinet_share_its_frame(catalog: Catalog) -> None:
+    from sitesizer.core.sizing import size_site
+    from sitesizer.core.topology import build_topology
+
+    from .conftest import make_site
+
+    # one cabinet with Wi-Fi, video and access switches: two stacks (PoE, ASW) in one cabinet frame
+    r = size_site(make_site(sockets=96, cameras=20, aps=[("low_density", 10)], location_code="BO1"), catalog)
+    assert len(r.rack.plans) == 1
+    topo = build_topology(r, catalog)
+    assert [g.title for g in topo.groups] == ["PoE (WSW · VSW)", "ASW"]
+    assert len(topo.cabinets) == 1 and topo.cabinets[0].title == f"Шафа {r.rack.plans[0].tag}"
+    frame = topo.cabinets[0].rect
+    for g in topo.groups:
+        assert frame.x < g.rect.x and g.rect.right < frame.right and frame.y < g.rect.y < frame.bottom
