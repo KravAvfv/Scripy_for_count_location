@@ -805,7 +805,28 @@ def size_site(site: SiteInput, catalog: Catalog, lang: str = "uk", floor: FloorC
     _bom_equipment(ctx, bom, categories, core, firewall)
     _bom_tier_lines(ctx, bom, power, addons, rack)
     if addons["transceivers"]:
-        _bom_transceivers(ctx, bom, categories, core, firewall, rack)
+        if floor is not None and floor.link_parts is not None:
+            parts = floor.link_parts  # the location's topology, this floor's cabinets
+        else:
+            stub = SiteResult(
+                input=site,
+                counts=counts,
+                categories=categories,
+                core=core,
+                firewall=firewall,
+                tier_id=site.tier,
+                dual_psu=dual_psu,
+                dual_psu_confirmed=confirmed,
+                fortios_version=site.fortios_version or catalog.rules.fortios_default,
+                bom=[],
+                checks=[],
+                power=power,
+                rack=rack,
+                ip_plan=None,
+                addons=addons,
+            )
+            parts = merge_parts(topology_parts(stub, catalog, lang))
+        _bom_transceivers(ctx, bom, parts)
     if addons["cabling"]:
         _bom_cabling(ctx, bom, rack)
     if addons["rack"] and rack.plans:
@@ -1133,24 +1154,10 @@ def _bom_tier_lines(
         )
 
 
-def _bom_transceivers(
-    ctx: _Ctx,
-    bom: list[BomLine],
-    categories: dict[str, CategoryResult],
-    core: CategoryResult,
-    fw: FirewallChoice | None,
-    rack: RackSummary,
-) -> None:
-    """DACs per number of switches on the floor, a transceiver at every fibre link end."""
-    t, rules = ctx.t, ctx.rules
-    switches = sum(c.count for c in categories.values()) + core.count
-    fw_count = fw.count if fw else 0
-    fw_dev = ctx.catalog.models.get(fw.model) if fw else None
-    fw_has_10g = bool(fw_dev and fw_dev.firewall and fw_dev.firewall.ports_10g > 0)
-    ps = rack.passive
-    fspec = ctx.catalog.passive.fiber.get(ps.fiber_type)
-
-    def add(model: str, qty: int, reason: str) -> None:
+def _bom_transceivers(ctx: _Ctx, bom: list[BomLine], parts: dict[str, tuple[int, str]]) -> None:
+    """DACs and modules as the topology joins the devices (its media and modules, the user's too)."""
+    t = ctx.t
+    for model, (qty, kind) in sorted(parts.items(), key=lambda kv: (kv[1][1], kv[0])):
         if qty > 0:
             bom.append(
                 BomLine(
@@ -1158,33 +1165,31 @@ def _bom_transceivers(
                     category=t.t("cat.transceivers"),
                     model=model,
                     qty=qty,
-                    reason=reason,
-                    details=[
-                        t.t("detail.dac_rule", short=rules.dac_short_per_switches, long=rules.dac_long_per_switches)
-                    ],
+                    reason=t.t("reason.dac_topology" if kind == "dac" else "reason.module_topology", n=qty),
+                    details=[t.t("detail.links_topology")],
                     tags=["addon"],
                 )
             )
 
-    if switches:
-        add(
-            rules.dac_short_model,
-            ceil_div(switches, rules.dac_short_per_switches),
-            t.t("reason.dac_short_n", per=rules.dac_short_per_switches, n=switches),
-        )
-        add(
-            rules.dac_long_model,
-            ceil_div(switches, rules.dac_long_per_switches),
-            t.t("reason.dac_long_n", per=rules.dac_long_per_switches, n=switches),
-        )
-    if ps.fiber_ends:
-        add(
-            fspec.transceiver if fspec else "FN-TRAN-SFP+SR",
-            ps.fiber_ends,
-            t.t("reason.sr_odf", n=ps.fiber_ends, fiber=t.pick(fspec.label) if fspec else ""),
-        )
-    if fw_count and not fw_has_10g and not core.count and switches:
-        add("FN-TRAN-GC", fw_count, t.t("reason.gc", model=fw.model if fw else ""))
+
+def topology_parts(result: SiteResult, catalog: Catalog, lang: str = "uk") -> dict[str, dict[str, tuple[int, str]]]:
+    """Cabinet tag -> {model: (qty, kind)}: DACs and modules on the links of the location's topology."""
+    from .topology import build_topology, link_parts
+
+    return link_parts(build_topology(result, catalog, lang), catalog)
+
+
+def merge_parts(
+    by_tag: dict[str, dict[str, tuple[int, str]]], tags: set[str] | None = None
+) -> dict[str, tuple[int, str]]:
+    """The parts of the cabinets ``tags`` (all of them when ``None``), added up by model."""
+    out: dict[str, tuple[int, str]] = {}
+    for tag, parts in by_tag.items():
+        if tags is not None and tag not in tags:
+            continue
+        for model, (n, kind) in parts.items():
+            out[model] = (out.get(model, (0, kind))[0] + n, kind)
+    return out
 
 
 def _finalize_bom(ctx: _Ctx, bom: list[BomLine]) -> None:
@@ -1292,9 +1297,11 @@ def _bom_cabling(ctx: _Ctx, bom: list[BomLine], rack: RackSummary) -> None:
             copper,
             pr.cord_rack,
             ps.cords_rack,
-            t.t("reason.cords_rack", links=ps.copper_links, dev=ps.device_links),
+            t.t("reason.cords_rack", dev=ps.device_links),
         )
         add("cabling", copper, pr.cord_user, ps.cords_user, t.t("reason.cords_user", n=ps.sockets))
+    # patch panel ↔ switch: every copper port of the switches in the cabinets
+    add("cabling", copper, pr.cord_panel, ps.cords_panel, t.t("reason.cords_panel", n=ps.cords_panel))
     # panels and organizers: exactly what stands in the cabinets
     add("cabling", copper, pr.panel, ps.panels, t.t("reason.patch_panels_rack", n=ps.panels))
     add("cabling", copper, pr.manager, ps.managers, t.t("reason.cable_managers"))
@@ -1440,41 +1447,73 @@ def _bom_licensing(
     core: CategoryResult,
     fw: FirewallChoice | None,
 ) -> None:
+    """FortiGuard / FortiCare. A licence of the catalog made for a model (``covers``) is ordered for
+    that model; the rest is covered by the generic lines."""
     t = ctx.t
+    covering = {d.covers: key for key, d in ctx.catalog.models.items() if d.kind == "license" and d.covers}
     bundle = ctx.tier.fortiguard
     if bundle != "none" and fw is not None and fw.fits and fw.count:
         fw_dev = ctx.catalog.device(fw.model)
         sku = ""
         if fw_dev.firewall and fw_dev.firewall.sku_code:
             sku = f"FC-10-{fw_dev.firewall.sku_code}-{FORTIGUARD_SKU.get(bundle, '950')}-02-DD"
+        own = covering.get(fw.model)
         bom.append(
             BomLine(
                 group="license",
                 category=t.t("cat.license"),
-                model="FG-BUNDLE",
+                model=own or "FG-BUNDLE",
                 qty=fw.count,
-                description=t.t("license.bundle_desc", bundle=t.t(f"bundle.{bundle}"), model=fw.model),
+                description="" if own else t.t("license.bundle_desc", bundle=t.t(f"bundle.{bundle}"), model=fw.model),
                 reason=t.t(
                     "reason.bundle",
                     bundle=t.t(f"bundle.{bundle}"),
                     tier=t.pick(ctx.tier.label),
                     content=t.t(f"bundle.{bundle}.content"),
                 ),
-                details=[t.t("detail.sku_hint", sku=sku)] if sku else [],
+                details=[t.t("detail.sku_hint", sku=sku)] if sku and not own else [],
                 tags=["license", "addon"],
             )
         )
-    devices = sum(c.count for c in categories.values()) + core.count + ctx.counts.aps
-    if ctx.tier.forticare != "none" and devices:
-        level = t.t(f"forticare.{ctx.tier.forticare}")
+    if ctx.tier.forticare == "none":
+        return
+    devices: dict[str, int] = {}
+    for res in (*categories.values(), core):
+        for model, n in (res.models or ({res.model: res.count} if res.count else {})).items():
+            devices[model] = devices.get(model, 0) + n
+    for g in ctx.counts.ap_groups:
+        model = ap_model_for(g, ctx.catalog)
+        devices[model] = devices.get(model, 0) + g.qty
+    level = t.t(f"forticare.{ctx.tier.forticare}")
+    rest_sw = rest_ap = 0
+    for model, n in devices.items():
+        own = covering.get(model)
+        if own and n:
+            bom.append(
+                BomLine(
+                    group="license",
+                    category=t.t("cat.license"),
+                    model=own,
+                    qty=n,
+                    reason=t.t("reason.forticare_model", level=level, model=model, n=n),
+                    tags=["license", "addon"],
+                )
+            )
+            continue
+        dev = ctx.catalog.models.get(model)
+        if dev is not None and dev.kind == "ap":
+            rest_ap += n
+        else:
+            rest_sw += n
+    if rest_sw + rest_ap:
         bom.append(
             BomLine(
                 group="license",
                 category=t.t("cat.license"),
                 model="FC-SUPPORT",
-                qty=devices,
+                qty=rest_sw + rest_ap,
                 description=t.t("license.forticare_desc", level=level),
-                reason=t.t("reason.forticare", level=level, sw=devices - ctx.counts.aps, ap=ctx.counts.aps),
+                reason=t.t("reason.forticare", level=level, sw=rest_sw, ap=rest_ap),
                 tags=["license", "addon"],
             )
         )
@@ -1536,6 +1575,11 @@ def _counts_from_racks(
         n = placed.get("firewall", 0)
         if n < fw.count:
             fw.count = n
+            changed = True
+        # the model the user picked for the FortiGates in the cabinet
+        fw_models = {m for m in models.get("firewall", {}) if m}
+        if len(fw_models) == 1 and fw.model not in fw_models:
+            fw.model = fw_models.pop()
             changed = True
     return changed
 

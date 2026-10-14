@@ -111,7 +111,7 @@ user edit ─► AppState.edit() ─► QUndoCommand (mergeable per field) ─�
    cabinets, with the model chosen for that room (`RoomInput.models`); otherwise they are spread over the
    closets (MDF + IDFs when the longest run exceeds 90 m). Ajax / СКУД / other devices take video switch ports.
 2. Each closet is laid out top-down: fibre panels (ODF), FortiGate/core, then the switches in the order
-   WSW · VSW · ASW (`RACK_ORDER`), each in the house pattern
+   WSW · VSW · ASW (`RACK_ORDER`; the VSWs then go to the bottom with 5U free under them), each in the house pattern
    `organizer · panels · organizer · switch · organizer · panels …` (a 48-port switch gets one panel above
    and one below), PDUs and UPS at the bottom. When a closet needs several cabinets, the first one holds the
    firewall, the core and the PoE switches and the access switches go to the others (`_split_poe`) — unless

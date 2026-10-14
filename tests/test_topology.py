@@ -31,7 +31,8 @@ def test_whiteboard_design(catalog: Catalog) -> None:
     fws = [n for n in topo.nodes if n.kind == "firewall"]
     cores = [n for n in topo.nodes if n.kind == "core_switch"]
     assert len(fws) == 2 and len(cores) == 2
-    assert kinds(topo, "ha") == [(fws[0].id, fws[1].id)]
+    assert kinds(topo, "ha") == [(fws[0].id, fws[1].id)] * 2  # the HA pair: two links (ha1, ha2)
+    assert sorted(lk.port_a for lk in topo.links if lk.kind == "ha") == ["ha1", "ha2"]
     assert kinds(topo, "isl") == [(cores[0].id, cores[1].id)]
     assert sorted(kinds(topo, "uplink")) == sorted((c.id, f.id) for c in cores for f in fws)
     # names come from the cabinets
@@ -270,3 +271,42 @@ def test_device_figures_in_drawio(tmp_path: Path, catalog: Catalog) -> None:
     assert style["shape"] == "label" and style["imageAlign"] == "left"
     data = style["image"].removeprefix("data:image/svg+xml,")
     assert base64.b64decode(data).decode() == icon_svg("firewall")
+
+
+def test_a_cabinet_is_one_stack_however_many_switches(catalog: Catalog) -> None:
+    # six access switches in one cabinet (the second cabinet removed): one stack, not 5 + 1
+    r = size_site(
+        make_site(sockets=48 * 6, rack_size_u=42, location_code="BO107", floor=4, layout={"removed": ["mdf-2"]}),
+        catalog,
+    )
+    assert [len([it for it in p.items if it.group == "access_switch"]) for p in r.rack.plans] == [6]
+    topo = build_topology(r, catalog)
+    assert [len(g.nodes) for g in topo.groups] == [6] and not topo.cabinets
+    assert len([lk for lk in topo.links if lk.kind == "stack"]) == 5
+
+
+def test_crossing_lines_hop(catalog: Catalog) -> None:
+    from sitesizer.exporters.topology import _crossings
+
+    # an upright line over a level one hops at the crossing; touching ends do not
+    assert _crossings(((50, 0), (50, 100)), [((0, 40), (100, 40))]) == [(50, 40)]
+    assert _crossings(((50, 0), (50, 100)), [((50, 40), (100, 40))]) == []
+    assert _crossings(((0, 10), (100, 10)), [((30, 0), (30, 50)), ((70, 0), (70, 50))]) == [(30, 10), (70, 10)]
+    # draw.io: crossing edges get line jumps (arcs)
+    topo = build_topology(size_site(make_site(**BIG), catalog), catalog)
+    xml = topology_drawio(topo)
+    assert "jumpStyle=arc;" in xml
+
+
+def test_modules_clear_the_band(catalog: Catalog) -> None:
+    # the band under the cores leaves room for the modules written down from their ports
+    from sitesizer.core.topology import text_w
+
+    r = size_site(make_site(**BIG), catalog)
+    topo = build_topology(r, catalog)
+    cores = [n for n in topo.nodes if n.kind == "core_switch"]
+    module = text_w(topo.fiber_module)
+    band_top = min(
+        y for lk in topo.links if lk.kind == "fortilink" for (_x, y) in lk.points[1:-1]
+    )  # the highest level run towards the cores
+    assert band_top >= max(c.rect.bottom for c in cores) + 16 + module

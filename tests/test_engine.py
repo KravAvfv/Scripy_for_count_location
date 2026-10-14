@@ -295,7 +295,8 @@ def test_idf_hint_and_fibre(catalog: Catalog) -> None:
 def test_80f_without_sfp_uses_copper_sfp(catalog: Catalog) -> None:
     r = size_site(make_site(mode="extended", sockets=96), catalog)
     assert r.firewall is not None and r.firewall.model == "FG-80F"
-    assert any(line.model == "FN-TRAN-GC" and line.qty == 1 for line in r.bom)
+    # each FortiLink of the stack (top and bottom switch) goes into a switch uplink with a copper SFP
+    assert any(line.model == "FN-TRAN-GC" and line.qty == 2 for line in r.bom)
 
 
 # ---- power ----------------------------------------------------------------------------------
@@ -356,8 +357,17 @@ def test_copper_quantities(catalog: Catalog) -> None:
     assert ps.cable_drums == math.ceil(ps.cable_m / pr.cable_drum_m)
     assert ps.jacks == 112 and ps.jack_packs == math.ceil(112 / pr.jack_pack)
     assert ps.outlets == 20 + 16
-    assert ps.cords_rack == 56 + 16 and ps.cords_user == 40
+    assert ps.cords_rack == 16 and ps.cords_user == 40  # 1 m at the APs and cameras
+    # 0.25 m between a patch panel and its switch: every copper port of the switches in the cabinets
+    ports = sum(
+        catalog.device(it.model).ports.count  # type: ignore[union-attr]
+        for p in r.rack.plans
+        for it in p.items
+        if it.group in ("wifi_switch", "access_switch", "camera_switch")
+    )
+    assert ports and ps.cords_panel == ports
     models = {line.model: line.qty for line in r.lines("cabling")}
+    assert models[pr.cord_panel] == ports and models[pr.cord_rack] == 16
     assert models[pr.cable] == ps.cable_drums
     assert pr.outlet not in models  # outlets are not ordered with the specification
 
@@ -368,7 +378,7 @@ def test_small_site_fits_24u(catalog: Catalog) -> None:
     plan = r.rack.plans[0]
     assert plan.items[0].u == 24  # firewall at the top
     assert any(it.group == "pdu" and it.u == 1 for it in plan.items)
-    assert any(line.model == "RACK-24U" for line in r.lines("rack"))
+    assert any(line.model == "UA-MGSE2466MB" for line in r.lines("rack"))
 
 
 def test_rack_size_preference_and_split(catalog: Catalog) -> None:
@@ -446,13 +456,31 @@ def _dac(r) -> dict[str, int]:
     return {line.model: line.qty for line in r.bom if line.model.startswith("FN-CABLE")}
 
 
-def test_dac_per_switch_count(catalog: Catalog) -> None:
-    # 10 switches on a floor → 5 × DAC 1 m + 1 × DAC 3 m
+def test_dac_and_modules_follow_the_topology(catalog: Catalog) -> None:
+    from sitesizer.core.topology import build_topology, dac_model
+
+    # 10 switches: one DAC per DAC link of the drawing, 1 m or 3 m by the units the devices stand apart
     r = size_site(make_site(sockets=48 * 10), catalog)
     assert r.edge_switch_count == 10
-    assert _dac(r) == {"FN-CABLE-SFP+1": 5, "FN-CABLE-SFP+3": 1}
-    # 3 switches → 2 × 1 m (rounded up) + 1 × 3 m
-    assert _dac(size_site(make_site(sockets=48 * 3), catalog)) == {"FN-CABLE-SFP+1": 2, "FN-CABLE-SFP+3": 1}
+    topo = build_topology(r, catalog)
+    nodes = {n.id: n for n in topo.nodes}
+    want: dict[str, int] = {}
+    for lk in topo.links:
+        if lk.medium == "dac":
+            model = dac_model(lk, nodes[lk.a], nodes[lk.b], catalog)
+            want[model] = want.get(model, 0) + 1
+    assert want and _dac(r) == want
+    # the user's medium and module are counted: a stack link turned to fibre takes two modules
+    stack = next(lk for lk in topo.links if lk.kind == "stack")
+    r2 = size_site(make_site(sockets=48 * 10, topology={"media": {stack.id: "fiber"}}), catalog)
+    sr = catalog.passive.fiber[r2.rack.passive.fiber_type].transceiver
+    assert sum(_dac(r2).values()) == sum(want.values()) - 1
+    assert next(line.qty for line in r2.bom if line.model == sr) == 2 + sum(
+        1 for line in r.bom if line.model == sr for _ in range(line.qty or 0)
+    )
+    # core pair: the ISL takes a 100G DAC per port
+    big = size_site(make_site(sockets=48 * 20, firewall_count=2, core_count=2), catalog)
+    assert _dac(big).get(catalog.rules.dac_isl_model) == 2
 
 
 def test_manual_layout_racks_and_extras(catalog: Catalog) -> None:
@@ -480,7 +508,7 @@ def test_manual_layout_racks_and_extras(catalog: Catalog) -> None:
     }
     assert any(it.id == f"odf:{key}:user-1" for it in r.rack.plans[0].items)
     assert not any(it.group == "pdu" for it in r.rack.plans[0].items)  # the deleted PDU stays deleted
-    assert any(line.model == "RACK-24U" for line in r.lines("rack"))
+    assert any(line.model == "UA-MGSE2466MB" for line in r.lines("rack"))
     # removing the automatic cabinet moves its devices into the remaining one
     r2 = size_site(make_site(sockets=96, layout={**layout, "removed": [key]}), catalog)
     assert [p.key for p in r2.rack.plans] == ["user-1"]
@@ -525,8 +553,9 @@ def test_fibre_backbone_to_idf(catalog: Catalog) -> None:
     assert fibre[om4.cable_for(24)] == ps.fiber_m and fibre[om4.cord] == ps.fiber_links * 2 + 1
     assert fibre[om4.housing_24] == ps.fiber_links * 2 + 1 and om4.housing_12 not in fibre
     assert ps.splices == ps.fiber_links * 2 * 24
+    # a module at each end of every fibre link of the topology (a ring: both ends of each remote stack)
     sr = next(line for line in r.bom if line.model == om4.transceiver)
-    assert sr.qty == ps.fiber_links * 2 + 1
+    assert sr.qty == 2 * 2 * 2
 
 
 def test_fibre_between_cabinets_is_12_or_6(catalog: Catalog) -> None:
@@ -787,3 +816,53 @@ def test_room_switch_model_replaced(catalog: Catalog) -> None:
     # an unknown model is ignored
     bad = size_site(make_site(rooms=[{"sockets": 48, "models": {"access_switch": "NOPE"}}]), catalog)
     assert bad.categories["access_switch"].models == {acc.base: 1}
+
+
+def test_change_the_model_of_a_device_in_a_cabinet(catalog: Catalog) -> None:
+    """Another model for a device: it keeps its name and its place; the specification follows."""
+    base = size_site(make_site(sockets=96, location_code="BO1"), catalog)
+
+    def items(r):
+        return {it.id: it for p in r.rack.plans for it in p.items}
+
+    before = items(base)
+    r = size_site(
+        make_site(
+            sockets=96, location_code="BO1", layout={"models": {"access_switch:2": "FS-348G", "firewall:1": "FG-120G"}}
+        ),
+        catalog,
+    )
+    after = items(r)
+    for item_id, model in (("access_switch:2", "FS-348G"), ("firewall:1", "FG-120G")):
+        assert after[item_id].model == model
+        assert after[item_id].label == before[item_id].label and after[item_id].u == before[item_id].u
+    assert after["access_switch:1"].model == before["access_switch:1"].model
+    bom = {(line.group, line.model): line.qty for line in r.bom}
+    assert bom[("access_switch", "FS-348G")] == 1 and bom[("access_switch", before["access_switch:1"].model)] == 1
+    assert bom[("firewall", "FG-120G")] == 1 and ("firewall", "FG-80F") not in bom
+
+
+def test_company_catalog_models(catalog: Catalog) -> None:
+    for model in ("FS-348G", "FS-348G-FPOE", "CRS354-48P-4S+2Q+RM", "CRS328-24P-4S+RM", "U6-PRO", "U6-PLUS", "U6-LR"):
+        assert model in catalog.models
+    assert catalog.device("FS-348G-FPOE").poe is not None and catalog.device("U6-LR").ap is not None
+    # a cabinet's FS-348G-FPOE is ordered and powered like any switch
+    r = size_site(make_site(sockets=48, cameras=40, rooms=[{"models": {"camera_switch": "FS-348G-FPOE"}}]), catalog)
+    assert any(line.group == "camera_switch" and line.model == "FS-348G-FPOE" for line in r.bom)
+    # wall cabinets are only picked by hand: a small site still gets a 24U cabinet
+    small = size_site(make_site(sockets=10), catalog)
+    assert [p.size_u for p in small.rack.plans] == [24]
+    assert size_site(make_site(sockets=10, rack_size_u=9), catalog).rack.plans[0].model == "ES-E950G"
+
+
+def test_forticare_per_model(catalog: Catalog) -> None:
+    """A FortiCare licence made for a model is ordered for it; the rest stays on the generic line."""
+    r = size_site(make_site(mode="extended", sockets=96, aps=[("corridor", 10)], tier=2), catalog)
+    lic = {line.model: line.qty for line in r.lines("license")}
+    aps = sum(g.qty for g in r.counts.ap_groups)
+    assert lic.get("FC-PREM-FAP-231K") == aps
+    covered = {d.covers for d in catalog.models.values() if d.covers}
+    switches = sum(
+        n for line in r.bom if line.group.endswith("switch") and line.model not in covered for n in [line.qty or 0]
+    )
+    assert lic.get("FC-SUPPORT", 0) == switches

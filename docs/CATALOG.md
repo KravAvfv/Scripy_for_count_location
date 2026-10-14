@@ -39,6 +39,7 @@ catalog in the meantime.
       "order": null,                       // row position in the template (set by the import)
       "datasheet": "https://…pdf",         // official datasheet, opened from the BoM and the catalog
       "lifecycle": "active",               // active | eoo | eol  → EOO warning in checks
+      "covers": "",                        // licence only: the model it is for (FC-PREM-FS-348G → FS-348G)
       "verified": "datasheet",             // datasheet | third_party | assumption
       "source": "https://…", "notes": "…"
     },
@@ -60,7 +61,7 @@ catalog in the meantime.
     "camera_switch": {"base": "FS-148F-FPOE", "premium": "FS-448E-FPOE", "endpoints_per_switch": 48},
     "core_switch":   {"base": "FS-1024E",     "premium": "FS-1024E",     "endpoints_per_switch": 24}
   },
-  "firewall_ladder": ["FG-80F", "FG-120G", "FG-200G", "FG-400G"],
+  "firewall_ladder": ["FG-80F", "FG-120G", "FG-200G", "FG-400G", "FG-900G"],
   "ap_zones": {"high_density": {"label": {...}, "model": "FAP-441K", "clients_per_ap": 35}},
   "tiers": {"1": {"fw_ha": true, "core_redundant": true, "dual_psu": true, "ups": true, "oob": true,
                   "dual_uplinks": true, "dual_wan": true, "spare_percent": 10,
@@ -80,6 +81,11 @@ catalog in the meantime.
 | `core_min_floors` | 2 | …and **more** floors than this |
 | `dac_short_model` / `dac_long_model` | FN-CABLE-SFP+1 / +3 | DAC models |
 | `dac_short_max_u` | 10 | Devices in one cabinet at most this many units apart get the short DAC |
+| `dac_isl_model` | FN-CABLE-QSFP28-1 | DAC of the core ISL, one per ISL port |
+| `copper_module` | FN-TRAN-GC | Copper SFP in a switch uplink towards a FortiGate without SFP+ |
+| `dac_short_per_switches` / `dac_long_per_switches` | 2 / 10 | Only the passive count from an Excel file (the app counts DACs and modules from the topology links) |
+| `topology_group_size` | 48 | Switches per stack on the topology (48: a cabinet is one stack) |
+| `rack_auto_min_u` | 24 | Smallest cabinet picked automatically (9U / 18U only when chosen by hand) |
 | `ip.id_template` | `10.{id}.{vlan}.0/24` | Subnet of each VLAN from the location ID |
 | `aggregation_auto_threshold` | 3 | Deprecated (kept so older catalogs load) |
 | `core_icl_links`, `core_port_check` | 2, true | MC-LAG ICL links; check the core's port capacity |
@@ -108,7 +114,8 @@ description and price; scalar fields can be edited in the app (Catalog → Rules
 | `jack`, `jack_pack` | KAXBSM-00104-C001-BP, 24 | Keystone jack SKU and pack size (2 jacks per link) |
 | `panel`, `panel_ports` | MAXCSV-02408-C001, 24 | Patch panel (counted per switch) |
 | `cable`, `cable_drum_m`, `cable_slack_m` | CCXEDB-DB047-C001-L7, 500, 3 | Cat.6A cable, drum length, slack per link |
-| `cord_rack`, `cord_user` | 1 m / 2 m S/FTP cords | Rack + AP/camera side / work-area side |
+| `cord_panel` | DK-1644-A-0025 | 0.25 m cord patch panel ↔ switch, one per copper port of the switches in the cabinets |
+| `cord_rack`, `cord_user` | 1 m / 2 m S/FTP cords | AP/camera side / work-area side |
 | `outlet`, `outlet_ports` | UAXCSE-U0201-C001, 2 | Outlet box and jacks per box |
 | `manager` | XE005315637 | 1U cable manager, one per switch block |
 | `fiber_default` | auto | `auto` picks the cheapest type whose `max_10g_m` covers the longest run |
@@ -117,7 +124,11 @@ description and price; scalar fields can be edited in the app (Catalog → Rules
 | `splice_protector` | HSP-45S100-1 | One per fusion splice |
 | `pdu`, `pdu_outlets` | PDU-8-C13, 8 | Rack PDU; A/B pairs for dual-PSU sites |
 
-Cabinet sizes come from models with `rack_size_u` (default RACK-24U and RACK-42U).
+Cabinet sizes come from models with `rack_size_u`; of several models of one size the last one in the catalog
+is used (CMS UA-MGSE2466MB 24U and UA-MGSE4268MPB 42U; EServer ES-E950G 9U and ES-E1860B 18U by hand).
+
+Licences with `covers` (FortiCare Premium per model, FortiGate-900G Enterprise Protection) replace the generic
+`FC-SUPPORT` / `FG-BUNDLE` lines for the models they cover.
 
 ## Common tasks
 

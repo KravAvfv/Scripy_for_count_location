@@ -25,7 +25,7 @@ from .models import (
     SiteInput,
     SiteResult,
 )
-from .sizing import size_site
+from .sizing import merge_parts, size_site, topology_parts
 
 LOCATION_FIELDS = (
     "location_code",
@@ -81,36 +81,62 @@ def size_location(
         return out
     fw_index = next((i for i, (_e, _s, fw) in enumerate(entries) if fw), 0)
     fw_id, fw_site, _ = entries[fw_index]
-    wifi_default = catalog.rules.wifi_clients_per_ap_default
-    results: dict[str, SiteResult] = {}
-    others: dict[str, int] = {}
-    remote: list[tuple[int, str]] = []
-    for i, (eid, site, _fw) in enumerate(entries):
-        if i == fw_index:
-            continue
-        ctx = FloorContext(
-            has_firewall=False,
+
+    def run(parts: dict[str, dict[str, tuple[int, str]]]) -> dict[str, SiteResult]:
+        """Size every floor; ``parts``: entry id -> DACs and modules of its cabinets."""
+        wifi_default = catalog.rules.wifi_clients_per_ap_default
+        results: dict[str, SiteResult] = {}
+        others: dict[str, int] = {}
+        remote: list[tuple[int, str]] = []
+        for i, (eid, site, _fw) in enumerate(entries):
+            if i == fw_index:
+                continue
+            ctx = FloorContext(
+                has_firewall=False,
+                floors=len(entries),
+                fw_floor=fw_site.floor,
+                fw_tag=head_tag(fw_site),
+                link_parts=parts.get(eid, {}),
+            )
+            r = size_site(site, catalog, lang, floor=ctx)
+            results[eid] = r
+            tot = {
+                "switches": r.edge_switch_count + r.core.count,
+                "aps": r.counts.aps,
+                "sockets": r.counts.sockets,
+                "cameras": r.counts.cameras + r.counts.vsw_extra,
+                "wifi": r.counts.wifi_clients or r.counts.aps * wifi_default,
+            }
+            for k, v in tot.items():
+                others[k] = others.get(k, 0) + v
+            remote.append((site.floor, head_tag(site)))
+        fw_ctx = FloorContext(
+            has_firewall=True,
             floors=len(entries),
+            others=others,
             fw_floor=fw_site.floor,
-            fw_tag=head_tag(fw_site),
+            remote=remote,
+            link_parts=parts.get(fw_id, {}),
         )
-        r = size_site(site, catalog, lang, floor=ctx)
-        results[eid] = r
-        tot = {
-            "switches": r.edge_switch_count + r.core.count,
-            "aps": r.counts.aps,
-            "sockets": r.counts.sockets,
-            "cameras": r.counts.cameras + r.counts.vsw_extra,
-            "wifi": r.counts.wifi_clients or r.counts.aps * wifi_default,
-        }
-        for k, v in tot.items():
-            others[k] = others.get(k, 0) + v
-        remote.append((site.floor, head_tag(site)))
-    fw_ctx = FloorContext(has_firewall=True, floors=len(entries), others=others, fw_floor=fw_site.floor, remote=remote)
-    results[fw_id] = size_site(fw_site, catalog, lang, floor=fw_ctx)
+        results[fw_id] = size_site(fw_site, catalog, lang, floor=fw_ctx)
+        return results
+
+    def combined(results: dict[str, SiteResult]) -> SiteResult:
+        return combine([(site.name, results[eid]) for eid, site, _f in entries], results[fw_id], len(entries), name)
+
+    results = run({})
+    # DACs and modules follow the location's topology (it spans the floors): a second pass gives
+    # every floor the parts of its own cabinets
+    whole = combined(results)
+    if whole.addons.get("transceivers"):
+        by_tag = topology_parts(whole, catalog, lang)
+        parts = {eid: merge_parts(by_tag, {p.tag for p in r.rack.plans}) for eid, r in results.items()}
+        if any(parts.values()):
+            results = run(parts)
+            whole = combined(results)
     out.floors = [(eid, results[eid]) for eid, _s, _f in entries]
     out.fw_id = fw_id
-    out.combined = combine([(site.name, results[eid]) for eid, site, _f in entries], results[fw_id], len(entries), name)
+    out.combined = whole
     return out
 
 

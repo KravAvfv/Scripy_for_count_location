@@ -197,6 +197,8 @@ class RackLayout(BaseModel):
     """Item id -> name given by the user (replaces the automatic ``BO123-5B-ASW01``)."""
     room_names: dict[str, str] = Field(default_factory=dict)
     """Room index -> name given by the user."""
+    models: dict[str, str] = Field(default_factory=dict)
+    """Item id -> model chosen by the user (the item keeps its name and its place)."""
 
     @property
     def is_empty(self) -> bool:
@@ -209,6 +211,7 @@ class RackLayout(BaseModel):
             or self.extras
             or self.labels
             or self.room_names
+            or self.models
         )
 
 
@@ -423,6 +426,9 @@ class FloorContext:
     """Tag of the firewall floor's main cabinet (``7A``)."""
     remote: list[tuple[int, str]] = field(default_factory=list)
     """(floor, main cabinet tag) of every other floor — set on the firewall floor."""
+    link_parts: dict[str, tuple[int, str]] | None = None
+    """DACs and modules of this floor's cabinets on the location's topology: model -> (qty, kind).
+    ``None``: worked out from this floor alone."""
 
 
 @dataclass
@@ -606,6 +612,8 @@ class PassiveSummary:
     panels: int = 0
     outlets: int = 0
     cords_rack: int = 0
+    cords_panel: int = 0
+    """0.25 m cords, patch panel ↔ switch: the copper ports of the switches in the cabinets."""
     cords_user: int = 0
     cable_m: int = 0
     cable_drums: int = 0

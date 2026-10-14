@@ -27,7 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .catalog import FiberSpec
+from .catalog import Catalog, FiberSpec
 from .models import (
     CategoryResult,
     FirewallChoice,
@@ -267,6 +267,7 @@ def plan_passive(
     # ---- cabinets -----------------------------------------------------------------------
     racks = cat.rack_models()
     sizes = sorted({dev.rack_size_u or 0 for _, dev in racks if dev.rack_size_u})
+    auto_sizes = [s for s in sizes if s >= r.rack_auto_min_u] or sizes  # wall cabinets only by hand
     model_for = {dev.rack_size_u: model for model, dev in racks}
     feeds = 2 if ctx.dual_psu else 1
     panel_u = units(pr.panel)
@@ -290,7 +291,7 @@ def plan_passive(
         if not (closet.switches or closet.head or closet.bottom or ctx.site.closets):
             continue  # an empty closet still gets a cabinet when the user asked for that many
         need = math.ceil(cabinet_u(closet, closet.switches, True) * (1 + r.rack_spare_ratio))
-        size = _pick_size(ctx.site.rack_size_u, need, sizes)
+        size = _pick_size(ctx.site.rack_size_u, need, sizes if ctx.site.rack_size_u else auto_sizes)
         usable = max(1, size - math.floor(size * r.rack_spare_ratio / (1 + r.rack_spare_ratio)))
         for _ in range(6):
             groups = _fill(closet, usable, cabinet_u)
@@ -390,6 +391,7 @@ def plan_passive(
         floor=ctx.site.floor,
         role_of=role_of,
     )
+    change_models(plans, ctx.site.layout, cat)
     plans.sort(key=lambda p: p.room)  # a room's cabinets side by side (stable: keeps their order)
     links: list[tuple[str, str]] = []
     fibers: dict[tuple[str, str], int] = {}
@@ -478,7 +480,17 @@ def plan_passive(
     ps.jacks = ps.copper_links * 2
     ps.jack_packs = _ceil_div(ps.jacks, pr.jack_pack)
     ps.outlets = _ceil_div(ps.sockets, pr.outlet_ports) + ps.device_links
-    ps.cords_rack = ps.copper_links + ps.device_links
+    # patch panel ↔ switch: a 0.25 m cord on every copper port of the switches in the cabinets
+    ps.cords_panel = sum(
+        dev.ports.count
+        for p in rs.plans
+        for it in p.items
+        if it.group in EDGE_KEYS
+        and (dev := cat.models.get(it.model)) is not None
+        and dev.ports is not None
+        and "SFP" not in dev.ports.type.upper()
+    )
+    ps.cords_rack = ps.device_links  # 1 m at the APs and cameras
     ps.cords_user = ps.sockets
 
     # ---- summary (kept compatible with the previous RackSummary fields) -----------------
@@ -499,7 +511,7 @@ def plan_passive(
     if mdf_plans:
         rs.rack_model, rs.rack_size_u, rs.rack_count = mdf_plans[0].model, mdf_plans[0].size_u, len(mdf_plans)
     elif sizes:
-        rs.rack_size_u, rs.rack_model = sizes[0], model_for.get(sizes[0], "")
+        rs.rack_size_u, rs.rack_model = auto_sizes[0], model_for.get(auto_sizes[0], "")
     rs.patch_panels = ps.panels
     rs.copper_endpoints = ps.copper_links
     rs.cable_m = ps.cable_m
@@ -778,6 +790,28 @@ def odfs_on_top(plan: RackPlan) -> None:
         cursor -= it.height
     for it, u in zip(seq, new_u, strict=True):
         it.u = u
+
+
+def change_models(plans: list[RackPlan], layout: RackLayout, catalog: Catalog) -> None:
+    """Models the user picked for items in the cabinets: same name, same place.
+
+    A model of another height takes it when the units above the item are free, else the item keeps
+    its height.
+    """
+    if not layout.models:
+        return
+    for plan in plans:
+        for it in plan.items:
+            model = layout.models.get(it.id)
+            if not model or model == it.model:
+                continue
+            it.model = model
+            dev = catalog.models.get(model)
+            height = dev.rack_units if dev is not None and dev.rack_units else it.height
+            if height != it.height and it.u + height - 1 <= plan.size_u:
+                span = set(range(it.u, it.u + height))
+                if not any(o is not it and span & set(range(o.u, o.top + 1)) for o in plan.items):
+                    it.height = height
 
 
 def room_names(n: int, layout: RackLayout, t: Translator) -> list[str]:

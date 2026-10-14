@@ -947,3 +947,36 @@ def test_topology_connection_panel(app: QApplication, window) -> None:
     view.rename("link", stack.id)
     pump(app)
     assert panel.link is not None and panel.link.id == stack.id
+
+
+def test_rack_item_model_change(app: QApplication, window) -> None:
+    """Clicking a device in a cabinet: another model, same name and place."""
+    st = window.state
+    st.edit("t", lambda d: d.update(sockets=96))
+    st.recompute()
+    window.navigate("racks")
+    pump(app)
+    racks = window.racks
+
+    def item(item_id: str):
+        return next(it for p in st.result.rack.plans for it in p.items if it.id == item_id)
+
+    before = item("access_switch:2")
+    racks.editor.sel_item = "access_switch:2"
+    racks.editor.sel_items = {"access_switch:2"}
+    racks._load_side()
+    assert racks.model_row.isVisibleTo(racks)
+    box = racks.item_model_box
+    idx = box.findData("FS-348G")
+    assert idx > 0 and box.findData("FAP-231K") < 0  # switches only
+    box.setCurrentIndex(idx)
+    racks.change_model("access_switch:2")
+    st.recompute()
+    pump(app)
+    after = item("access_switch:2")
+    assert after.model == "FS-348G" and after.label == before.label and after.u == before.u
+    assert any(line.model == "FS-348G" for line in st.result.bom)
+    st.undo.undo()
+    st.recompute()
+    pump(app)
+    assert item("access_switch:2").model == before.model

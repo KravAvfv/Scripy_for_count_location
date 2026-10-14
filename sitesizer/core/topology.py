@@ -41,7 +41,7 @@ NODE_H = 60.0
 """A switch: name, model and the line of what its ports serve."""
 HEAD_W = 236.0
 HEAD_H = 58.0
-WAN_W = 140.0
+WAN_W = 220.0
 WAN_H = 40.0
 PAD = 40.0
 COL_GAP = 84.0
@@ -59,6 +59,13 @@ CAB_PAD = 14.0
 CAB_TITLE_H = 24.0
 CAB_GAP = 40.0
 """Extra space between the stacks of different cabinets."""
+MODULE_CHAR_W = 5.6
+"""Width of one character of a module's name as the painters write it (9 px Inter)."""
+
+
+def text_w(text: str) -> float:
+    """About how wide a module's name is drawn (it runs along its line)."""
+    return MODULE_CHAR_W * len(text) + 8 if text else 0.0
 
 
 @dataclass
@@ -263,6 +270,8 @@ def _end_priority(lk: TopoLinkResult, node_id: str) -> int:
 
 
 MEDIA = ("dac", "fiber", "copper")
+HA2 = "#2"
+"""Suffix of the second HA link's id."""
 FW_COPPER_PORTS = 8
 """Copper ports assumed on a FortiGate whose catalog entry does not list them."""
 
@@ -295,7 +304,7 @@ def cable_label(lk: TopoLinkResult, a: TopoNode, b: TopoNode, fiber: str, catalo
         return f"{sp} Cat6A"
     if lk.medium == "fiber":
         return t.t("topo.cable_provider") if lk.kind == "wan" else f"{sp} {fiber}".strip()
-    metres = 1 if abs(a.u - b.u) <= catalog.rules.dac_short_max_u else 3
+    metres = 1 if dac_model(lk, a, b, catalog) == catalog.rules.dac_short_model else 3
     return f"{sp} DAC {t.t('topo.metres', n=metres)}"
 
 
@@ -331,6 +340,16 @@ def assign_ports(topo: Topology, catalog: Catalog, ed: TopologyEdits) -> None:
         used[nid].update(picked)
         return ", ".join(sorted(picked, key=lambda p: (len(p), p)))
 
+    def to_copper_fw(lk: TopoLinkResult, nid: str) -> bool:
+        other = nodes.get(lk.b if nid == lk.a else lk.a)
+        return (
+            lk.medium == "copper"
+            and lk.kind in ("fortilink", "uplink")
+            and nodes[nid].kind in (*SWITCH_KINDS, "core_switch")
+            and other is not None
+            and other.kind == "firewall"
+        )
+
     for lk, nid in ends:
         node = nodes[nid]
         typed = ed.ports.get(lk.end(nid))
@@ -341,19 +360,62 @@ def assign_ports(topo: Topology, catalog: Catalog, ed: TopologyEdits) -> None:
         elif lk.kind == "wan":
             port = f"wan{wan_no.get(lk.b if nid == lk.a else lk.a, 1)}"
         elif lk.kind == "ha":
-            port = "ha"
+            port = "ha2" if lk.id.endswith(HA2) else "ha1"
         elif lk.kind == "isl" and lk.medium != "copper":
             port = take(nid, "qsfp", 2)
+        elif to_copper_fw(lk, nid):
+            port = take(nid, "sfp", 1)  # a switch towards a FortiGate without SFP+: copper module in its uplink
         else:
             port = take(nid, "rj45" if lk.medium == "copper" else "sfp", 1)
         auto = ""
         if lk.medium == "fiber" and node.kind != "wan":
             auto = provider if lk.kind == "wan" else topo.fiber_module
+        elif to_copper_fw(lk, nid) and port and dict(choices[nid]).get(port) == "sfp":
+            auto = catalog.rules.copper_module
         module = ed.modules.get(lk.end(nid), auto)
         if nid == lk.a:
             lk.port_a, lk.module_a = port, module
         else:
             lk.port_b, lk.module_b = port, module
+
+
+def dac_model(lk: TopoLinkResult, a: TopoNode, b: TopoNode, catalog: Catalog) -> str:
+    """The DAC of a link: QSFP28 for the ISL, else 1 m or 3 m by the units the two devices stand apart."""
+    rules = catalog.rules
+    if lk.kind == "isl":
+        return rules.dac_isl_model
+    near = a.cabinet == b.cabinet and abs(a.u - b.u) <= rules.dac_short_max_u
+    return rules.dac_short_model if near else rules.dac_long_model
+
+
+def link_parts(topo: Topology, catalog: Catalog) -> dict[str, dict[str, tuple[int, str]]]:
+    """Cabinet tag -> {model: (qty, ``dac`` / ``module``)}: the DACs and the modules (SFP / SFP+
+    transceivers) on the links of the drawing, the user's media and modules included.
+
+    A DAC belongs to the cabinet of its lower end; a module to the cabinet of the device it sits in.
+    The ISL takes one DAC per port it uses (``25, 26``).
+    """
+    nodes = {n.id: n for n in topo.nodes}
+    out: dict[str, dict[str, tuple[int, str]]] = {}
+
+    def add(tag: str, model: str, kind: str, n: int = 1) -> None:
+        if not model or n <= 0:
+            return
+        parts = out.setdefault(tag, {})
+        have = parts.get(model, (0, kind))
+        parts[model] = (have[0] + n, have[1])
+
+    for lk in topo.links:
+        a, b = nodes.get(lk.a), nodes.get(lk.b)
+        if a is None or b is None:
+            continue
+        if lk.medium == "dac":
+            ports = len([p for p in lk.port_a.split(",") if p.strip()]) if lk.kind == "isl" else 1
+            add(a.cabinet or b.cabinet, dac_model(lk, a, b, catalog), "dac", max(1, ports))
+        for node, module in ((a, lk.module_a), (b, lk.module_b)):
+            if node.kind != "wan" and module.strip():
+                add(node.cabinet, module.strip(), "module")
+    return out
 
 
 def build_topology(
@@ -480,9 +542,12 @@ def build_topology(
     if cores:
         place_pair(cores, y)
         y += HEAD_H
-    # the band where up-links run sideways towards the cores
+    # the band where up-links run sideways towards the cores; the modules written down from the
+    # cores' ports stay above its lines
     lanes = sum(1 for _g, col in col_list for _ in range(2 if len(col) > 1 or ed.access == "dual" else 1))
-    band = 62 + LANE_STEP * min(lanes, 24)
+    fspec = catalog.passive.fiber.get(result.rack.passive.fiber_type)
+    module_len = text_w(fspec.transceiver if fspec else "")
+    band = max(62.0, 54 + module_len) + LANE_STEP * min(lanes, 24)
     top = y + band + GROUP_TITLE_H + GROUP_PAD if (fws or cores) else y + GROUP_TITLE_H
     if framed:
         top += CAB_TITLE_H + CAB_PAD
@@ -536,7 +601,10 @@ def build_topology(
             add("wan", f, w, speed=1.0)
     if len(fws) > 1:
         for i in range(len(fws) - 1):
+            # the HA pair is joined by two links (heartbeat ports ha1 and ha2)
             add("ha", fws[i], fws[i + 1], "HA", speed=1.0)
+            a, b = fws[i], fws[i + 1]
+            links.append(TopoLinkResult(link_id("ha", a.id, b.id) + HA2, a.id, b.id, "ha", "HA", speed=1.0))
     if cores:
         if len(cores) > 1:
             for i in range(len(cores) - 1):
@@ -573,7 +641,6 @@ def build_topology(
         if ul.a in nodes_by_id and ul.b in nodes_by_id and ul.a != ul.b:
             out.append(TopoLinkResult(ul.id, ul.a, ul.b, ul.kind, ul.label, auto=False))
     # the medium (DAC / modules + fibre / copper) decides the ports, modules and the cable's label
-    fspec = catalog.passive.fiber.get(result.rack.passive.fiber_type)
     topo.fiber_module = fspec.transceiver if fspec else ""
     fiber = result.rack.passive.fiber_type.upper()
     for lk in out:
@@ -643,8 +710,11 @@ def _label_t(lk: TopoLinkResult) -> float:
         (x1, _y1), (x2, _y2) = lk.points[0], lk.points[1]
         if abs(x1 - x2) < 0.5:  # leaves the switch upwards: just above its column
             return max(0.0, lens[0] - 14) / total
-        # up a lane beside the column; the two lanes of a gap get their labels at different heights
-        return (lens[0] + min(18.0 if x2 > x1 else 46.0, lens[1] / 2)) / total
+        # up a lane beside the column, above the module written up the lane; the two lanes of a gap
+        # get their labels at different heights
+        module = text_w(lk.module_a)
+        up = module + 14 + (0.0 if x2 > x1 else 28.0) if module else (18.0 if x2 > x1 else 46.0)
+        return (lens[0] + min(up, lens[1] - 10)) / total
     return 0.5
 
 

@@ -281,11 +281,11 @@ def count_passive(
             f"{links_cu} ліній × ({avg} + {pr.cable_slack_m}) м = {cable_m} м",
         )
         add(pr.jack, math.ceil(links_cu * 2 / pr.jack_pack), f"{links_cu} ліній × 2 модулі, упаковки по {pr.jack_pack}")
-        add(pr.cord_rack, links_cu + cameras + aps, "панель ↔ комутатор + біля AP/камер")
+        add(pr.cord_rack, cameras + aps, "біля AP/камер")
         add(pr.cord_user, sockets, "від розетки до пристрою")
     else:
         add(pr.jack, math.ceil(ports / pr.jack_pack), f"модулі в усі порти ПП: {ports}, упаковки по {pr.jack_pack}")
-        add(pr.cord_rack, ports, f"патч-корди панель ↔ комутатор: {ports} портів ПП")
+    add(pr.cord_panel, ports, f"0,25 м, панель ↔ комутатор: по одному на кожен порт — {ports}")
     if fiber is not None and links:
         add(fiber.housing_12, odf, f"{len(links)} оптичних лінків × 2 кінці")
         add(fiber.transceiver, odf, "трансивер на кожен кінець лінку")

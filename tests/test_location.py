@@ -46,7 +46,10 @@ def test_optical_panel_towards_the_firewall_floor(catalog: Catalog) -> None:
     assert combined is not None
     om = catalog.passive.fiber[combined.rack.passive.fiber_type]
     # the link to the firewall floor is a 24-fibre cable with a 24-fibre panel at each end (+ the provider's)
-    assert qty(combined, om.housing_24) == 3 and qty(combined, om.transceiver) == 3
+    assert qty(combined, om.housing_24) == 3
+    # modules come from the topology: the 5th floor's switch has a fibre link to the firewall (two ends)
+    assert qty(combined, om.transceiver) == 2
+    assert qty(loc.floor("f5"), om.transceiver) == 1 and qty(loc.floor("f7"), om.transceiver) == 1  # type: ignore[arg-type]
     assert qty(combined, om.cable_for(24)) > 0 and qty(combined, om.housing_12) == 0
     assert combined.rack.passive.fiber_links == 1
 

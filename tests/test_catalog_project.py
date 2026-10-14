@@ -26,9 +26,9 @@ from .conftest import make_site
 
 # ---- catalog --------------------------------------------------------------------------------
 def test_default_catalog_valid(catalog: Catalog) -> None:
-    assert catalog.firewall_ladder == ["FG-80F", "FG-120G", "FG-200G", "FG-400G"]
+    assert catalog.firewall_ladder == ["FG-80F", "FG-120G", "FG-200G", "FG-400G", "FG-900G"]
     for model in catalog.firewall_ladder:
-        assert catalog.device(model).verified == "datasheet"
+        assert catalog.device(model).verified == ("third_party" if model == "FG-900G" else "datasheet")
 
 
 def test_catalog_roundtrip(tmp_path: Path, catalog: Catalog) -> None:

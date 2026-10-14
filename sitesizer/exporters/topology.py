@@ -7,6 +7,7 @@ PNG / SVG / PDF and the picture in Excel; draw.io gets the same nodes and routes
 
 from __future__ import annotations
 
+import itertools
 import math
 from dataclasses import dataclass
 
@@ -171,8 +172,11 @@ class TopologyDiagram:
             self._paint_cabinet(p, cab.rect, cab.title)
         for g in self.topo.groups:
             self._paint_group(p, g.rect, g.title, g.id in self.selected)
+        under: list[Seg] = []
         for lk in self.topo.links:
-            self._paint_link(p, lk)
+            self._paint_link(p, lk, under)
+            if lk.kind not in ("ha", "isl"):
+                under += _segments(lk.points)
         for n in self.topo.nodes:
             self._paint_node(p, n)
         for lk in self.topo.links:
@@ -214,7 +218,7 @@ class TopologyDiagram:
         p.setFont(self.f_group)
         p.drawText(rect.adjusted(12, 3, -8, 0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, title)
 
-    def _paint_link(self, p: QPainter, lk: TopoLinkResult) -> None:
+    def _paint_link(self, p: QPainter, lk: TopoLinkResult, under: list[Seg] | None = None) -> None:
         if len(lk.points) < 2:
             return
         color = QColor(self.c.link(lk.kind))
@@ -223,13 +227,13 @@ class TopologyDiagram:
             halo = QColor(color)
             halo.setAlphaF(0.25)
             p.setPen(QPen(halo, width + 6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-            p.drawPath(_rounded(lk.points))
+            p.drawPath(_rounded(lk.points, under=under))
         pen = QPen(color, width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
         if lk.kind == "wan":
             pen.setStyle(Qt.PenStyle.DashLine)
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawPath(_rounded(lk.points))
+        p.drawPath(_rounded(lk.points, under=under))
         if lk.kind == "isl" and len(lk.points) == 2:
             # the ICL is two links (Fortinet recommends at least two)
             (x1, y1), (x2, y2) = lk.points
@@ -296,6 +300,22 @@ class TopologyDiagram:
                 self._tag(p, rect, module, self.f_module, color, bg)
                 p.restore()
                 continue
+            if upright and vertical and y1 < y0 and lk.kind != "stack":
+                # up from a switch's top: beside its port number, clear of the lines of the band above
+                x = x0 + 4 + (fm_p.horizontalAdvance(port) + 8 if port else 0)
+                self._tag(p, QRectF(x, y0 - 13, length, 11), module, self.f_module, color, bg)
+                continue
+            if not upright and len(lk.points) > 2:
+                # sideways into a lane: written up the lane, on its outer side
+                (lx, ly), (nx, ny) = (x1, y1), (lk.points[2] if (x0, y0) == lk.points[0] else lk.points[-3])
+                if abs(nx - lx) < 0.5 and ny < ly:
+                    p.save()
+                    p.translate(lx, ly - 8)
+                    p.rotate(-90)
+                    rect = QRectF(0, -12, length, 11) if lx < x0 else QRectF(0, 1, length, 11)
+                    self._tag(p, rect, module, self.f_module, color, bg)
+                    p.restore()
+                    continue
             p.save()
             if vertical:
                 down = y1 > y0
@@ -370,8 +390,61 @@ class TopologyDiagram:
             )
 
 
-def _rounded(points: list[tuple[float, float]], radius: float = 8.0) -> QPainterPath:
+HOP_R = 5.0
+"""Radius of the hop a line makes over a line drawn before it."""
+
+Seg = tuple[tuple[float, float], tuple[float, float]]
+
+
+def _segments(points: list[tuple[float, float]]) -> list[Seg]:
+    return list(itertools.pairwise(points))
+
+
+def _crossings(seg: Seg, under: list[Seg]) -> list[tuple[float, float]]:
+    """Where an upright / level segment crosses the perpendicular ones of ``under``, along it
+    (not near the ends, where lines meet their devices)."""
+    (x0, y0), (x1, y1) = seg
+    level = abs(y1 - y0) < 0.5
+    if not level and abs(x1 - x0) >= 0.5:
+        return []
+    out: list[tuple[float, float]] = []
+    margin = HOP_R + 3
+    for (a0, b0), (a1, b1) in under:
+        if level and abs(a1 - a0) < 0.5:  # a level segment over an upright one
+            x, lo, hi = a0, min(b0, b1), max(b0, b1)
+            if min(x0, x1) + margin < x < max(x0, x1) - margin and lo + margin < y0 < hi - margin:
+                out.append((x, y0))
+        elif not level and abs(b1 - b0) < 0.5:  # an upright segment over a level one
+            y, lo, hi = b0, min(a0, a1), max(a0, a1)
+            if min(y0, y1) + margin < y < max(y0, y1) - margin and lo + margin < x0 < hi - margin:
+                out.append((x0, y))
+    out.sort(key=lambda pt: math.hypot(pt[0] - x0, pt[1] - y0))
+    return out
+
+
+def _hops(path: QPainterPath, seg: Seg, under: list[Seg]) -> None:
+    """Half circles over the lines ``seg`` crosses (the path is at the segment's start)."""
+    (x0, y0), (x1, y1) = seg
+    d = math.hypot(x1 - x0, y1 - y0) or 1.0
+    ux, uy = (x1 - x0) / d, (y1 - y0) / d
+    nx, ny = (0.0, -1.0) if abs(uy) < 0.5 else (1.0, 0.0)  # up over a level line, right of an upright one
+    bulge = HOP_R * 1.33
+    last = -1e9
+    for cx, cy in _crossings(seg, under):
+        k = math.hypot(cx - x0, cy - y0)
+        if k - last < 2 * HOP_R + 2:
+            continue  # lines side by side: one hop over both
+        last = k
+        sx, sy = cx - ux * HOP_R, cy - uy * HOP_R
+        ex, ey = cx + ux * HOP_R, cy + uy * HOP_R
+        path.lineTo(sx, sy)
+        path.cubicTo(sx + nx * bulge, sy + ny * bulge, ex + nx * bulge, ey + ny * bulge, ex, ey)
+
+
+def _rounded(points: list[tuple[float, float]], radius: float = 8.0, under: list[Seg] | None = None) -> QPainterPath:
+    """The line through ``points`` with rounded corners, hopping over the lines of ``under``."""
     path = QPainterPath(QPointF(*points[0]))
+    under = under or []
     for i in range(1, len(points) - 1):
         (x0, y0), (x1, y1), (x2, y2) = points[i - 1], points[i], points[i + 1]
         d1 = math.hypot(x1 - x0, y1 - y0)
@@ -384,8 +457,12 @@ def _rounded(points: list[tuple[float, float]], radius: float = 8.0) -> QPainter
         ay = y1 - (y1 - y0) / d1 * rad
         bx = x1 + (x2 - x1) / d2 * rad
         by = y1 + (y2 - y1) / d2 * rad
+        cur = path.currentPosition()
+        _hops(path, ((cur.x(), cur.y()), (ax, ay)), under)
         path.lineTo(ax, ay)
         path.quadTo(x1, y1, bx, by)
+    cur = path.currentPosition()
+    _hops(path, ((cur.x(), cur.y()), points[-1]), under)
     path.lineTo(QPointF(*points[-1]))
     return path
 

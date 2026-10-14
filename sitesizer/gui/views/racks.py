@@ -302,6 +302,17 @@ class RacksView(QWidget):
         self.item_name.editingFinished.connect(lambda: self.rename_item(self.editor.sel_item, self.item_name.text()))
         self.name_row = FieldRow(tr("rk.item_name"), self.item_name)
         self.item_card.add(self.name_row)
+        self.item_model_box = QComboBox()
+        self.item_model_box.setEditable(True)
+        self.item_model_box.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.item_model_box.setToolTip(tr("rk.item_model_tip"))
+        comp = self.item_model_box.completer()
+        if comp is not None:
+            comp.setFilterMode(Qt.MatchFlag.MatchContains)
+            comp.setCompletionMode(comp.CompletionMode.PopupCompletion)
+        self.item_model_box.activated.connect(lambda _i: self.change_model(self.editor.sel_item))
+        self.model_row = FieldRow(tr("rk.item_model"), self.item_model_box, tr("rk.item_model_caption"))
+        self.item_card.add(self.model_row)
         self.item_info = label("", "muted", wrap=True)
         self.item_card.add(self.item_info)
         row = QHBoxLayout()
@@ -495,6 +506,7 @@ class RacksView(QWidget):
                 self.item_model.setText("\n".join(g.label for g in group))
                 self.item_model.setVisible(True)
                 self.name_row.setVisible(False)
+                self.model_row.setVisible(False)
                 self.item_info.setText(f"U{group[-1].u}–U{group[0].top}")
                 self.auto_btn.setVisible(any(g.manual and not g.extra for g in group))
                 self.del_item.setText(tr("rk.delete_selected", n=many))
@@ -509,11 +521,74 @@ class RacksView(QWidget):
                     custom = self._custom_label(it.id)
                     self.item_name.setText(custom)
                     self.item_name.setPlaceholderText(tr("rk.name_auto") if custom else it.label)
+                self._load_models(it)
                 state = tr("rk.item_manual") if it.manual else tr("rk.item_auto_placed")
                 self.item_info.setText(f"{span} · {it.height}U · {state}")
                 self.auto_btn.setVisible(it.manual and not it.extra)
         finally:
             self._loading = False
+
+    def _model_choices(self, model: str) -> list[str]:
+        """Catalog models an item of ``model`` may become: same kind (rack accessories: any that mounts
+        in a cabinet, the same family first)."""
+        cat = self.state.catalog
+        dev = cat.models.get(model)
+        if dev is None:
+            return []
+        keys = [
+            key
+            for key, d in cat.models.items()
+            if d.kind == dev.kind and not d.rack_size_u and (dev.kind != "accessory" or d.rack_units or key == model)
+        ]
+        return sorted(keys, key=lambda k: cat.models[k].family != dev.family)
+
+    def _load_models(self, it: Any) -> None:
+        """The model box of the selected item (hidden for items without a catalog model)."""
+        box = self.item_model_box
+        choices = self._model_choices(it.model)
+        self.model_row.setVisible(bool(choices))
+        if not choices:
+            return
+        t = current()
+        cat = self.state.catalog
+        extra = any(e.id == it.id for e in self.state.site.layout.extras)
+        chosen = self.state.site.layout.models.get(it.id, "")
+        box.blockSignals(True)
+        box.clear()
+        if not extra:
+            box.addItem(tr("rk.model_auto"), "")
+        for key in choices:
+            d = cat.models[key]
+            box.addItem(f"{key} — {d.spec_name or t.pick(d.name)}"[:90], key)
+        idx = box.findData(chosen if (chosen or extra) else "")
+        if extra:
+            idx = box.findData(it.model)
+        box.setCurrentIndex(max(0, idx))
+        box.blockSignals(False)
+
+    def change_model(self, item_id: str) -> None:
+        """Another model for the item: its name and its place in the cabinet stay."""
+        it = self.editor.item(item_id) if item_id else None
+        if self._loading or it is None:
+            return
+        model = str(self.item_model_box.currentData() or "")
+
+        def fn(lay: dict[str, Any]) -> None:
+            for ex in lay["extras"]:
+                if ex["id"] == item_id:
+                    if model:
+                        ex["model"] = model
+                    return
+            if model:
+                lay["models"][item_id] = model
+            else:
+                lay["models"].pop(item_id, None)
+
+        if model == self.state.site.layout.models.get(item_id, "") and not any(
+            e.id == item_id for e in self.state.site.layout.extras
+        ):
+            return
+        self._layout(tr("rk.item_model"), fn)
 
     def _rack_count(self) -> int:
         r = self.state.result
@@ -542,6 +617,7 @@ class RacksView(QWidget):
                 ("extras", []),
                 ("labels", {}),
                 ("room_names", {}),
+                ("models", {}),
             ):
                 lay.setdefault(key, empty)
             fn(lay)

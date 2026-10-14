@@ -139,6 +139,8 @@ class Device(_Strict):
     order: int | None = None
     """Position in the Excel template (imported rows keep their order)."""
     lifecycle: Lifecycle = "active"
+    covers: str = ""
+    """A licence / support contract for this model (``FC-PREM-FS-348G`` covers ``FS-348G``)."""
     verified: Verified = "assumption"
     source: str = ""
     notes: str = ""
@@ -229,7 +231,11 @@ class Rules(_Strict):
     dac_short_model: str = "FN-CABLE-SFP+1"
     dac_long_model: str = "FN-CABLE-SFP+3"
     dac_short_max_u: int = Field(default=10, ge=0, le=60)
-    """Deprecated (DAC lengths no longer depend on the layout); kept so older user catalogs load."""
+    """A DAC between two devices of one cabinet at most this many units apart is 1 m long, else 3 m."""
+    copper_module: str = "FN-TRAN-GC"
+    """1G copper SFP in a switch's uplink port towards a FortiGate without SFP+ (FG-80F)."""
+    dac_isl_model: str = "FN-CABLE-QSFP28-1"
+    """DAC of the core pair's ISL (100G QSFP28), one per ISL port."""
     dac_short_per_switches: int = Field(default=2, ge=1)
     """One short DAC (1 m) per this many switches of a floor: 10 switches → 5."""
     dac_long_per_switches: int = Field(default=10, ge=1)
@@ -250,7 +256,10 @@ class Rules(_Strict):
     ups_power_factor: float = Field(default=0.9, gt=0, le=1)
     ups_headroom: float = Field(default=0.3, ge=0, le=5)
     rack_spare_ratio: float = Field(default=0.3, ge=0, le=5)
-    topology_group_size: int = Field(default=5, ge=1, le=48)
+    rack_auto_min_u: int = Field(default=24, ge=1, le=60)
+    """Smallest cabinet picked automatically (9U / 18U wall cabinets only when the user chooses them)."""
+    topology_group_size: int = Field(default=48, ge=1, le=48)
+    """Switches per stack on the topology: all switches of a cabinet are one stack (48 = no limit)."""
     """Most access switches in one stack (column) of the network diagram."""
     patch_panel_ports: int = Field(default=24, gt=0)
     cable_manager_per_panel: float = Field(default=0.5, ge=0)
@@ -305,6 +314,8 @@ class PassiveRules(_Strict):
     """Patch panel ↔ switch, also used at APs and cameras."""
     cord_user: str = "CCAAGB-G5002-A020-C0"
     """Work-area cord from a wall outlet to a user device."""
+    cord_panel: str = "DK-1644-A-0025"
+    """0.25 m cord between a patch panel and its switch: one per copper port of the switches in the cabinets."""
     outlet: str = "UAXCSE-U0201-C001"
     outlet_ports: int = Field(default=2, gt=0)
     manager: str = "XE005315637"
@@ -523,6 +534,9 @@ def with_missing_defaults(catalog: Catalog, default: Catalog | None = None) -> C
             if not mine.get(key) and getattr(dev, key):
                 mine[key] = getattr(dev, key)
                 added = True
+    if data["rules"].get("topology_group_size") == 5:
+        data["rules"]["topology_group_size"] = base.rules.topology_group_size  # old default: a cabinet is one stack
+        added = True
     if not catalog.passive.fiber and base.passive.fiber:
         data["passive"] = base.passive.model_dump(mode="json")
         added = True

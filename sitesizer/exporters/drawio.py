@@ -213,6 +213,8 @@ def _edge(
         "fontFamily": FONT,
         "fontSize": 10,
         "labelBackgroundColor": "#FFFFFF",
+        "jumpStyle": "arc",  # crossing lines: the later one hops over the other
+        "jumpSize": 10,
     }
     if lk.kind == "wan":
         style["dashed"] = 1
