@@ -392,12 +392,24 @@ def test_house_rack_pattern(catalog: Catalog) -> None:
     body = [it.group for it in items[first:] if it.group not in ("pdu", "power")]
     assert body == [
         "panel", "manager", "wifi_switch",  # one panel, one organizer
-        "panel", "manager", "camera_switch", "manager", "panel",  # two panels, two organizers
+        "panel", "manager", "access_switch", "manager", "panel",  # two panels, two organizers
         "panel", "manager", "access_switch", "manager", "panel",
-        "panel", "manager", "access_switch", "manager", "panel",
+        "panel", "manager", "camera_switch", "manager", "panel",  # video at the bottom
     ]  # fmt: skip
     labels = [it.label for it in items if it.group == "panel"]
-    assert labels == ["ПП Wi-Fi", "ПП №V1", "ПП №V2", "ПП №1", "ПП №2", "ПП №3", "ПП №4"]
+    assert labels == ["ПП Wi-Fi", "ПП №1", "ПП №2", "ПП №3", "ПП №4", "ПП №V1", "ПП №V2"]
+
+
+def test_video_switches_at_the_bottom_with_5u_free_under_them(catalog: Catalog) -> None:
+    """VSW (with its panels) stand at the bottom of the cabinet, 5U kept free under them."""
+    r = size_site(make_site(sockets=96, cameras=48, aps=[("corridor", 10)]), catalog)
+    plan = r.rack.plans[0]
+    video = [it for it in plan.items if "camera_switch:" in it.id]
+    others = [it for it in plan.items if "camera_switch:" not in it.id and it.group not in ("pdu", "power")]
+    low = [it for it in plan.items if it.group in ("pdu", "power")]
+    assert video and min(it.u for it in others) > max(it.top for it in video)
+    floor = max((it.top for it in low), default=0)
+    assert min(it.u for it in video) == floor + 1 + 5
 
 
 def test_poe_switches_with_the_firewall_access_switches_apart(catalog: Catalog) -> None:
@@ -409,11 +421,11 @@ def test_poe_switches_with_the_firewall_access_switches_apart(catalog: Catalog) 
     assert len(roles) == 2
     assert roles[0] == ["firewall", "wifi_switch", "camera_switch"]
     assert set(roles[1]) == {"access_switch"}
-    # one cabinet is enough: everything stays together, PoE switches above the access ones
+    # one cabinet is enough: everything stays together, the video switches at the bottom
     small = size_site(make_site(sockets=96, cameras=30, aps=[("corridor", 10)]), catalog)
     assert len(small.rack.plans) == 1
     order = [it.group for it in small.rack.plans[0].items if it.group.endswith("switch") or it.group == "firewall"]
-    assert order == ["firewall", "wifi_switch", "camera_switch", "access_switch", "access_switch"]
+    assert order == ["firewall", "wifi_switch", "access_switch", "access_switch", "camera_switch"]
 
 
 def test_device_and_rack_names_use_location_code(catalog: Catalog) -> None:

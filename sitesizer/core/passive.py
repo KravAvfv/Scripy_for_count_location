@@ -7,6 +7,8 @@ cabinets following the house standard (top to bottom)::
     firewall(s), core switch(es)
     panel · organizer · Wi-Fi switch        (one panel, one organizer)
     panel · organizer · switch · organizer · panel   (two panels, two organizers)
+    …
+    video switches (VSW) with their panels   (at the bottom, 5U kept free under them if possible)
     PDUs, UPS
 
 Fibre links (an optical patch panel at each end): every further cabinet of a telecom room to the
@@ -66,8 +68,15 @@ EXTRA_GROUPS = {
     "device": "device",
 }
 DEFAULT_USER_RACK_U = 42
+VIDEO_GAP_U = 5
+"""Free units kept under the video switches (VSW) at the bottom of a cabinet, when there is room."""
 ISP = "isp"
 """Peer of the ODF where the provider's fibre comes in (the firewall's cabinet)."""
+
+
+def _is_video(item_id: str) -> bool:
+    """A video switch (VSW) or one of its patch panels / organizers."""
+    return "camera_switch:" in item_id
 
 
 def _ceil_div(a: float, b: float) -> int:
@@ -330,6 +339,8 @@ def plan_passive(
             )
             seq = odf_units(key, peers.get(key, []), odf_model, odf_u, pr.manager)
             seq += (list(closet.head) if first else []) + stack_units(sws, pr.panel, panel_u, pr.manager)
+            low = [unit for unit in seq if _is_video(unit.id)]  # VSW stand at the bottom of the cabinet
+            seq = [unit for unit in seq if not _is_video(unit.id)]
             cursor = size
             for unit in seq:
                 plan.items.append(_item(unit, cursor - unit.height + 1))
@@ -354,6 +365,13 @@ def plan_passive(
                     )
                 )
                 bottom += 1
+            if low:
+                block = sum(unit.height for unit in low)
+                gap = max(0, min(VIDEO_GAP_U, cursor - (bottom - 1) - block))
+                cursor = bottom + gap + block - 1
+                for unit in low:
+                    plan.items.append(_item(unit, cursor - unit.height + 1))
+                    cursor -= unit.height
             plans.append(plan)
 
     for i, plan in enumerate(plans):
@@ -723,9 +741,14 @@ def odfs_on_top(plan: RackPlan) -> None:
 
     When an automatic ODF ended up below other automatic equipment, the automatic items are laid
     out again top-down: the provider's ODF, the other ODFs, then everything else in its order.
-    Items the user placed, PDUs and UPS keep their units; if it does not fit, nothing moves.
+    Items the user placed, PDUs, UPS and the video switches at the bottom keep their units; if it
+    does not fit, nothing moves.
     """
-    auto = [it for it in plan.items if not it.manual and not it.extra and not it.id.startswith(("pdu:", "ups:"))]
+    auto = [
+        it
+        for it in plan.items
+        if not it.manual and not it.extra and not it.id.startswith(("pdu:", "ups:")) and not _is_video(it.id)
+    ]
     odf = [it for it in auto if _is_odf(it)]
     others = [it for it in auto if not _is_odf(it)]
     if not odf or not others or max(it.top for it in others) < min(it.u for it in odf):
