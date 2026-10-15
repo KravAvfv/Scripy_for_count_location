@@ -28,6 +28,7 @@ from ..core.catalog import (
     with_missing_defaults,
 )
 from ..core.location import LOCATION_FIELDS, LocationResult, size_location
+from ..core.migrate import upgrade_project
 from ..core.models import SiteInput, SiteResult
 from ..core.project import Project, ProjectError, load_project, new_project, save_project
 from ..core.sizing import size_site
@@ -444,6 +445,7 @@ class AppState(QObject):
         project = load_project(path)  # raises ProjectError
         if not project.sites:
             raise ProjectError("Проєкт не містить локацій.")
+        upgraded = upgrade_project(project, self.catalog)  # older files: new switch ids and cabinet tags
         self.project = project
         self.project_path = Path(path)
         self.current_id = (project.hub or project.sites[0]).id
@@ -451,10 +453,11 @@ class AppState(QObject):
         self._dirty_struct = False
         self.undo.clear()
         self.undo.setClean()
+        self._dirty_struct = upgraded  # saved again in the new format when the user saves
         self.settings.push_recent(str(self.project_path))
         self.settings.last_project = str(self.project_path)
         self.settings.save(self.qsettings)
-        self.dirtyChanged.emit(False)
+        self.dirtyChanged.emit(upgraded)
         self.projectChanged.emit()
         self.siteChanged.emit()
         self.settingsChanged.emit()

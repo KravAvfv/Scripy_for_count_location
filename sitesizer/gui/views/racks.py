@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.models import SiteResult
-from ...core.passive import POWERED_GROUPS, drop_room, drop_room_inputs
+from ...core.passive import POWERED_GROUPS, ROLE_CODES, drop_room, drop_room_inputs
 from ...exporters.diagram import style_from_tokens
 from ...exporters.rack import RackDiagram
 from ...i18n import current, tr
@@ -228,6 +228,13 @@ class RacksView(QWidget):
         self.room_card.add(self.room_name)
         self.room_info = label("", "caption", wrap=True)
         self.room_card.add(self.room_info)
+        self.room_cabinets = SpinBox()
+        self.room_cabinets.setRange(0, 20)
+        self.room_cabinets.setSpecialValueText(tr("ui.rack_size_auto"))
+        self.room_cabinets.setFixedWidth(px(90))
+        self.room_cabinets.setToolTip(tr("ui.room_cabinets_tip"))
+        self.room_cabinets.valueChanged.connect(self.set_room_cabinets)
+        self.room_card.add(FieldRow(tr("ui.room_cabinets"), self.room_cabinets))
         room_row = QHBoxLayout()
         room_row.setSpacing(px(6))
         room_row.addStretch(1)
@@ -300,7 +307,7 @@ class RacksView(QWidget):
         self.item_name.setPlaceholderText(tr("rk.name_auto"))
         self.item_name.setClearButtonEnabled(True)
         self.item_name.editingFinished.connect(lambda: self.rename_item(self.editor.sel_item, self.item_name.text()))
-        self.name_row = FieldRow(tr("rk.item_name"), self.item_name)
+        self.name_row = FieldRow(tr("rk.item_name"), self.item_name, stacked=True)
         self.item_card.add(self.name_row)
         self.item_model_box = QComboBox()
         self.item_model_box.setEditable(True)
@@ -311,7 +318,7 @@ class RacksView(QWidget):
             comp.setFilterMode(Qt.MatchFlag.MatchContains)
             comp.setCompletionMode(comp.CompletionMode.PopupCompletion)
         self.item_model_box.activated.connect(lambda _i: self.change_model(self.editor.sel_item))
-        self.model_row = FieldRow(tr("rk.item_model"), self.item_model_box, tr("rk.item_model_caption"))
+        self.model_row = FieldRow(tr("rk.item_model"), self.item_model_box, tr("rk.item_model_caption"), stacked=True)
         self.item_card.add(self.model_row)
         self.item_info = label("", "muted", wrap=True)
         self.item_card.add(self.item_info)
@@ -470,6 +477,7 @@ class RacksView(QWidget):
                         used=sum(p.used_u for p in racks),
                     )
                 )
+                self.room_cabinets.setValue(self.state.site.room(room).cabinets)
                 self.del_room.setEnabled(room > 0)
                 self.del_room.setToolTip("" if room > 0 else tr("rk.room_main_keep"))
             self.rack_card.setVisible(plan is not None)
@@ -597,10 +605,13 @@ class RacksView(QWidget):
     def _custom_label(self, item_id: str) -> str:
         """The name the user gave this item ("" = automatic)."""
         lay = self.state.site.layout
+        if item_id in lay.labels:
+            return lay.labels[item_id]
         ex = next((e for e in lay.extras if e.id == item_id), None)
-        if ex is not None:
-            return ex.label
-        return lay.labels.get(item_id, "")
+        it = self.editor.item(item_id)
+        if ex is not None and not (it is not None and it.group in ROLE_CODES):
+            return ex.label  # a network device is named after its cabinet; its rename is in ``labels``
+        return ""
 
     # =====================================================================================
     # edits (all undoable through AppState.edit)
@@ -641,6 +652,20 @@ class RacksView(QWidget):
         self.editor.sel_rack, self.editor.sel_item = "", ""
         self.state.set_field("closets", n + 1, tr("rk.add_room"), merge=False)
 
+    def set_room_cabinets(self, value: int) -> None:
+        """How many cabinets stand in the current telecom room (0 = as the equipment needs)."""
+        room = self.current_room()
+        if self._loading or value == self.state.site.room(room).cabinets:
+            return
+
+        def mutate(d: dict[str, Any]) -> None:
+            rooms = d.setdefault("rooms", [])
+            while len(rooms) <= room:
+                rooms.append({})
+            rooms[room]["cabinets"] = int(value)
+
+        self.state.edit(tr("ui.room_cabinets"), mutate, merge_key=f"room{room}:cabinets")
+
     def rename_room(self, name: str) -> None:
         room, name = self.current_room(), name.strip()
         if self._loading or name == self.state.site.layout.room_names.get(str(room), ""):
@@ -679,11 +704,14 @@ class RacksView(QWidget):
         if self._loading or not item_id or self.editor.item(item_id) is None or name == self._custom_label(item_id):
             return
 
+        network = (it := self.editor.item(item_id)) is not None and it.group in ROLE_CODES
+
         def fn(lay: dict[str, Any]) -> None:
-            for ex in lay["extras"]:
-                if ex["id"] == item_id:
-                    ex["label"] = name
-                    return
+            if not network:
+                for ex in lay["extras"]:
+                    if ex["id"] == item_id:
+                        ex["label"] = name
+                        return
             if name:
                 lay["labels"][item_id] = name
             else:
@@ -720,6 +748,8 @@ class RacksView(QWidget):
 
     def swap_items(self, moves: list[tuple[str, str, int]]) -> None:
         """Two devices trade places (one dropped onto the other): one undoable edit."""
+        if not moves:
+            return
         self.move_items(moves)
         self.editor.sel_rack, self.editor.sel_item = moves[0][1], moves[0][0]
         self.editor.sel_items = [moves[0][0]]
@@ -741,6 +771,8 @@ class RacksView(QWidget):
             self.state.message.emit("error", tr("rk.paste_no_space", n=len(ids)))
             return
         self.editor.cut_ids = []
+        if not moves:
+            return
         self.move_items(moves)
         self.editor.sel_item = moves[-1][0]
 

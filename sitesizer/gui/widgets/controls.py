@@ -847,13 +847,20 @@ class FlowLayout(QLayout):
 
 
 class FieldRow(QWidget):
-    """Label (+ info tip + caption) on the left, editor on the right."""
+    """Label (+ info tip + caption) on the left, editor on the right; ``stacked``: the editor under the
+    label, as wide as the row (long names and model lists in narrow side panels)."""
 
     def __init__(
-        self, title: str, editor: QWidget, caption: str = "", info: str = "", parent: QWidget | None = None
+        self,
+        title: str,
+        editor: QWidget,
+        caption: str = "",
+        info: str = "",
+        parent: QWidget | None = None,
+        stacked: bool = False,
     ) -> None:
         super().__init__(parent)
-        lay = QHBoxLayout(self)
+        lay: QHBoxLayout | QVBoxLayout = QVBoxLayout(self) if stacked else QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(px(12))
         text = QVBoxLayout()
@@ -874,8 +881,17 @@ class FieldRow(QWidget):
         self.caption = label(caption, "caption", wrap=True)
         self.caption.setVisible(bool(caption))
         text.addWidget(self.caption)
-        lay.addLayout(text, 1)
-        lay.addWidget(editor, 0, Qt.AlignmentFlag.AlignVCenter)
+        if stacked:
+            lay.setSpacing(px(4))
+            lay.addLayout(text)
+            editor.setSizePolicy(QSizePolicy.Policy.Expanding, editor.sizePolicy().verticalPolicy())
+            if isinstance(editor, QComboBox):
+                editor.setMinimumContentsLength(8)
+                editor.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            lay.addWidget(editor)
+        else:
+            lay.addLayout(text, 1)
+            lay.addWidget(editor, 0, Qt.AlignmentFlag.AlignVCenter)
         self.editor = editor
 
 

@@ -176,9 +176,10 @@ class CompareView(QWidget):
         root.addWidget(self.table, 1)
         root.addWidget(label(tr("cmp.legend"), "caption"))
 
-        state.projectChanged.connect(self._fill_combos)
+        # sizing the compared sites on every keystroke made typing slow: only while the page is shown
+        state.projectChanged.connect(when_shown(self, self._fill_combos))
         state.resultChanged.connect(when_shown(self, self._on_result))
-        state.siteChanged.connect(self._fill_combos)
+        state.siteChanged.connect(when_shown(self, self._fill_combos))
         self._fill_combos()
         self._default_variant()
         self.refresh()

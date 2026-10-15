@@ -24,6 +24,7 @@ from pathlib import Path
 
 from .core.catalog import Catalog, CatalogError, load_catalog, prototype_compat_catalog
 from .core.location import size_location
+from .core.migrate import upgrade_project
 from .core.models import ApGroup, SiteInput, SiteResult
 from .core.project import ProjectError, load_project
 from .core.report import default_export_name, result_to_dict
@@ -232,7 +233,9 @@ def main(argv: list[str] | None = None) -> int:
                     else [SiteInput.model_validate(s["input"]) for s in raw["sites"]]
                 )
             else:
-                entries = load_project(args.json).sites
+                project = load_project(args.json)
+                upgrade_project(project, catalog)
+                entries = project.sites
                 sites = [s.input for s in entries]
                 hubs = [s.is_hub for s in entries]
         except (ProjectError, json.JSONDecodeError, ValueError) as err:

@@ -29,11 +29,13 @@ CATEGORY_ROLES = {"wifi_switch": "wifi", "access_switch": "access", "camera_swit
 LOOKALIKE = str.maketrans("АВСЕНКМОРТХІавсенкмортхі", "ABCEHKMOPTXIABCEHKMOPTXI")
 """Cyrillic letters that look like Latin ones (cabinet tags are often typed in Cyrillic)."""
 
-DEVICE_RE = re.compile(r"(?<![\w-])[\w]+-(?P<tag>-?\d{1,3}[A-Z]{1,3})-(?P<role>WSW|ASW|VSW|DSW|CSW|FW)(?P<n>\d{1,3})\b")
+DEVICE_RE = re.compile(
+    r"(?<![\w-])[\w]+-(?P<tag>-?\d{1,3}[A-Z]{1,3}\d{0,2})-(?P<role>WSW|ASW|VSW|DSW|CSW|FW)(?P<n>\d{1,3})\b"
+)
 MODEL_RE = re.compile(
     r"\b(?:FS|FG)-?\d{2,4}[A-Z]?(?:-F?POE)?\b|\bFortiSwitch[\s-]*\d{2,4}[A-Z]?(?:-F?POE)?\b", re.IGNORECASE
 )
-TAG_RE = re.compile(r"^(-?\d{1,3})([A-Z]{1,3})$")
+TAG_RE = re.compile(r"^(-?\d{1,3})([A-Z]{1,3}\d{0,2})$")
 SKIP_ROW = ("forticare", "support", "ліценз", "licen", "bundle", "підтримк")
 
 

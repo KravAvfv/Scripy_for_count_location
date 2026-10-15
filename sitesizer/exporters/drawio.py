@@ -200,7 +200,7 @@ def _esc(text: str) -> str:
 def _edge(
     root: ET.Element, lk: TopoLinkResult, a: TopoNode, b: TopoNode, colors: TopoColors, sx: float, sy: float
 ) -> None:
-    color = colors.link(lk.kind)
+    color = colors.link(lk.kind, lk.room)
     width = {"isl": 3, "ha": 2, "uplink": 2, "wan": 1}.get(lk.kind, 1.5)
     style: dict[str, object] = {
         "endArrow": "none",

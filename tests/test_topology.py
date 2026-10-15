@@ -36,7 +36,7 @@ def test_whiteboard_design(catalog: Catalog) -> None:
     assert kinds(topo, "isl") == [(cores[0].id, cores[1].id)]
     assert sorted(kinds(topo, "uplink")) == sorted((c.id, f.id) for c in cores for f in fws)
     # names come from the cabinets
-    assert fws[0].label == "BO123-1A-FW01" and cores[0].label == "BO123-1A-DSW01"
+    assert fws[0].label == "BO123-1A0-FW01" and cores[0].label == "BO123-1A0-DSW01"
     # PoE switches have their own stack, apart from the access ones
     first = topo.groups[0]
     assert all(topo.node(i).kind in ("wifi_switch", "camera_switch") for i in first.nodes)  # type: ignore[union-attr]
@@ -194,14 +194,14 @@ def test_ports_modules_and_cables(catalog: Catalog) -> None:
     topo = build_topology(r, catalog)
     names = {n.id: n.label for n in topo.nodes}
     by = {(names[lk.a], names[lk.b], lk.kind): lk for lk in topo.links}
-    isl = by[("BO1-1A-DSW01", "BO1-1A-DSW02", "isl")]
+    isl = by[("BO1-1A0-DSW01", "BO1-1A0-DSW02", "isl")]
     assert isl.port_a == isl.port_b == "25, 26"  # the 100G QSFP28 ports
     # a stack: the link down from a switch takes 49, the one up 50; DAC in one cabinet, no modules
-    down = by[("BO1-1B-ASW02", "BO1-1B-ASW01", "stack")]
+    down = by[("BO1-1A1-ASW02", "BO1-1A1-ASW01", "stack")]
     assert (down.port_a, down.port_b) == ("50", "49") and not down.module_a and "DAC" in down.label
     # between cabinets: fibre, the transceiver at both ends
     om4 = catalog.passive.fiber["om4"].transceiver
-    fl = by[("BO1-1C-ASW01", "BO1-1A-DSW01", "fortilink")]
+    fl = by[("BO1-1B0-ASW01", "BO1-1A0-DSW01", "fortilink")]
     assert fl.module_a == fl.module_b == om4 and fl.label == "10G OM4"
     # no port is used twice on a device
     seen: dict[str, list[str]] = {}
@@ -212,21 +212,21 @@ def test_ports_modules_and_cables(catalog: Catalog) -> None:
     assert all(len(v) == len(set(v)) for v in seen.values())
     # what the switch ports serve
     nodes = {n.label: n for n in topo.nodes}
-    assert nodes["BO1-1A-VSW02"].endpoints == "1–12 Камери · 44–47 Ajax · 48 СКУД"
-    assert nodes["BO1-1A-VSW01"].endpoints == "1–48 Камери"
+    assert nodes["BO1-1A0-VSW02"].endpoints == "1–12 Камери · 44–47 Ajax · 48 СКУД"
+    assert nodes["BO1-1A0-VSW01"].endpoints == "1–48 Камери"
     # the user's ports, modules, cable and endpoints win; an auto port is not given out twice
     key_a, key_b = down.end(down.a), down.end(down.b)
     edits = TopologyEdits(
         ports={key_a: "sfp+3", fl.end(fl.a): "49"},
         modules={key_b: "SFP Foxgate 1330nm"},
         labels={down.id: "Cat6A 0.5 м"},
-        endpoints={nodes["BO1-1A-VSW01"].id: "1–40 Камери"},
+        endpoints={nodes["BO1-1A0-VSW01"].id: "1–40 Камери"},
     )
     topo2 = build_topology(r, catalog, edits=edits)
     lk2 = topo2.link(down.id)
     assert lk2 is not None and lk2.port_a == "sfp+3" and lk2.module_b == "SFP Foxgate 1330nm"
     assert lk2.label == "Cat6A 0.5 м"
-    assert next(n for n in topo2.nodes if n.label == "BO1-1A-VSW01").endpoints == "1–40 Камери"
+    assert next(n for n in topo2.nodes if n.label == "BO1-1A0-VSW01").endpoints == "1–40 Камери"
     asw01 = [lk for lk in topo2.links if fl.a in (lk.a, lk.b)]
     ports = [lk.port_a if lk.a == fl.a else lk.port_b for lk in asw01]
     assert ports.count("49") == 1  # typed on one link, so the other gets another port

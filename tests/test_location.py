@@ -37,7 +37,7 @@ def test_optical_panel_towards_the_firewall_floor(catalog: Catalog) -> None:
     odf5 = [it for it in f5.rack.plans[0].items if it.group == "fiber"]
     odf7 = [it for it in f7.rack.plans[0].items if it.group == "fiber"]
     # the firewall's cabinet also takes the provider's fibre
-    assert [it.label for it in odf5] == ["ODF 7A"] and [it.label for it in odf7] == ["ODF до провайдера", "ODF 5A"]
+    assert [it.label for it in odf5] == ["ODF 7A0"] and [it.label for it in odf7] == ["ODF до провайдера", "ODF 5A0"]
     # each optical panel has its organizer right under it
     items = f5.rack.plans[0].items
     i = items.index(odf5[0])

@@ -540,6 +540,7 @@ QMenu::icon {{ padding-left: {px(6)}px; }}
 /* ---------- scrollbars ---------- */
 QScrollBar:vertical {{ background: transparent; width: {px(10)}px; margin: {px(2)}px; }}
 QScrollBar:horizontal {{ background: transparent; height: {px(10)}px; margin: {px(2)}px; }}
+QAbstractScrollArea::corner {{ background: transparent; border: none; }}
 QScrollBar::handle {{ background: {t.scrollbar}; border-radius: {px(3)}px; min-height: {px(28)}px; min-width: {px(28)}px; }}
 QScrollBar::handle:hover {{ background: {t.text_faint}; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0px; height: 0px; }}

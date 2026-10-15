@@ -42,12 +42,21 @@ class TopoColors:
         ("wan", "#7C8894"),
         ("custom", "#8E6BBF"),
     )
+    rooms: tuple[str, ...] = ("#2B8C7E", "#7B3FA8", "#C2570C", "#1565C0", "#B0245E", "#4E7D14", "#00838F", "#6D4C41")
+    """Links of telecom room 0, 1, 2…: each room its own colour."""
 
     def node(self, kind: str) -> tuple[str, str, str]:
         return getattr(self, kind, self.access_switch)  # type: ignore[no-any-return]
 
-    def link(self, kind: str) -> str:
+    def link(self, kind: str, room: int = -1) -> str:
+        """Colour of a link: an access link (FortiLink, stack) takes the colour of its telecom room."""
+        if room >= 0 and kind in ROOM_KINDS:
+            return self.rooms[room % len(self.rooms)]
         return dict(self.links).get(kind, "#7C8894")
+
+
+ROOM_KINDS = ("fortilink", "stack", "custom")
+"""Link kinds coloured by the telecom room of their switch."""
 
 
 LIGHT = TopoColors()
@@ -67,6 +76,7 @@ DARK = TopoColors(
         ("wan", "#98A4AF"),
         ("custom", "#B79BE0"),
     ),
+    rooms=("#5FC1B2", "#B88BE0", "#F0A05C", "#7FB0E3", "#E57FA8", "#9CCB5E", "#5CC8D4", "#C2A091"),
 )
 
 
@@ -221,7 +231,7 @@ class TopologyDiagram:
     def _paint_link(self, p: QPainter, lk: TopoLinkResult, under: list[Seg] | None = None) -> None:
         if len(lk.points) < 2:
             return
-        color = QColor(self.c.link(lk.kind))
+        color = QColor(self.c.link(lk.kind, lk.room))
         width = {"isl": 2.6, "ha": 2.2, "uplink": 1.8, "wan": 1.3}.get(lk.kind, 1.6)
         if lk.id in self.selected:
             halo = QColor(color)
@@ -253,7 +263,7 @@ class TopologyDiagram:
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(self.s.bg))
         p.drawRoundedRect(rect, 4, 4)
-        p.setPen(QColor(self.c.link(lk.kind)))
+        p.setPen(QColor(self.c.link(lk.kind, lk.room)))
         p.setFont(self.f_link)
         p.drawText(rect, Qt.AlignmentFlag.AlignCenter, lk.label)
 
@@ -262,7 +272,7 @@ class TopologyDiagram:
         along the line (like the hand-drawn schemes), so that neighbouring ports do not overlap."""
         if len(lk.points) < 2:
             return
-        color = QColor(self.c.link(lk.kind))
+        color = QColor(self.c.link(lk.kind, lk.room))
         bg = QColor(self.s.bg)
         bg.setAlphaF(0.85)
         fm_p, fm_m = QFontMetricsF(self.f_port), QFontMetricsF(self.f_module)

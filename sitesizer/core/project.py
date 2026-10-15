@@ -12,7 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from .models import SiteInput
 
 PROJECT_FORMAT = "sitesizer-project"
-PROJECT_VERSION = 1
+PROJECT_VERSION = 2
+"""2: switches numbered per telecom room, cabinets tagged by room (see ``core.migrate``)."""
 PROJECT_SUFFIX = ".sizing.json"
 
 

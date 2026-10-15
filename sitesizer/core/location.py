@@ -58,10 +58,10 @@ class LocationResult:
 
 
 def head_tag(site: SiteInput) -> str:
-    """Tag of a floor's main cabinet (``7A``), as its other floors' ODFs are labelled."""
+    """Tag of a floor's main cabinet (``7A0``), as its other floors' ODFs are labelled."""
     props = site.layout.props.get("mdf-1")
     floor = props.floor if props and props.floor is not None else site.floor
-    letter = (props.letter.strip()[:3] if props and props.letter else "") or "A"
+    letter = (props.letter.strip()[:3] if props and props.letter else "") or "A0"
     return f"{floor}{letter}"
 
 
@@ -260,6 +260,10 @@ def combine(floors: list[tuple[str, SiteResult]], fw_result: SiteResult, n_floor
         for attr, value in vars(rs.passive).items():
             if isinstance(value, int) and not isinstance(value, bool):
                 setattr(ps, attr, getattr(ps, attr) + value)
+            elif isinstance(value, dict):  # per model: ODF housings, cables
+                into = getattr(ps, attr)
+                for k, v in value.items():
+                    into[k] = into.get(k, 0) + v
         ps.backbone_m += rs.passive.backbone_m
     rack.idf_count = len(rack.rooms)
     rack.rack_count = len(rack.plans)

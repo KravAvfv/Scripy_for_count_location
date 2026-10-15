@@ -571,7 +571,8 @@ def test_rack_items_rename_and_delete(app: QApplication, window) -> None:
     racks.item_name.editingFinished.emit()
     st.recompute()
     pump(app)
-    assert st.site.layout.extras[0].label == "Відеосервер"
+    # a switch put in by hand is a network device: its rename is kept like that of an automatic one
+    assert st.site.layout.labels[dev_id] == "Відеосервер" and racks.editor.item(dev_id).label == "Відеосервер"
     assert any(line.group == "rack_device" for line in st.result.bom)
     racks.del_item.click()
     st.recompute()
@@ -613,11 +614,11 @@ def test_rack_multi_select_drag_and_copy(app: QApplication, window) -> None:
     editor.setFocus()
     QTest.keyClick(editor, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
     pump(app)
-    assert QApplication.clipboard().text() == "BO123-1A-ASW01\nBO123-1A-ASW02"
+    assert QApplication.clipboard().text() == "BO123-1A0-ASW01\nBO123-1A0-ASW02"
     # the "copy names" button copies every device of the cabinets shown
     editor.select(plan.key)
     racks.copy_names()
-    assert QApplication.clipboard().text().splitlines()[0] == "BO123-1A-FW01"
+    assert QApplication.clipboard().text().splitlines()[0] == "BO123-1A0-FW01"
     # dragging one of two selected devices moves both by the same distance
     editor.select(plan.key, sws[0].id)
     editor.select(plan.key, sws[1].id, add=True)
@@ -686,7 +687,7 @@ def test_floors_of_one_location(app: QApplication, window) -> None:
     assert st.project.site(first).input.location_id == 57
     # one firewall for the location, on the first floor; this floor links to it with an ODF
     assert not st.result.lines("firewall")
-    assert any(it.label == "ODF 1A" for p in st.result.rack.plans for it in p.items)
+    assert any(it.label == "ODF 1A0" for p in st.result.rack.plans for it in p.items)
     combined = st.location_result
     assert combined is not None and combined.lines("firewall")[0].qty == 1
     assert combined.lines("access_switch")[0].qty == 3
@@ -980,3 +981,43 @@ def test_rack_item_model_change(app: QApplication, window) -> None:
     st.recompute()
     pump(app)
     assert item("access_switch:2").model == before.model
+
+
+def test_room_cabinets_and_device_ids(app: QApplication, window) -> None:
+    """The number of cabinets of a telecom room is typed on the location page or the racks page."""
+    st = window.state
+    st.edit("t", lambda d: d.update(closets=2, rooms=[{"sockets": 96}, {"sockets": 48}], location_code="BO1"))
+    st.recompute()
+    window.navigate("location")
+    pump(app)
+    block = window.location._room_blocks[1]
+    block.cabinets.valueChanged.emit(2)  # typed by the user
+    st.recompute()
+    pump(app)
+    assert st.site.rooms[1].cabinets == 2
+    assert [p.tag for p in st.result.rack.plans if p.room == 1] == ["1B0", "1B1"]
+    # racks page: the room card shows and changes it
+    window.navigate("racks")
+    pump(app)
+    racks = window.racks
+    racks.show_room(1)
+    pump(app)
+    assert racks.room_cabinets.value() == 2
+    racks.room_cabinets.setValue(3)
+    st.recompute()
+    pump(app)
+    assert [p.tag for p in st.result.rack.plans if p.room == 1] == ["1B0", "1B1", "1B2"]
+    # a device added to a room gets a stable id: removing another one never renames its cabinet item
+    window.navigate("location")
+    pump(app)
+    block = window.location._room_blocks[1]
+    block._add_device()
+    block._add_device()
+    st.recompute()
+    pump(app)
+    ids = [d.id for d in st.site.rooms[1].devices]
+    assert len(ids) == 2 and all(ids) and ids[0] != ids[1]
+    block._remove_device(block.dev_rows[0])
+    st.recompute()
+    pump(app)
+    assert [d.id for d in st.site.rooms[1].devices] == ids[1:]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import uuid
 from typing import Any
 
 from PySide6.QtCore import QSize, Qt, Signal
@@ -67,6 +68,7 @@ class ZoneRow(QFrame):
         self.index = index
         self.state = state
         self._loading = False
+        self._room = 0
         self.setObjectName("SoftCard")
         grid = QGridLayout(self)
         grid.setContentsMargins(px(10), px(8), px(8), px(8))
@@ -131,7 +133,8 @@ class ZoneRow(QFrame):
         j = self.model.findData(group.get("model"))
         self.model.setCurrentIndex(j if j > 0 else 0)
         self.qty.setValue(int(group.get("qty", 0)))
-        self.room.setCurrentIndex(min(int(group.get("room") or 0), max(0, self.room.count() - 1)))
+        self._room = int(group.get("room") or 0)
+        self.room.setCurrentIndex(min(self._room, max(0, self.room.count() - 1)))
         if not self.name.hasFocus():
             self.name.setText(group.get("name", ""))
         self._loading = False
@@ -157,11 +160,16 @@ class ZoneRow(QFrame):
             "model": self.model.currentData(),
             "qty": self.qty.value(),
             "name": self.name.text().strip(),
-            "room": max(0, self.room.currentIndex()),
+            # the zone's room even while the list does not show it yet (never moved to another room)
+            "room": self._room
+            if self.room.currentIndex() < 0 or self._room >= self.room.count()
+            else self.room.currentIndex(),
         }
 
     def _emit(self) -> None:
         if not self._loading:
+            if self.sender() is self.room and self.room.currentIndex() >= 0:
+                self._room = self.room.currentIndex()  # the user picked another room
             self.changed.emit(self.index, self.data())
 
     def _emit_qty(self, _v: int) -> None:
@@ -243,6 +251,7 @@ class DeviceRow(QWidget):
         self.name.setPlaceholderText(tr("ui.room_device_name"))
         self.name.setMaximumWidth(px(150))
         self.remove = icon_button("trash-2", tr("ui.room_device_remove"), size=14)
+        self.dev_id = ""
         lay.addWidget(self.model, 1)
         lay.addWidget(self.qty)
         lay.addWidget(self.name)
@@ -255,6 +264,7 @@ class DeviceRow(QWidget):
 
     def load(self, d: dict[str, Any]) -> None:
         self._loading = True
+        self.dev_id = str(d.get("id") or "")
         i = self.model.findData(d.get("model"))
         if i < 0:
             self.model.addItem(str(d.get("model")), d.get("model"))
@@ -269,7 +279,12 @@ class DeviceRow(QWidget):
         self._loading = False
 
     def data(self) -> dict[str, Any]:
-        return {"model": self.model.currentData() or "", "qty": self.qty.value(), "label": self.name.text().strip()}
+        return {
+            "model": self.model.currentData() or "",
+            "qty": self.qty.value(),
+            "label": self.name.text().strip(),
+            "id": self.dev_id,
+        }
 
     def _emit(self, *_a: object) -> None:
         if not self._loading:
@@ -327,13 +342,23 @@ class RoomBlock(QFrame):
         for key in ROOM_FIELDS:
             st = Stepper(0, 1_000_000, width=124)
             st.setToolTip(tr(f"ui.room_{key}_tip"))
-            st.valueChanged.connect(lambda v, k=key: self.changed.emit(self.index, k, int(v)))
+            st.valueChanged.connect(lambda v, k=key: self._emit_field(k, int(v)))
             self.fields[key] = st
             cell = QHBoxLayout()
             cell.setSpacing(px(8))
             cell.addWidget(label(tr(f"ui.room_{key}")), 1)
             cell.addWidget(st)
             self._cells.append(cell)
+        # cabinets of the room: 0 = as many as the equipment needs
+        self.cabinets = Stepper(0, 20, width=124)
+        self.cabinets.field.setSpecialValueText(tr("ui.rack_size_auto"))
+        self.cabinets.setToolTip(tr("ui.room_cabinets_tip"))
+        self.cabinets.valueChanged.connect(lambda v: self._emit_field("cabinets", int(v)))
+        cell = QHBoxLayout()
+        cell.setSpacing(px(8))
+        cell.addWidget(label(tr("ui.room_cabinets")), 1)
+        cell.addWidget(self.cabinets)
+        self._cells.append(cell)
         self._place_cells()
         lay.addLayout(grid)
         self.vsw_note = label(tr("ui.room_vsw_note"), "faint", wrap=True)
@@ -451,6 +476,7 @@ class RoomBlock(QFrame):
         values = room.model_dump()
         for key, st in self.fields.items():
             st.setValue(int(values.get(key, 0)))
+        self.cabinets.setValue(room.cabinets)
         for key, combo in self.combos.items():
             j = combo.findData(room.models.get(key))
             combo.setCurrentIndex(j if j > 0 else 0)
@@ -473,6 +499,10 @@ class RoomBlock(QFrame):
             row.load(d)
         self._loading = False
 
+    def _emit_field(self, key: str, value: int) -> None:
+        if not self._loading:
+            self.changed.emit(self.index, key, value)
+
     def _emit_count(self, key: str, value: int | None) -> None:
         if not self._loading:
             self.countChanged.emit(self.index, key, value)
@@ -492,7 +522,8 @@ class RoomBlock(QFrame):
         models = rack_device_models(self.state)
         if not models:
             return
-        self.devicesChanged.emit(self.index, [*self._devices(), {"model": models[0][0], "qty": 1, "label": ""}])
+        new = {"model": models[0][0], "qty": 1, "label": "", "id": uuid.uuid4().hex[:8]}
+        self.devicesChanged.emit(self.index, [*self._devices(), new])
 
     def _remove_device(self, row: DeviceRow) -> None:
         if row in self.dev_rows:
@@ -1276,7 +1307,8 @@ class LocationView(QWidget):
             while len(rooms) <= room:
                 rooms.append({})
             rooms[room][key] = value
-            release_typed_counts(d, ENDPOINT_SWITCH[key], room)  # the switches follow the endpoints
+            if key in ENDPOINT_SWITCH:
+                release_typed_counts(d, ENDPOINT_SWITCH[key], room)  # the switches follow the endpoints
 
         self.state.edit(tr(f"ui.room_{key}"), mutate, merge_key=f"room{room}:{key}")
 

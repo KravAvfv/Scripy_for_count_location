@@ -17,7 +17,7 @@ if (-not $SkipTests) {
     Write-Host "Running tests..." -ForegroundColor Cyan
     $env:QT_QPA_PLATFORM = "offscreen"
     & $py -m pytest -q
-    if ($LASTEXITCODE -ne 0) { throw "Tests failed — build aborted." }
+    if ($LASTEXITCODE -ne 0) { throw "Tests failed - build aborted." }
     Remove-Item Env:\QT_QPA_PLATFORM
 }
 

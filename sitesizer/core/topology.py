@@ -112,6 +112,8 @@ class TopoNode:
     """Unit of the device in its cabinet (decides the DAC length)."""
     endpoints: str = ""
     """What its copper ports serve (``1–38 Камери · 44–47 Ajax · 48 СКУД``)."""
+    room: int = 0
+    """Telecom room of its cabinet."""
 
 
 @dataclass
@@ -137,6 +139,8 @@ class TopoLinkResult:
     module_a: str = ""
     """Module (transceiver) in ``a``'s port; empty for a DAC or copper."""
     module_b: str = ""
+    room: int = -1
+    """Telecom room of its access switch (its colour); -1 for the links of the firewall and the core."""
 
     def end(self, node_id: str) -> str:
         """``<link id>@<node id>`` — the key of one end in :class:`TopologyEdits` ports / modules."""
@@ -440,11 +444,16 @@ def build_topology(
     col_cab: dict[str, str] = {}
     cab_titles: dict[str, str] = {}
     codes = {"wifi_switch": "WSW", "camera_switch": "VSW", "access_switch": "ASW"}
+    rooms: dict[tuple[int, int], int] = {}
+    """(floor, telecom room) -> its number on the drawing (the colour of its links)."""
     for plan in result.rack.plans:
         # the switches of a cabinet form its stack(s) in the order they stand in it, top-down
+        room = rooms.setdefault((plan.floor, plan.room), len(rooms))
         members: list[TopoNode] = []
         for it in _plan_switches(plan):
-            node = TopoNode(f"{plan.tag}/{it.id}", it.group, it.label or it.model, it.model, plan.tag, u=it.u)
+            node = TopoNode(
+                f"{plan.tag}/{it.id}", it.group, it.label or it.model, it.model, plan.tag, u=it.u, room=room
+            )
             if it.group in SWITCH_KINDS:
                 dev = catalog.models.get(it.model)
                 ports = dev.ports.count if dev is not None and dev.ports is not None else 48
@@ -645,6 +654,8 @@ def build_topology(
     fiber = result.rack.passive.fiber_type.upper()
     for lk in out:
         a, b = nodes_by_id[lk.a], nodes_by_id[lk.b]
+        sw = next((n for n in (a, b) if n.kind in SWITCH_KINDS), None)
+        lk.room = sw.room if sw is not None else -1
         lk.medium = ed.media.get(lk.id) or auto_medium(lk, a, b)
         typed = ed.labels.get(lk.id) if lk.auto else (lk.label or None)
         lk.label = typed if typed is not None else cable_label(lk, a, b, fiber, catalog, t)

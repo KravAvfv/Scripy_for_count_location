@@ -79,6 +79,11 @@ def _is_video(item_id: str) -> bool:
     return "camera_switch:" in item_id
 
 
+def switch_id(key: str, room: int, n: int) -> str:
+    """``access_switch:3`` in the main room, ``access_switch:r2.3`` in telecom room 2."""
+    return f"{key}:{n}" if room == 0 else f"{key}:r{room}.{n}"
+
+
 def _ceil_div(a: float, b: float) -> int:
     return math.ceil(a / b) if a > 0 and b > 0 else 0
 
@@ -198,18 +203,18 @@ def plan_passive(
         ports = cat.categories[key].endpoints_per_switch if key in cat.categories else pr.panel_ports
         panels = pr.panels_per_switch.get(key, _ceil_div(ports, pr.panel_ports))
         if res.per_room is not None:
-            # every room's switches stand in its own cabinets (numbered on, room after room)
-            n = 0
+            # every room's switches stand in its own cabinets, numbered per room: a change in one
+            # room never renumbers (and so never moves) the switches of another
             for ci, count in enumerate(res.per_room[:n_closets]):
                 model = res.room_models[ci] if ci < len(res.room_models) else res.model
-                for _ in range(count):
-                    n += 1
-                    closets[ci].switches.append(_Switch(f"{key}:{n}", key, model, units(model), panels))
+                for n in range(1, count + 1):
+                    closets[ci].switches.append(_Switch(switch_id(key, ci, n), key, model, units(model), panels))
             continue
-        for i in range(res.count):
+        for _i in range(res.count):
             ci = min(range(n_closets), key=lambda k: (load[k], k))
             load[ci] += 1
-            closets[ci].switches.append(_Switch(f"{key}:{i + 1}", key, res.model, units(res.model), panels))
+            n = sum(1 for sw in closets[ci].switches if sw.key == key) + 1
+            closets[ci].switches.append(_Switch(switch_id(key, ci, n), key, res.model, units(res.model), panels))
 
     # ---- fibre type (estimated from the longest run) ------------------------------------
     runs = list(ps.backbone_m)
@@ -243,7 +248,8 @@ def plan_passive(
                 group = role_of(d.model, d.label) or "device"
                 label = d.label or ("" if group in ROLE_CODES else d.model)
                 label += f" #{k + 1}" if label and d.qty > 1 else ""
-                closet.head.append(_Unit(f"dev:{closet.index}:{j}:{k + 1}", units(d.model), label, group, d.model))
+                uid = f"dev:{closet.index}:{d.id or j}:{k + 1}"
+                closet.head.append(_Unit(uid, units(d.model), label, group, d.model))
         # UPS: the main room by tier / add-on (sized by power), any room by the user's choice
         auto_ups = closet.index == 0 and bool(ctx.tier.ups or addons.get("ups"))
         model = room_in.ups_model if room_in.ups_model in cat.models else power.ups_model
@@ -287,16 +293,28 @@ def plan_passive(
     upstream = 1 + (len(fctx.remote) if fctx is not None and fctx.has_firewall else 0)
 
     layouts: list[tuple[_Closet, list[list[_Switch]], int]] = []
+    short_rooms: list[str] = []
+    """``room<i>:<cabinets>``: rooms whose typed number of cabinets cannot hold their equipment."""
     for closet in closets:
-        if not (closet.switches or closet.head or closet.bottom or ctx.site.closets):
+        if not (
+            closet.switches or closet.head or closet.bottom or ctx.site.closets or ctx.site.room(closet.index).cabinets
+        ):
             continue  # an empty closet still gets a cabinet when the user asked for that many
         need = math.ceil(cabinet_u(closet, closet.switches, True) * (1 + r.rack_spare_ratio))
         size = _pick_size(ctx.site.rack_size_u, need, sizes if ctx.site.rack_size_u else auto_sizes)
         usable = max(1, size - math.floor(size * r.rack_spare_ratio / (1 + r.rack_spare_ratio)))
+        want = ctx.site.room(closet.index).cabinets
         for _ in range(6):
             groups = _fill(closet, usable, cabinet_u)
             if len(groups) > 1:
                 groups = _split_poe(closet, groups, usable, cabinet_u) or _balance(closet, groups, usable, cabinet_u)
+            if want and want != len(groups):
+                # the number of cabinets the user typed for the room
+                forced = _split_into(closet, want, size, cabinet_u)
+                if forced is not None:
+                    groups = forced
+                elif not any(p.startswith(f"room{closet.index}:") for p in short_rooms):
+                    short_rooms.append(f"room{closet.index}:{len(groups)}")
             odfs = max(2, len(groups) - 1 + upstream)
             if odfs <= first_odfs.get(closet.index, 2):
                 break
@@ -375,8 +393,12 @@ def plan_passive(
                     cursor -= unit.height
             plans.append(plan)
 
-    for i, plan in enumerate(plans):
-        plan.letter = _letter(i)
+    # a room is a letter (A, B…), its cabinets are numbered from 0: A0, A1, B0…
+    per_room: dict[int, int] = {}
+    for plan in plans:
+        n = per_room.get(plan.room, 0)
+        per_room[plan.room] = n + 1
+        plan.letter = f"{_letter(plan.room)}{n}"
 
     # ---- manual layout, fibre links, names ----------------------------------------------
     rs.rooms = room_names(n_closets, ctx.site.layout, t)
@@ -393,6 +415,10 @@ def plan_passive(
     )
     change_models(plans, ctx.site.layout, cat)
     plans.sort(key=lambda p: p.room)  # a room's cabinets side by side (stable: keeps their order)
+    for short in short_rooms:
+        i, n = (int(x) for x in short[4:].split(":"))
+        room_name = rs.rooms[i] if i < len(rs.rooms) else str(i + 1)
+        rs.layout_problems.append(t.t("check.room_cabinets", room=room_name, want=ctx.site.room(i).cabinets, n=n))
     links: list[tuple[str, str]] = []
     fibers: dict[tuple[str, str], int] = {}
     if odf_model and fspec is not None:
@@ -416,6 +442,8 @@ def plan_passive(
     assign_endpoints(plans, ctx.counts, cat)
     for plan in plans:
         plan.items.sort(key=lambda it: -it.u)
+        if _overfull(plan):
+            rs.layout_problems.append(t.t("check.rack_overfull", name=plan.tag, used=plan.used_u, size=plan.size_u))
     rs.plans = plans
     active = {*EDGE_KEYS, "core_switch", "firewall"}
     for plan in plans:
@@ -744,6 +772,21 @@ def link_cabinets(
     return pairs, problems, fibers
 
 
+def _overfull(plan: RackPlan) -> bool:
+    """Automatic items out of the cabinet or on top of each other (a cabinet too small for its equipment)."""
+    taken: set[int] = set()
+    for it in plan.items:
+        if it.manual:
+            continue  # the user's overlaps are reported by the manual layout
+        if it.u < 1 or it.top > plan.size_u:
+            return True
+        span = set(range(it.u, it.top + 1))
+        if span & taken:
+            return True
+        taken |= span
+    return False
+
+
 def _is_odf(it: RackItem) -> bool:
     return it.id.startswith(("odf:", "org:odf:"))
 
@@ -880,6 +923,34 @@ def _split_poe(closet: _Closet, groups: list[list[_Switch]], limit: int, cabinet
     return [poe, *rest]
 
 
+def _split_into(closet: _Closet, n: int, size: int, cabinet_u) -> list[list[_Switch]] | None:  # type: ignore[no-untyped-def]
+    """Exactly ``n`` cabinets (the user's number): the PoE switches with the firewall and the core in the
+    first one when the room has access switches too, the rest spread evenly (a cabinet may stay empty).
+
+    ``None`` when the switches do not fit ``n`` cabinets of ``size`` units.
+    """
+    sws = closet.switches
+    poe = [sw for sw in sws if sw.key in POE_KEYS]
+    access = [sw for sw in sws if sw.key not in POE_KEYS]
+
+    def spread(items: list[_Switch], k: int) -> list[list[_Switch]]:
+        out, start = [], 0
+        for i in range(k):
+            m = len(items) // k + (1 if i < len(items) % k else 0)
+            out.append(items[start : start + m])
+            start += m
+        return out
+
+    options = []
+    if n > 1 and poe and access:
+        options.append([poe, *spread(access, n - 1)])
+    options.append(spread(list(sws), n))
+    for groups in options:
+        if all(cabinet_u(closet, g, gi == 0) <= size for gi, g in enumerate(groups)):
+            return groups
+    return None
+
+
 def _pick_size(preferred: int, need: int, sizes: list[int]) -> int:
     if not sizes:
         return preferred or 42
@@ -895,6 +966,15 @@ def _pick_size(preferred: int, need: int, sizes: list[int]) -> int:
 # =========================================================================================
 # manual layout
 # =========================================================================================
+def key_room(key: str, layout: RackLayout) -> int:
+    """Telecom room of a cabinet key (``idf2-1`` → 2, ``mdf-3`` → 0, a user cabinet → its room)."""
+    m = re.fullmatch(r"idf(\d+)-\d+", key)
+    if m:
+        return int(m.group(1))
+    props = layout.props.get(key)
+    return props.room or 0 if props is not None else 0
+
+
 def _overlaps(a: RackItem, b: RackItem) -> bool:
     return a.u <= b.top and b.u <= a.top
 
@@ -939,6 +1019,8 @@ def apply_layout(
     by_key = {p.key: p for p in plans}
     home: dict[str, str] = {}
     orphans: list[RackItem] = []
+    room_of: dict[str, int] = {}
+    """Telecom room of an item whose cabinet is gone (it moves to another cabinet of that room)."""
     for key in layout.removed:
         plan = by_key.pop(key, None)
         if plan is not None:
@@ -946,6 +1028,7 @@ def apply_layout(
                 home[it.id] = ""
             # PDUs and fibre panels belong to the cabinet; the rest moves to another one
             orphans.extend(it for it in plan.items if not it.id.startswith(("pdu:", "odf:", "org:odf:")))
+            room_of.update({it.id: plan.room for it in plan.items})
             plans.remove(plan)
     for key in layout.added:
         if key in by_key:
@@ -959,12 +1042,12 @@ def apply_layout(
         plans.append(plan)
         by_key[key] = plan
     used_letters = {p.letter for p in plans if p.role != "user"}
-    n = 0
     for plan in plans:
         if plan.role == "user":
-            while _letter(n) in used_letters:
+            n = 0
+            while f"{_letter(plan.room)}{n}" in used_letters:
                 n += 1
-            plan.letter = _letter(n)
+            plan.letter = f"{_letter(plan.room)}{n}"
             used_letters.add(plan.letter)
     for key, props in layout.props.items():
         plan = by_key.get(key)
@@ -1002,6 +1085,8 @@ def apply_layout(
     lost: list[RackItem] = []
     for ex in layout.extras:
         target = by_key.get(ex.rack)
+        if target is None:
+            room_of[ex.id] = key_room(ex.rack, layout)
         group = EXTRA_GROUPS.get(ex.kind, "custom")
         model = ex.model if ex.kind == "device" else (extra_models or {}).get(ex.kind, "")
         if ex.kind == "device" and model:
@@ -1046,7 +1131,9 @@ def apply_layout(
                 displaced.append(it)
     for it in displaced:
         candidates = [by_key[home[it.id]]] if home.get(it.id) in by_key else []
-        candidates += [p for p in plans if p not in candidates]
+        room = room_of.get(it.id, candidates[0].room if candidates else 0)
+        # another cabinet of the same telecom room first, never one of another room when it has any
+        candidates += sorted((p for p in plans if p not in candidates), key=lambda p: p.room != room)
         for plan in candidates:
             slot = _nearest_slot(plan, it.height, it.u)
             if slot is not None:
@@ -1109,7 +1196,8 @@ def name_items(plans: list[RackPlan], layout: RackLayout, code: str, t: Translat
         if props and props.name:
             plan.name = props.name
         elif code:
-            plan.name = t.t("rack.title_code", code=code, floor=plan.floor, letter=plan.letter)
+            room = re.match(r"[^\d]*", plan.letter).group(0) or plan.letter  # type: ignore[union-attr]
+            plan.name = t.t("rack.title_code", code=code, floor=plan.floor, letter=plan.letter, room=room)
         elif plan.role == "user":
             plan.name = t.t("rack.user", n=user_no)
         prefix = f"{code}-{plan.tag}-" if code else ""
@@ -1117,13 +1205,14 @@ def name_items(plans: list[RackPlan], layout: RackLayout, code: str, t: Translat
         wifi_panels = sum(1 for it in plan.items if it.group == "panel" and it.id.startswith("panel:wifi_switch"))
         for it in sorted(plan.items, key=lambda i: -i.u):
             role = ROLE_CODES.get(it.group)
-            if it.extra and not (role and not it.label):
-                continue  # named by the user
             if role:
+                # a network device — automatic or put in by hand (racks / location page) — is named
+                # after the cabinet it stands in (its floor and letter); a rename is in ``labels``
                 counters[role] = counters.get(role, 0) + 1
-                if it.label and it.id.startswith("dev:"):
-                    continue  # a room device the user named on the location page
                 it.label = f"{prefix}{role}{counters[role]:02d}"
+                continue
+            if it.extra:
+                continue  # named by the user
             elif it.group == "panel" and it.id.startswith("panel:"):
                 kind = it.id.split(":")[1]
                 counters["pp:" + kind] = n = counters.get("pp:" + kind, 0) + 1
@@ -1138,7 +1227,7 @@ def name_items(plans: list[RackPlan], layout: RackLayout, code: str, t: Translat
             elif it.group == "panel" and not it.label:
                 it.label = t.t("rack.panel", n="", ports=panel_ports)
         for it in plan.items:
-            if not it.extra and layout.labels.get(it.id):
+            if layout.labels.get(it.id) and (not it.extra or it.group in ROLE_CODES):
                 it.label = layout.labels[it.id]
 
 
@@ -1163,6 +1252,15 @@ def drop_room(layout: dict[str, Any], room: int, cabinets: set[str]) -> None:
         if m:
             j = int(m.group(1))
             return None if j == room else f"fiber:{j - 1 if j > room else j}:{m.group(2)}"
+        # the switches (and their panels / organizers) and the devices of the rooms after it move up
+        m = re.match(r"(.*_switch:)r(\d+)\.(.*)", i)
+        if m:
+            j = int(m.group(2))
+            return None if j == room else f"{m.group(1)}r{j - 1 if j > room else j}.{m.group(3)}"
+        m = re.match(r"dev:(\d+):(.*)", i)
+        if m:
+            j = int(m.group(1))
+            return None if j == room else f"dev:{j - 1 if j > room else j}:{m.group(2)}"
         m = re.match(r"pdu:(.+):(\d+)$", i)
         if m:
             k = key(m.group(1))
@@ -1190,6 +1288,7 @@ def drop_room(layout: dict[str, Any], room: int, cabinets: set[str]) -> None:
     for ex in layout.get("extras", []):
         ex["rack"] = key(ex.get("rack", "")) or ""  # "" = no cabinet: placed in another one
     layout["labels"] = {i2: v for i, v in layout.get("labels", {}).items() if (i2 := item(i))}
+    layout["models"] = {i2: v for i, v in layout.get("models", {}).items() if (i2 := item(i))}
     names = {}
     for k, v in layout.get("room_names", {}).items():
         j = int(k)

@@ -441,9 +441,9 @@ def test_poe_switches_with_the_firewall_access_switches_apart(catalog: Catalog) 
 def test_device_and_rack_names_use_location_code(catalog: Catalog) -> None:
     r = size_site(make_site(sockets=96, location_code="BO123"), catalog)
     plan = r.rack.plans[0]
-    assert plan.name == "BO123-1 поверх комутаційна A (1A)"
+    assert plan.name == "BO123-1 поверх комутаційна A, шафа A0 (1A0)"
     names = [it.label for it in plan.items if it.group == "access_switch"]
-    assert names == ["BO123-1A-ASW01", "BO123-1A-ASW02"]
+    assert names == ["BO123-1A0-ASW01", "BO123-1A0-ASW02"]
     r2 = size_site(
         make_site(sockets=96, location_code="BO123", layout={"props": {"mdf-1": {"floor": 5, "letter": "B"}}}),
         catalog,
@@ -496,7 +496,7 @@ def test_manual_layout_racks_and_extras(catalog: Catalog) -> None:
     r = size_site(make_site(sockets=96, layout=layout), catalog)
     assert [p.key for p in r.rack.plans] == [key, "user-1"]
     user = r.rack.plans[1]
-    assert user.size_u == 24 and user.letter == "B"
+    assert user.size_u == 24 and user.letter == "A1"  # the second cabinet of room A
     # the moved switch needs power: the user cabinet gets its own PDU
     # ...and an optical patch panel (+ organizer) towards the room's first cabinet, which gets one too
     assert {it.id for it in user.items} == {
@@ -654,9 +654,12 @@ def test_rack_items_named_by_the_user(catalog: Catalog) -> None:
     items = {it.id: it for it in r.rack.plans[0].items}
     assert items["access_switch:2"].label == "Комутатор 2 поверх"
     assert items["access_switch:2"].model == "FS-148F"
-    assert items["access_switch:1"].label == "BO123-1A-ASW01"  # the others keep their automatic names
-    assert items["firewall:1"].label.startswith("BO123-1A-FW")  # an empty name = automatic
-    assert items["x1"].label == "Мій"
+    # a switch put in by hand is named after its cabinet like the automatic ones (top-down)
+    assert items["x1"].label == "BO123-1A0-ASW01" and items["access_switch:1"].label == "BO123-1A0-ASW02"
+    assert items["firewall:1"].label.startswith("BO123-1A0-FW")  # an empty name = automatic
+    # renamed: the name wins
+    r2 = size_site(make_site(sockets=96, location_code="BO123", layout={**layout, "labels": {"x1": "Мій"}}), catalog)
+    assert next(it.label for it in r2.rack.plans[0].items if it.id == "x1") == "Мій"
     assert not make_site(layout={"labels": {"a": "b"}}).layout.is_empty
 
 

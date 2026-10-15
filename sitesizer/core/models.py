@@ -45,6 +45,8 @@ class RoomDevice(BaseModel):
     model: str
     qty: int = Field(default=1, ge=0, le=100)
     label: str = ""
+    id: str = ""
+    """Stable id (its cabinet items are ``dev:<room>:<id>:<n>``); empty in older files: its position."""
 
 
 class RoomInput(BaseModel):
@@ -70,6 +72,8 @@ class RoomInput(BaseModel):
     """UPS units in this room; ``None`` = automatic (the main room by tier / add-on, others none)."""
     devices: list[RoomDevice] = Field(default_factory=list)
     """Further devices placed in this room's first cabinet (they are in the specification and topology)."""
+    cabinets: int = Field(default=0, ge=0, le=20)
+    """Cabinets in this room; 0 = as many as the equipment needs."""
 
     @property
     def vsw_extra(self) -> int:

@@ -100,10 +100,12 @@ def test_hand_placed_firewall_and_core_appear_in_topology(catalog: Catalog) -> N
     )
     items = {it.id: it for p in r.rack.plans for it in p.items}
     assert items["x1"].group == "firewall" and items["x3"].group == "core_switch"
-    assert items["x2"].label.startswith("BO115-1A-FW")  # unnamed: automatic name
+    # named after the cabinet, whatever was typed
+    assert all(items[x].label.startswith("BO115-1A0-FW") for x in ("x1", "x2"))
+    assert items["x3"].label.startswith("BO115-1A0-DSW")
     topo = build_topology(r, catalog)
-    kinds = {n.label: n.kind for n in topo.nodes}
-    assert kinds["BO115-1A-CSW01"] == "firewall" and kinds["BO115-1A-DSW02"] == "core_switch"
+    kinds = {n.id.split("/")[1]: n.kind for n in topo.nodes if "/" in n.id}
+    assert kinds["x1"] == "firewall" and kinds["x3"] == "core_switch"
     assert sum(1 for n in topo.nodes if n.kind == "core_switch") == 2
     assert any(lk.kind == "isl" for lk in topo.links) and any(lk.kind == "ha" for lk in topo.links)
     # in the specification once, as hand-placed devices

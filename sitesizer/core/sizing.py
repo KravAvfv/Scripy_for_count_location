@@ -1556,10 +1556,11 @@ def _counts_from_racks(
     models: dict[str, dict[str, int]] = {}
     for plan in rack.plans:
         for it in plan.items:
+            if it.extra or it.id.startswith("dev:"):
+                continue  # put in by hand: ordered as a hand-placed device, not on the role's line
             placed[it.group] = placed.get(it.group, 0) + 1
-            if not it.extra:
-                by = models.setdefault(it.group, {})
-                by[it.model] = by.get(it.model, 0) + 1
+            by = models.setdefault(it.group, {})
+            by[it.model] = by.get(it.model, 0) + 1
     changed = False
     for res in (*categories.values(), core):
         n = placed.get(res.key, 0)
