@@ -13,6 +13,18 @@ The picture follows the Fortinet "HA-mode FortiGates + MCLAG core" design:
 
 Without a core the FortiGates take the role of the cores (FortiLink straight from the firewall).
 
+Passive parts (on by default, ``TopologyEdits.show_odf`` / ``show_panels``):
+
+* every optical patch panel (ODF) of the cabinets is a node with its duplex ports (``1…6`` for a
+  12-fibre cable); a fibre link between cabinets runs through them — switch → ODF of its cabinet,
+  port k → the ODF at the other end of the cable, port k → the core (several cabinets apart: through
+  each pair of ODFs on the way, patched in the cabinets between). The ODFs of the head cabinet (the
+  FortiGates / the core) stand in a row under the core, the others above the stack of their cabinet;
+* copper patch panels stand left of their switch, with the switch ports they go to (``1–24 → 1–24``).
+
+Which port of an ODF a link takes, its duplexes, notes on its ports and the switch ports of a copper
+panel are the user's to change (``odf_map``, ``odf_ports``, ``port_notes``, ``panel_map``).
+
 Nodes carry the same names as in the cabinets (``BO123-5A-ASW01``). The user's changes
 (:class:`~sitesizer.core.models.TopologyEdits`: moved nodes, removed / added links, link types, labels,
 switches moved to another column) are applied on top. The same :class:`Topology` — with its link
@@ -35,6 +47,8 @@ if TYPE_CHECKING:
 SWITCH_KINDS = ("wifi_switch", "camera_switch", "access_switch")
 POE_KINDS = ("wifi_switch", "camera_switch")
 LINK_KINDS = ("fortilink", "stack", "uplink", "isl", "ha", "wan", "custom")
+PASSIVE_KINDS = ("odf", "panel")
+"""Optical (ODF) and copper patch panels: nodes the links run through, not devices."""
 
 NODE_W = 232.0
 NODE_H = 60.0
@@ -53,12 +67,26 @@ PAIR_GAP = 220.0
 PORT_STEP = 30.0
 """Room per link along the bottom of a FortiGate / core (its port number sits there)."""
 LANE_STEP = 7.0
+TRUNK_STEP = 5.0
+"""Between the level lines of the cables / cords through the ODFs."""
 GROUP_PAD = 12.0
 GROUP_TITLE_H = 22.0
 CAB_PAD = 14.0
 CAB_TITLE_H = 24.0
 CAB_GAP = 40.0
 """Extra space between the stacks of different cabinets."""
+ODF_CAP_W = 78.0
+"""Caption of an ODF (its name, where its cable goes, the cable) left of its ports."""
+CELL_W = 16.0
+"""One duplex port of an ODF."""
+ODF_H = 46.0
+ODF_GAP = 64.0
+"""Between an ODF and the first switch under it (the patch cords run sideways here)."""
+ODF_VGAP = 14.0
+ODF_MAX_PORTS = 48
+PANEL_W = 128.0
+PANEL_GAP = 46.0
+"""Between a copper patch panel and its switch."""
 MODULE_CHAR_W = 5.6
 """Width of one character of a module's name as the painters write it (9 px Inter)."""
 
@@ -114,6 +142,34 @@ class TopoNode:
     """What its copper ports serve (``1–38 Камери · 44–47 Ajax · 48 СКУД``)."""
     room: int = 0
     """Telecom room of its cabinet."""
+    ports: int = 0
+    """ODF: its duplex ports; copper panel: its ports."""
+    peer: str = ""
+    """ODF: the ODF at the other end of its cable (node id), ``isp`` for the provider's one."""
+    caption: str = ""
+    """ODF: where its cable goes and the cable (``→ 1A0 · OM4 12 вол.``); panel: ``1–24 → 1–24``."""
+    cells: dict[int, str] = field(default_factory=dict)
+    """ODF: port -> the link that goes through it."""
+    notes: dict[int, str] = field(default_factory=dict)
+    """ODF / panel: port -> the user's note on what is plugged in there."""
+    switch: str = ""
+    """Copper panel: the switch its ports go to."""
+    head: bool = False
+    """ODF: stands in the cabinet of the FortiGates / the core (drawn in the row under the core)."""
+    cable: str = ""
+    """ODF: the cable at its back (``OM4 · 12 вол.``), as typed by the user or automatic."""
+    auto_ports: int = 0
+    """ODF: its duplex ports without the user's number (half the fibres of its cable)."""
+
+    def cell_rect(self, port: int) -> Rect:
+        """Box of an ODF's duplex port ``port`` (1-based)."""
+        x = self.rect.x + ODF_CAP_W + (port - 1) * CELL_W
+        return Rect(x, self.rect.y + 4, CELL_W, self.rect.h - 8)
+
+    @property
+    def shown_ports(self) -> int:
+        """Ports drawn: all of them, more when links were given ports past the last one."""
+        return max(self.ports, max(self.cells, default=0), max(self.notes, default=0))
 
 
 @dataclass
@@ -141,6 +197,10 @@ class TopoLinkResult:
     module_b: str = ""
     room: int = -1
     """Telecom room of its access switch (its colour); -1 for the links of the firewall and the core."""
+    via: list[tuple[str, int]] = field(default_factory=list)
+    """ODF ports the link runs through from ``a`` to ``b``: (ODF node id, port)."""
+    typed_label: bool = False
+    """The cable's label was typed by the user (drawn even when the link runs through ODFs)."""
 
     def end(self, node_id: str) -> str:
         """``<link id>@<node id>`` — the key of one end in :class:`TopologyEdits` ports / modules."""
@@ -165,6 +225,8 @@ class TopoGroup:
     title: str
     nodes: list[str] = field(default_factory=list)
     rect: Rect = field(default_factory=lambda: Rect(0, 0, 0, 0))
+    passive: list[str] = field(default_factory=list)
+    """ODFs and copper patch panels drawn inside the stack's frame (not members of the stack)."""
 
 
 @dataclass
@@ -192,6 +254,10 @@ class Topology:
     def link(self, link_id: str) -> TopoLinkResult | None:
         return next((lk for lk in self.links if lk.id == link_id), None)
 
+    def links_through(self, odf_id: str) -> list[TopoLinkResult]:
+        """Links that go through an ODF or end on it."""
+        return [lk for lk in self.links if odf_id in (lk.a, lk.b) or any(o == odf_id for o, _p in lk.via)]
+
     @property
     def empty(self) -> bool:
         return not any(n.kind != "wan" for n in self.nodes)
@@ -199,6 +265,23 @@ class Topology:
 
 def link_id(kind: str, a: str, b: str) -> str:
     return f"{kind}:{a}|{b}"
+
+
+def short_name(label: str) -> str:
+    """``BO72-1B0-ASW01`` -> ``1B0-ASW01`` (the site code is the same on the whole drawing)."""
+    parts = label.split("-")
+    return "-".join(parts[1:]) if len(parts) >= 3 and parts[0].isalnum() else label
+
+
+def link_title(topo: Topology, lk: TopoLinkResult) -> str:
+    """``1B0-ASW01 :50 ⇄ 1A0-DSW01 :20`` — a link as the installers name it."""
+
+    def end(nid: str, port: str) -> str:
+        n = topo.node(nid)
+        name = short_name(n.label) if n is not None else nid
+        return f"{name} :{port}" if port else name
+
+    return f"{end(lk.a, lk.port_a)} ⇄ {end(lk.b, lk.port_b)}"
 
 
 def _plan_switches(plan: RackPlan) -> list[RackItem]:
@@ -282,8 +365,10 @@ FW_COPPER_PORTS = 8
 
 def auto_medium(lk: TopoLinkResult, a: TopoNode, b: TopoNode) -> str:
     """DAC in one cabinet, modules + fibre between cabinets and to the provider, copper for HA."""
-    if lk.kind == "ha":
+    if lk.kind in ("ha", "patch") or "panel" in (a.kind, b.kind):
         return "copper"
+    if "odf" in (a.kind, b.kind):
+        return "fiber"
     if lk.kind == "isl":
         return "dac"
     if lk.kind == "wan" or (a.cabinet and b.cabinet and a.cabinet != b.cabinet):
@@ -303,6 +388,8 @@ def cable_label(lk: TopoLinkResult, a: TopoNode, b: TopoNode, fiber: str, catalo
         return "ISL · MCLAG"
     if lk.kind == "ha":
         return "HA"
+    if lk.kind == "patch":
+        return ""
     sp = f"{lk.speed:g}G"
     if lk.medium == "copper":
         return f"{sp} Cat6A"
@@ -328,7 +415,12 @@ def assign_ports(topo: Topology, catalog: Catalog, ed: TopologyEdits) -> None:
                 used[nid].update(p.strip() for p in typed.split(","))
     choices = {nid: port_choices(n.model, catalog) for nid, n in nodes.items()}
     wan_no = {n.id: i for i, n in enumerate((n for n in topo.nodes if n.kind == "wan"), 1)}
-    ends = [(lk, nid) for lk in topo.links for nid in (lk.a, lk.b) if nid in nodes]
+    ends = [
+        (lk, nid)
+        for lk in topo.links
+        for nid in (lk.a, lk.b)
+        if nid in nodes and lk.kind != "patch" and nodes[nid].kind not in PASSIVE_KINDS
+    ]
     ends.sort(key=lambda e: _end_priority(e[0], e[1]))  # stable: link order within a priority
     provider = provider_module(catalog)
 
@@ -413,13 +505,279 @@ def link_parts(topo: Topology, catalog: Catalog) -> dict[str, dict[str, tuple[in
         a, b = nodes.get(lk.a), nodes.get(lk.b)
         if a is None or b is None:
             continue
-        if lk.medium == "dac":
+        if lk.medium == "dac" and lk.kind != "patch":
             ports = len([p for p in lk.port_a.split(",") if p.strip()]) if lk.kind == "isl" else 1
             add(a.cabinet or b.cabinet, dac_model(lk, a, b, catalog), "dac", max(1, ports))
         for node, module in ((a, lk.module_a), (b, lk.module_b)):
-            if node.kind != "wan" and module.strip():
+            if node.kind not in ("wan", *PASSIVE_KINDS) and module.strip():
                 add(node.cabinet, module.strip(), "module")
     return out
+
+
+def odf_width(ports: int) -> float:
+    return ODF_CAP_W + max(1, ports) * CELL_W + 6
+
+
+def port_range(text: str) -> list[int]:
+    """``1-24`` / ``1, 3, 5–21`` -> the port numbers (anything else is skipped)."""
+    out: list[int] = []
+    for part in text.replace("–", "-").replace(";", ",").split(","):
+        bits = [b.strip() for b in part.split("-")]
+        try:
+            if len(bits) == 1 and bits[0]:
+                out.append(int(bits[0]))
+            elif len(bits) == 2:
+                lo, hi = int(bits[0]), int(bits[1])
+                out.extend(range(min(lo, hi), max(lo, hi) + 1))
+        except ValueError:
+            continue
+    return out
+
+
+def compact_range(ports: list[int]) -> str:
+    """[1, 2, 3, 5] -> ``1–3, 5``."""
+    out: list[str] = []
+    run: list[int] = []
+    for n in [*sorted(set(ports)), None]:
+        if n is not None and run and n == run[-1] + 1:
+            run.append(n)
+            continue
+        if run:
+            out.append(str(run[0]) if len(run) == 1 else f"{run[0]}–{run[-1]}")
+        run = [n] if n is not None else []
+    return ", ".join(out)
+
+
+def _odf_nodes(
+    plans: list[RackPlan],
+    fspec: object,
+    fiber: str,
+    ed: TopologyEdits,
+    t: Translator,
+    rooms: dict[tuple[int, int], int],
+) -> list[TopoNode]:
+    """An ODF node for every optical patch panel of the cabinets, joined to the one at the other end of its cable.
+
+    ``odf:<cabinet>:<peer>`` stands in cabinet ``<cabinet>``; the peer is a cabinet of the same floor,
+    ``fw`` (the firewall floor's ``floor<N>``), ``floor<N>`` or ``isp`` (the provider's fibre).
+    """
+    housing_24 = getattr(fspec, "housing_24", "")
+    found: dict[tuple[int, str, str], TopoNode] = {}
+    tags: dict[tuple[int, str], str] = {}
+    out: list[TopoNode] = []
+    for plan in plans:
+        tags[(plan.floor, plan.key)] = plan.tag
+        for it in sorted(plan.items, key=lambda i: -i.u):
+            if it.group != "fiber":
+                continue
+            nid = f"{plan.tag}/{it.id}"
+            fibres = (
+                24 if housing_24 and it.model == housing_24 and housing_24 != getattr(fspec, "housing_12", "") else 12
+            )
+            ports = min(ODF_MAX_PORTS, max(1, ed.odf_ports.get(nid, fibres // 2)))
+            node = TopoNode(
+                nid,
+                "odf",
+                ed.labels.get(nid, f"ODF {plan.tag}"),
+                it.model,
+                plan.tag,
+                u=it.u,
+                room=rooms.get((plan.floor, plan.room), 0),
+                ports=ports,
+                rect=Rect(0, 0, odf_width(ports), ODF_H),
+                auto_ports=fibres // 2,
+            )
+            node.cable = ed.labels.get(nid + "#cable", f"{fiber} · {t.t('topo.fibres', n=fibres)}".strip(" ·"))
+            node.caption = it.label  # hand-added: its own name
+            if it.id.startswith("odf:"):
+                _o, key, peer = it.id.split(":", 2)
+                found[(plan.floor, key, peer)] = node
+            out.append(node)
+    for (floor, key, peer), node in found.items():
+        target: TopoNode | None = None
+        if peer == "isp":
+            node.peer = "isp"
+            node.caption = "→ " + t.t("topo.odf_isp")
+            node.cable = ed.labels.get(node.id + "#cable", "")
+            continue
+        if (floor, peer) in tags:
+            target = found.get((floor, peer, key))
+        elif peer == "fw":
+            target = next((n for (_f, _k, pp), n in found.items() if pp == f"floor{floor}"), None)
+        elif peer.startswith("floor") and peer[5:].lstrip("-").isdigit():
+            target = next((n for (f, _k, pp), n in found.items() if f == int(peer[5:]) and pp == "fw"), None)
+        if target is not None:
+            node.peer = target.id
+            node.caption = "→ " + target.cabinet
+        else:
+            node.caption = "→ " + tags.get((floor, peer), peer)
+    return out
+
+
+def _panel_nodes(
+    plans: list[RackPlan], switches: dict[str, TopoNode], catalog: Catalog, ed: TopologyEdits
+) -> list[TopoNode]:
+    """Copper patch panels of the switches (``panel:<switch>:<k>``), with the switch ports they go to."""
+    per = catalog.passive.panel_ports
+    out: list[TopoNode] = []
+    for plan in plans:
+        mine: dict[str, list[tuple[int, RackItem]]] = {}
+        for it in plan.items:
+            if it.group != "panel" or not it.id.startswith("panel:"):
+                continue
+            bits = it.id.split(":")
+            if len(bits) < 3 or not bits[-1].isdigit():
+                continue
+            mine.setdefault(f"{plan.tag}/{':'.join(bits[1:-1])}", []).append((int(bits[-1]), it))
+        for sw_id, items in mine.items():
+            sw = switches.get(sw_id)
+            if sw is None:
+                continue
+            dev = catalog.models.get(sw.model)
+            copper = dev.ports.count if dev is not None and dev.ports is not None else 48
+            for k, it in sorted(items, key=lambda ki: ki[0]):
+                nid = f"{plan.tag}/{it.id}"
+                lo, hi = (k - 1) * per + 1, min(k * per, copper)
+                typed = ed.panel_map.get(nid, "").strip()
+                to = port_range(typed) if typed else list(range(lo, hi + 1))
+                node = TopoNode(
+                    nid,
+                    "panel",
+                    ed.labels.get(nid, it.label),
+                    it.model,
+                    plan.tag,
+                    u=it.u,
+                    room=sw.room,
+                    ports=per,
+                    switch=sw.id,
+                    group=sw.group,
+                )
+                node.caption = f"1–{min(per, len(to)) or per} → {compact_range(to) or '—'}"
+                out.append(node)
+    return out
+
+
+def _odf_route(src: str, dst: str, adj: dict[str, list[tuple[TopoNode, TopoNode]]]) -> list[tuple[TopoNode, TopoNode]]:
+    """ODF pairs (near end, far end) a cable path takes from cabinet ``src`` to ``dst`` (shortest)."""
+    prev: dict[str, tuple[str, TopoNode, TopoNode]] = {}
+    seen, queue = {src}, [src]
+    while queue:
+        cab = queue.pop(0)
+        if cab == dst:
+            break
+        for near, far in adj.get(cab, []):
+            if far.cabinet not in seen:
+                seen.add(far.cabinet)
+                prev[far.cabinet] = (cab, near, far)
+                queue.append(far.cabinet)
+    if dst not in prev:
+        return []
+    path: list[tuple[TopoNode, TopoNode]] = []
+    cab = dst
+    while cab != src:
+        back, near, far = prev[cab]
+        path.append((near, far))
+        cab = back
+    return path[::-1]
+
+
+def through_odfs(topo: Topology, ed: TopologyEdits, t: Translator) -> None:
+    """Which ODF ports every fibre link goes through (``via``) and the ODFs' ``cells``.
+
+    The user's ports (``odf_map``) are taken first; a cable's two ends get the same port number unless
+    the user said otherwise; the rest take the first port free at both ends. A link drawn to an ODF ends
+    on one of its ports (its ``port_a`` / ``port_b``).
+    """
+    nodes = {n.id: n for n in topo.nodes}
+    odfs = [n for n in topo.nodes if n.kind == "odf"]
+    if not odfs:
+        return
+    adj: dict[str, list[tuple[TopoNode, TopoNode]]] = {}
+    isp: dict[str, TopoNode] = {}
+    for o in odfs:
+        o.cells = {}
+        if o.peer == "isp":
+            isp.setdefault(o.cabinet, o)
+        elif o.peer in nodes:
+            adj.setdefault(o.cabinet, []).append((o, nodes[o.peer]))
+    routes: dict[tuple[str, str], list[tuple[TopoNode, TopoNode]]] = {}
+    plan: list[tuple[TopoLinkResult, list[list[TopoNode]]]] = []
+    """Per link: its hops — a cable (two ODFs) or the provider's ODF / an ODF the link ends on (one)."""
+    for lk in topo.links:
+        a, b = nodes.get(lk.a), nodes.get(lk.b)
+        lk.via = []
+        if a is None or b is None or lk.kind == "patch":
+            continue
+        hops: list[list[TopoNode]] = []
+        if a.kind == "odf" or b.kind == "odf":
+            hops = [[n] for n in (a, b) if n.kind == "odf"]
+        elif lk.kind == "wan":
+            fw = a if a.kind == "firewall" else b
+            if fw.cabinet in isp:
+                hops = [[isp[fw.cabinet]]]
+        elif lk.medium == "fiber" and a.cabinet and b.cabinet and a.cabinet != b.cabinet:
+            key = (a.cabinet, b.cabinet)
+            if key not in routes:
+                routes[key] = _odf_route(a.cabinet, b.cabinet, adj)
+            hops = [[near, far] for near, far in routes[key]]
+        if hops:
+            plan.append((lk, hops))
+    taken: dict[str, dict[int, str]] = {o.id: {} for o in odfs}
+
+    def typed(lk: TopoLinkResult, o: TopoNode) -> int | None:
+        if o.id in (lk.a, lk.b):  # the link ends on this ODF: its port field
+            text = ed.ports.get(lk.end(o.id), "").strip()
+            return int(text) if text.isdigit() and int(text) > 0 else None
+        n = ed.odf_map.get(f"{lk.id}@{o.id}")
+        return n if n is not None and n > 0 else None
+
+    clash: set[str] = set()
+    for lk, hops in plan:  # the user's ports first
+        for hop in hops:
+            for o in hop:
+                n = typed(lk, o)
+                if n is None:
+                    continue
+                if n in taken[o.id]:
+                    clash.add(o.id)
+                else:
+                    taken[o.id][n] = lk.id
+    for lk, hops in plan:
+        via: list[tuple[str, int]] = []
+        for hop in hops:
+            mine = {o.id: n for o in hop if (n := typed(lk, o)) is not None and taken[o.id].get(n) == lk.id}
+            free = [o for o in hop if o.id not in mine]
+            if free:
+                want = next(iter(mine.values()), None)
+                if want is not None and all(want not in taken[o.id] for o in free):
+                    n = want
+                else:
+                    n = 1
+                    while any(n in taken[o.id] for o in free):
+                        n += 1
+                for o in free:
+                    taken[o.id][n] = lk.id
+                    mine[o.id] = n
+            via += [(o.id, mine[o.id]) for o in hop]
+        ends = {oid for oid, _n in via if oid in (lk.a, lk.b)}
+        for oid, n in via:
+            if oid == lk.a:
+                lk.port_a, lk.module_a = str(n), ""
+            elif oid == lk.b:
+                lk.port_b, lk.module_b = str(n), ""
+        lk.via = [(oid, n) for oid, n in via if oid not in ends]
+    for o in odfs:
+        o.cells = dict(sorted(taken[o.id].items()))
+        o.notes = {
+            int(k.rsplit("#", 1)[1]): v
+            for k, v in ed.port_notes.items()
+            if k.rsplit("#", 1)[0] == o.id and k.rsplit("#", 1)[1].isdigit() and v
+        }
+        o.rect.w = odf_width(o.shown_ports)
+        if len(o.cells) > o.ports or max(o.cells, default=0) > o.ports:
+            topo.problems.append(t.t("topo.odf_short", name=f"{o.label} {o.caption}", used=len(o.cells), cap=o.ports))
+        if o.id in clash:
+            topo.problems.append(t.t("topo.odf_clash", name=f"{o.label} {o.caption}"))
 
 
 def build_topology(
@@ -498,6 +856,29 @@ def build_topology(
             for i, name in enumerate(names)
         ]
 
+    # ---- passive parts: ODFs, copper patch panels -------------------------------------------
+    fspec = catalog.passive.fiber.get(result.rack.passive.fiber_type)
+    fiber = result.rack.passive.fiber_type.upper() if result.rack.passive.fiber_type else ""
+    odfs = _odf_nodes(result.rack.plans, fspec, fiber, ed, t, rooms) if ed.show_odf else []
+    panels = _panel_nodes(result.rack.plans, switches, catalog, ed) if ed.show_panels else []
+    for n in panels:
+        n.group = switches[n.switch].group
+    head_cabs = {n.cabinet for n in (*fws, *cores)}
+    first_col: dict[str, str] = {}
+    """Cabinet -> its first stack (its ODFs stand above it)."""
+    for gid, col in columns.items():
+        first_col.setdefault(col_cab.get(gid) or col[0].cabinet, gid)
+    isp_odfs = [o for o in odfs if o.peer == "isp"]
+    head_odfs = [o for o in odfs if o.peer != "isp" and (o.cabinet in head_cabs or o.cabinet not in first_col)]
+    col_odfs: dict[str, list[TopoNode]] = {}
+    for o in odfs:
+        o.head = o in isp_odfs or o in head_odfs
+        if not o.head:
+            col_odfs.setdefault(first_col[o.cabinet], []).append(o)
+    panels_of: dict[str, list[TopoNode]] = {}
+    for n in panels:
+        panels_of.setdefault(n.switch, []).append(n)
+
     # ---- automatic layout ------------------------------------------------------------------
     col_list = list(columns.items())
     # a head with many links below it gets wider, so that their port numbers do not overlap
@@ -525,10 +906,32 @@ def build_topology(
         )
         for (a, _ca), (b, _cb) in itertools.pairwise(col_list)
     ]
-    cols_w = len(col_list) * NODE_W + sum(gaps)
+    # a stack is wider with patch panels left of its switches, or with a long row of ODFs above it
+    shift = {gid: PANEL_W + PANEL_GAP if any(n.id in panels_of for n in col) else 0.0 for gid, col in col_list}
+    col_w = {
+        gid: max(
+            shift[gid] + NODE_W,
+            shift[gid] + sum(o.rect.w for o in col_odfs.get(gid, [])) + ODF_VGAP * (len(col_odfs.get(gid, [])) - 1),
+        )
+        for gid, _col in col_list
+    }
+    cols_w = sum(col_w.values()) + sum(gaps)
     pair_w = 2 * head_w + PAIR_GAP
     width = max(cols_w, pair_w, 520.0) + 2 * PAD
     cx = width / 2
+    col_x: dict[str, float] = {}
+    x = cx - cols_w / 2
+    for i, (gid, _col) in enumerate(col_list):
+        col_x[gid] = x
+        x += col_w[gid] + (gaps[i] if i < len(gaps) else 0)
+
+    def place_row(row: list[TopoNode], y: float, x0: float | None = None) -> None:
+        total = sum(n.rect.w for n in row) + (len(row) - 1) * 24
+        x = cx - total / 2 if x0 is None else x0
+        for n in row:
+            n.rect.x, n.rect.y = x, y
+            x += n.rect.w + 24
+
     y = PAD
     if wans:
         total = len(wans) * WAN_W + (len(wans) - 1) * 60
@@ -536,7 +939,10 @@ def build_topology(
         for w in wans:
             w.rect.x, w.rect.y = x, y
             x += WAN_W + 60
-        y += WAN_H + 150  # room for the port, the module and the cable towards the provider
+        y += WAN_H + (70 if isp_odfs else 150)  # room for the port, the module and the cable towards the provider
+    if isp_odfs and fws:
+        place_row(isp_odfs, y)
+        y += ODF_H + 96
 
     def place_pair(nodes: list[TopoNode], y: float) -> None:
         total = sum(n.rect.w for n in nodes) + (len(nodes) - 1) * PAIR_GAP
@@ -554,22 +960,67 @@ def build_topology(
     # the band where up-links run sideways towards the cores; the modules written down from the
     # cores' ports stay above its lines
     lanes = sum(1 for _g, col in col_list for _ in range(2 if len(col) > 1 or ed.access == "dual" else 1))
-    fspec = catalog.passive.fiber.get(result.rack.passive.fiber_type)
+    ups = sum(2 * len(col) if ed.access == "dual" else (2 if len(col) > 1 else 1) for _g, col in col_list)
+    """Up-links of the stacks (each its own level in the bands)."""
     module_len = text_w(fspec.transceiver if fspec else "")
-    band = max(62.0, 54 + module_len) + LANE_STEP * min(lanes, 24)
+    head_row = head_odfs + (isp_odfs if not fws else [])
+    if head_row and (fws or cores):
+        # the ODFs of the head cabinet in a row under the core, right of the head cabinet's own stacks; the
+        # patch cords from the core's ports to them run sideways above the row
+        y += max(64.0, 44 + module_len) + TRUNK_STEP * min(ups, 80)
+        odf_by_id = {o.id: o for o in odfs}
+
+        def peer_x(o: TopoNode) -> float:
+            q = odf_by_id.get(o.peer)  # under the stack its cable goes to: the cables do not cross
+            return col_x.get(first_col.get(q.cabinet, ""), 1e9) if q is not None else 1e9
+
+        head_row.sort(key=peer_x)
+        right = max((col_x[g] + col_w[g] for g, col in col_list if col and col[0].cabinet in head_cabs), default=None)
+        total = sum(o.rect.w for o in head_row) + (len(head_row) - 1) * 24
+        x0 = cx - total / 2
+        if right is not None and x0 < right + 60:
+            x0 = right + 60
+        place_row(head_row, y, x0)
+        y += ODF_H
+        band = 46.0 + TRUNK_STEP * min(ups, 80)
+    else:
+        band = max(62.0, 54 + module_len) + LANE_STEP * min(lanes, 24)
     top = y + band + GROUP_TITLE_H + GROUP_PAD if (fws or cores) else y + GROUP_TITLE_H
     if framed:
         top += CAB_TITLE_H + CAB_PAD
-    x = cx - cols_w / 2
-    for i, (_gid, col) in enumerate(col_list):
-        yy = top
+    odf_block = ODF_H + ODF_GAP if col_odfs else 0.0  # every stack starts at the same height
+    for gid, col in col_list:
+        x = col_x[gid] + shift[gid]
+        ox = x
+        for o in col_odfs.get(gid, []):
+            o.rect.x, o.rect.y = ox, top
+            ox += o.rect.w + ODF_VGAP
+        yy = top + odf_block
         for n in col:
             n.rect = Rect(x, yy, NODE_W, NODE_H)
+            mine = panels_of.get(n.id, [])
+            ph = (NODE_H - 4 * (len(mine) - 1)) / len(mine) if mine else 0.0
+            for k, pn in enumerate(mine):
+                pn.rect = Rect(x - PANEL_GAP - PANEL_W, yy + k * (ph + 4), PANEL_W, ph)
             yy += NODE_H + STACK_GAP
-        x += NODE_W + (gaps[i] if i < len(gaps) else 0)
 
     # ---- the user's positions --------------------------------------------------------------
-    all_nodes = [*wans, *fws, *cores, *(n for _g, col in col_list for n in col)]
+    col_passive = {
+        gid: [*(o.id for o in col_odfs.get(gid, [])), *(pn.id for n in col for pn in panels_of.get(n.id, []))]
+        for gid, col in col_list
+    }
+    all_nodes = [
+        *wans,
+        *(isp_odfs if fws else []),
+        *fws,
+        *cores,
+        *head_row,
+        *(
+            n
+            for gid, col in col_list
+            for n in (*col_odfs.get(gid, []), *(pn for sw in col for pn in panels_of.get(sw.id, [])), *col)
+        ),
+    ]
     for n in all_nodes:
         pos = ed.positions.get(n.id)
         if pos is not None:
@@ -579,7 +1030,7 @@ def build_topology(
     for gid, col in col_list:
         tag = col_cab.get(gid, "")
         title = col_kind.get(gid, gid) if tag in framed else col_titles.get(gid, gid)
-        topo.groups.append(TopoGroup(gid, ed.labels.get(gid, title), [n.id for n in col]))
+        topo.groups.append(TopoGroup(gid, ed.labels.get(gid, title), [n.id for n in col], passive=col_passive[gid]))
     for tag in framed:
         nodes = [n.id for gid, col in col_list if col_cab.get(gid) == tag for n in col]
         cid = f"cab:{tag}"
@@ -638,6 +1089,8 @@ def build_topology(
                 add("stack", b, a, speed=speed_of(b, a))
             if len(col) > 1 or last is not first:
                 add("fortilink", bottom_sw, last, speed=speed_of(bottom_sw, last))
+    for pn in panels:  # a copper patch panel to its switch (0.25 m cords)
+        links.append(TopoLinkResult(f"patch:{pn.id}", pn.id, pn.switch, "patch", speed=1.0))
     hidden = set(ed.hidden)
     nodes_by_id = {n.id: n for n in all_nodes}
     out = []
@@ -658,9 +1111,11 @@ def build_topology(
         lk.room = sw.room if sw is not None else -1
         lk.medium = ed.media.get(lk.id) or auto_medium(lk, a, b)
         typed = ed.labels.get(lk.id) if lk.auto else (lk.label or None)
+        lk.typed_label = bool(typed)
         lk.label = typed if typed is not None else cable_label(lk, a, b, fiber, catalog, t)
     topo.links = out
     assign_ports(topo, catalog, ed)
+    through_odfs(topo, ed, t)
 
     # ---- ports ---------------------------------------------------------------------------------
     for n in (*cores, *fws):
@@ -684,6 +1139,7 @@ def _fit_groups(topo: Topology) -> None:
     by_id = {n.id: n for n in topo.nodes}
     for g in topo.groups:
         rects = [by_id[i].rect for i in g.nodes if i in by_id]
+        rects += [by_id[i].rect for i in g.passive if i in by_id and not by_id[i].manual]
         if not rects:
             continue
         x0 = min(r.x for r in rects) - GROUP_PAD
@@ -734,7 +1190,9 @@ def route_links(topo: Topology) -> None:
 
     Up-links of a column leave its top switch from the top; the others leave from the side facing
     their core and run up a lane beside the column, then sideways in a band above the columns.
-    Ports along a side are spread so that lines do not sit on top of each other.
+    Ports along a side are spread so that lines do not sit on top of each other. A link through ODFs
+    runs into the port (cell) of every ODF on its way and out of it on the other side; a copper patch
+    panel is joined to its switch by a short level line.
     """
     nodes = {n.id: n for n in topo.nodes}
     groups = {g.id: g for g in topo.groups}
@@ -742,6 +1200,9 @@ def route_links(topo: Topology) -> None:
     columns_top = min((g.rect.y for g in (*topo.groups, *topo.cabinets)), default=0.0)
     heads = [n for n in topo.nodes if n.kind in ("firewall", "core_switch")]
     heads_bottom = max((n.rect.bottom for n in heads), default=0.0)
+    head_row_top = min(
+        (n.rect.y for n in topo.nodes if n.kind == "odf" and n.head and n.rect.y > heads_bottom), default=None
+    )
 
     def above(n: TopoNode) -> bool:
         g = groups.get(n.group)
@@ -749,16 +1210,57 @@ def route_links(topo: Topology) -> None:
             return False
         return any(o != n.id and nodes[o].rect.y < n.rect.y for o in g.nodes if o in nodes)
 
+    def cell(o: str, port: int) -> Rect | None:
+        n = nodes.get(o)
+        return n.cell_rect(port) if n is not None and n.kind == "odf" and port > 0 else None
+
+    def end_cell(lk: TopoLinkResult, nid: str) -> Rect | None:
+        """The ODF port a link ends on (a link drawn to an ODF)."""
+        port = lk.port_a if nid == lk.a else lk.port_b
+        return cell(nid, int(port)) if port.isdigit() else None
+
+    def stops(lk: TopoLinkResult) -> list[Rect]:
+        """The ODF ports on the way from ``a`` to ``b`` (an ODF end included)."""
+        out = [c for o, port in lk.via if (c := cell(o, port)) is not None]
+        a, b = nodes[lk.a], nodes[lk.b]
+        if a.kind == "odf" and (c := end_cell(lk, a.id)) is not None:
+            out.insert(0, c)
+        if b.kind == "odf" and (c := end_cell(lk, b.id)) is not None:
+            out.append(c)
+        return out
+
     # which side of which node each link uses
     ends: dict[str, dict[str, list[tuple[float, str]]]] = {}
 
     def claim(node: TopoNode, side: str, other_x: float, lid: str) -> None:
         ends.setdefault(node.id, {}).setdefault(side, []).append((other_x, lid))
 
+    def dev_side(dev: TopoNode, tx: float, ty: float) -> str:
+        """The side a device's line leaves through towards the point (tx, ty)."""
+        if dev.kind in SWITCH_KINDS and dev.group in groups and above(dev) and ty < dev.rect.y:
+            return "left" if tx < groups[dev.group].rect.cx else "right"
+        return "top" if ty < dev.rect.cy else "bottom"
+
     plan: dict[str, tuple[str, str]] = {}
+    via_stops: dict[str, list[Rect]] = {}
     for lk in topo.links:
         a, b = nodes.get(lk.a), nodes.get(lk.b)
         if a is None or b is None:
+            continue
+        if lk.kind == "patch":
+            plan[lk.id] = ("patch", "patch")
+            continue
+        cells = stops(lk) if (lk.via or "odf" in (a.kind, b.kind)) else []
+        if cells:
+            via_stops[lk.id] = cells
+            sa = sb = "cell"
+            if a.kind != "odf":
+                sa = dev_side(a, cells[0].cx, cells[0].cy)
+                claim(a, sa, cells[0].cx, lk.id)
+            if b.kind != "odf":
+                sb = dev_side(b, cells[-1].cx, cells[-1].cy)
+                claim(b, sb, cells[-1].cx, lk.id)
+            plan[lk.id] = (sa, sb)
             continue
         if lk.kind in ("ha", "isl") and abs(a.rect.cy - b.rect.cy) < 1:
             left = a if a.rect.cx <= b.rect.cx else b
@@ -801,17 +1303,122 @@ def route_links(topo: Topology) -> None:
             for k, (_y, lid) in enumerate(members):
                 base = g.rect.x if side == "left" else g.rect.right
                 lane_x[lid] = base - 8 - LANE_STEP * k if side == "left" else base + 8 + LANE_STEP * k
-    band_links = [lk for lk in topo.links if lk.id in plan and plan[lk.id][0] not in ("stack",)]
     band_y: dict[str, float] = {}
     k = 0
     low_band = columns_top - 30
-    for lk in band_links:
+    # with a row of ODFs under the core, the links that do not go through them run sideways above it
+    high_band = head_row_top - 12 if head_row_top is not None else None
+    for lk in topo.links:
         a, b = nodes.get(lk.a), nodes.get(lk.b)
-        if a is None or b is None or lk.kind not in ("fortilink", "custom", "stack"):
+        if a is None or b is None or lk.id not in plan or lk.id in via_stops:
             continue
-        band_y[lk.id] = low_band - LANE_STEP * k
+        if plan[lk.id][0] == "stack" or lk.kind not in ("fortilink", "custom", "stack"):
+            continue
+        band_y[lk.id] = (high_band if high_band is not None else low_band) - LANE_STEP * k
         k += 1
     floor_y = heads_bottom + 18
+    # ODF routes: the cables between cabinets in the band, the cords to the core above the ODF row
+    module_room = max((text_w(m) for lk in topo.links for m in (lk.module_a, lk.module_b)), default=0.0)
+    trunk_y: dict[str, float] = {}
+    head_y: dict[str, float] = {}
+    kt = kh = 0
+    for lk in topo.links:
+        if lk.id not in via_stops:
+            continue
+        trunk_y[lk.id] = low_band - TRUNK_STEP * kt
+        kt += 1
+        head_y[lk.id] = heads_bottom + max(40.0, module_room + 30) + TRUNK_STEP * kh
+        kh += 1
+    cell_rank: dict[tuple[float, float], int] = {}
+    cell_cab: dict[tuple[float, float], str] = {}
+    for o in topo.nodes:
+        if o.kind == "odf":
+            for i, n in enumerate(sorted(o.cells)):
+                c = o.cell_rect(n)
+                cell_rank[(round(c.x, 1), round(c.y, 1))] = i
+            for n in range(1, o.shown_ports + 1):
+                c = o.cell_rect(n)
+                cell_cab[(round(c.x, 1), round(c.y, 1))] = o.cabinet
+
+    def cab_of(c: Rect) -> str:
+        return cell_cab.get((round(c.x, 1), round(c.y, 1)), "")
+
+    def leg(
+        p: tuple[float, float], up_p: bool, q: tuple[float, float], up_q: bool, hint: float | None
+    ) -> list[tuple[float, float]]:
+        """Corners from ``p`` (leaving upwards / downwards) to ``q`` (reached moving up / down), and ``q``."""
+        (px, py), (qx, qy) = p, q
+        if abs(px - qx) < 0.5 and up_p == up_q and ((qy < py) if up_p else (qy > py)):
+            return [q]
+        if up_p and up_q:
+            lo, hi = qy + 6, py - 6
+            y = min(max(hint, lo), hi) if hint is not None and lo <= hi else (py + qy) / 2
+        elif not up_p and not up_q:
+            lo, hi = py + 6, qy - 6
+            y = min(max(hint, lo), hi) if hint is not None and lo <= hi else (py + qy) / 2
+        elif up_p:  # over the top: e.g. from one ODF to another standing as high
+            y = min(py, qy) - 12 if hint is None else min(hint, min(py, qy) - 12)
+        else:  # under the bottom: a patch cord between two ODFs of one cabinet
+            y = max(py, qy) + 12 if hint is None else max(hint, max(py, qy) + 12)
+        return [(px, y), (qx, y), q]
+
+    def cord_y(lk: TopoLinkResult, dev: TopoNode, c: Rect) -> float:
+        """Where the cord between a device and an ODF port runs sideways: above the ODF row for the core /
+        FortiGate, else just past the ODF (each port of it at its own height)."""
+        rank = cell_rank.get((round(c.x, 1), round(c.y, 1)), 0)
+        if dev.kind in ("firewall", "core_switch") and c.cy > dev.rect.cy and lk.id in head_y:
+            return head_y[lk.id]
+        return c.bottom + 8 + 6.0 * rank if c.cy < dev.rect.cy else c.y - 8 - 6.0 * rank
+
+    def route_via(lk: TopoLinkResult, a: TopoNode, b: TopoNode, cells: list[Rect]) -> list[tuple[float, float]]:
+        sa, sb = plan[lk.id]
+        pts: list[tuple[float, float]] = []
+        first = cells[0]
+        if sa == "cell":
+            up = (len(cells) > 1 and cells[1].cy < first.y + 1) or (len(cells) == 1 and b.rect.cy < first.y)
+            cur = (first.cx, first.y if up else first.bottom)
+            pts.append((first.cx, first.bottom if up else first.y))
+            pts.append(cur)
+            todo = cells[1:]
+        else:
+            cur = port(a, sa, lk.id)
+            pts.append(cur)
+            up = sa == "top" or (sa in ("left", "right") and first.cy < a.rect.y)
+            if sa in ("left", "right"):
+                lx = lane_x.get(lk.id, cur[0])
+                cur = (lx, cur[1])
+                pts.append(cur)
+            todo = cells
+        prev: Rect | None = first if sa == "cell" else None
+        for i, c in enumerate(todo):
+            enter_low = cur[1] >= c.bottom - 1
+            entry = (c.cx, c.bottom if enter_low else c.y)
+            hint: float | None
+            if prev is None:
+                hint = cord_y(lk, a, c)
+            elif cab_of(prev) == cab_of(c):  # patched between two ODFs of one cabinet: under them
+                hint = max(prev.bottom, c.bottom) + 8 + 5.0 * cell_rank.get((round(c.x, 1), round(c.y, 1)), 0)
+            else:
+                hint = trunk_y.get(lk.id)
+            pts += leg(cur, up, entry, enter_low, hint)
+            nxt = todo[i + 1] if i + 1 < len(todo) else None
+            ny = nxt.cy if nxt is not None else (b.rect.cy if sb != "cell" else c.cy)
+            # to another cabinet's ODF standing as high: over the top, through the band above the stacks
+            up = ny < c.y - 1 or (nxt is not None and cab_of(nxt) != cab_of(c) and ny <= c.bottom + 1)
+            cur = (c.cx, c.y if up else c.bottom)
+            pts.append(cur)
+            prev = c
+        if sb == "cell":
+            return pts
+        q = port(b, sb, lk.id)
+        hint = cord_y(lk, b, cells[-1])
+        if sb in ("left", "right"):
+            lx = lane_x.get(lk.id, q[0])
+            pts += leg(cur, up, (lx, q[1]), not up, hint)[:-1]
+            pts += [(lx, q[1]), q]
+        else:
+            pts += leg(cur, up, q, sb == "bottom", hint)
+        return pts
 
     for lk in topo.links:
         a, b = nodes.get(lk.a), nodes.get(lk.b)
@@ -819,6 +1426,15 @@ def route_links(topo: Topology) -> None:
             lk.points = []
             continue
         sa, sb = plan[lk.id]
+        if sa == "patch":
+            y = a.rect.cy
+            lk.points = (
+                [(a.rect.right, y), (b.rect.x, y)] if a.rect.right <= b.rect.x else [(a.rect.x, y), (b.rect.right, y)]
+            )
+            continue
+        if lk.id in via_stops:
+            lk.points = _dedupe(route_via(lk, a, b, via_stops[lk.id]))
+            continue
         if sa == "stack":
             x = a.rect.x + STACK_X
             lo, hi = (a, b) if a.rect.y > b.rect.y else (b, a)
@@ -849,7 +1465,7 @@ def route_links(topo: Topology) -> None:
         lk.points = pts if lower_first else pts[::-1]
 
     for lk in topo.links:
-        lk.label_t = _label_t(lk)
+        lk.label_t = _via_label_t(lk) if lk.id in via_stops else _label_t(lk)
 
     rects = [n.rect for n in topo.nodes] + [g.rect for g in (*topo.groups, *topo.cabinets)]
     pts = [p for lk in topo.links for p in lk.points]
@@ -861,3 +1477,29 @@ def route_links(topo: Topology) -> None:
     topo.origin = (min(0.0, x0 - PAD), min(0.0, y0 - PAD))
     topo.width = x1 + PAD - topo.origin[0]
     topo.height = y1 + PAD + 28 - topo.origin[1]  # footer line
+
+
+def _dedupe(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Drop repeated points and the middle of three on one straight line."""
+    out: list[tuple[float, float]] = []
+    for pt in points:
+        if out and abs(out[-1][0] - pt[0]) < 0.01 and abs(out[-1][1] - pt[1]) < 0.01:
+            continue
+        if len(out) >= 2:
+            (x0, y0), (x1, y1) = out[-2], out[-1]
+            if (abs(x0 - x1) < 0.01 and abs(x1 - pt[0]) < 0.01 and (y1 - y0) * (pt[1] - y1) > 0) or (
+                abs(y0 - y1) < 0.01 and abs(y1 - pt[1]) < 0.01 and (x1 - x0) * (pt[0] - x1) > 0
+            ):
+                out[-1] = pt
+                continue
+        out.append(pt)
+    return out
+
+
+def _via_label_t(lk: TopoLinkResult) -> float:
+    """A typed cable label of a link through ODFs: on its first cord (from ``a`` to the first ODF)."""
+    if len(lk.points) < 2:
+        return 0.5
+    lens = [math.hypot(x2 - x1, y2 - y1) for (x1, y1), (x2, y2) in itertools.pairwise(lk.points)]
+    total = sum(lens) or 1.0
+    return min(0.5, (lens[0] + (lens[1] / 2 if len(lens) > 1 else 0)) / total)

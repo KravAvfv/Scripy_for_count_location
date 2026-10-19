@@ -4,7 +4,9 @@
 (every floor): FortiGates, core, access stacks, with the names from the cabinets. Devices are dragged,
 links added / removed / retyped / relabelled, switches moved to another stack, and the access design
 switched between stacks (rings) and dual-homed — all undoable edits of ``SiteInput.topology``
-(shared by every floor). Exports: PNG, SVG, draw.io.
+(shared by every floor). The cabinets' ODFs (and, when switched on, the copper patch panels) are on the
+drawing: a click on one shows its ports in the side panel, where links are put into other ports and
+notes written; the connection wizard asks about every ODF / link in turn. Exports: PNG, SVG, draw.io.
 """
 
 from __future__ import annotations
@@ -101,7 +103,24 @@ class TopologyView(QWidget):
         self.wan.toggled.connect(lambda on: self._edit("WAN", lambda t: t.update(show_wan=bool(on))))
         eb.addWidget(self.wan)
         eb.addWidget(label("WAN", "caption"))
+        eb.addSpacing(px(8))
+        self.odf = ToggleSwitch()
+        self.odf.setToolTip(tr("topo.show_odf_tip"))
+        self.odf.toggled.connect(lambda on: self._edit("ODF", lambda t: t.update(show_odf=bool(on))))
+        eb.addWidget(self.odf)
+        eb.addWidget(label("ODF", "caption"))
+        eb.addSpacing(px(8))
+        self.panels = ToggleSwitch()
+        self.panels.setToolTip(tr("topo.show_panels_tip"))
+        self.panels.toggled.connect(
+            lambda on: self._edit(tr("topo.show_panels"), lambda t: t.update(show_panels=bool(on)))
+        )
+        eb.addWidget(self.panels)
+        eb.addWidget(label(tr("topo.show_panels"), "caption"))
         eb.addStretch(1)
+        self.wizard_btn = button(tr("wiz.open"), None, "clipboard-list", tr("wiz.open_tip"))
+        self.wizard_btn.clicked.connect(self.open_wizard)
+        eb.addWidget(self.wizard_btn)
         self.connect_btn = button(tr("topo.connect"), None, "cable", tr("topo.connect_tip"))
         self.connect_btn.clicked.connect(self._connect_selected)
         eb.addWidget(self.connect_btn)
@@ -124,6 +143,9 @@ class TopologyView(QWidget):
         self.panel.connectionChanged.connect(self.set_connection)
         self.panel.mediumChanged.connect(self.set_medium)
         self.panel.endpointsChanged.connect(self.set_endpoints)
+        self.panel.passiveChanged.connect(self.set_passive)
+        self.panel.odfPortChanged.connect(self.set_odf_port)
+        self.panel.noteChanged.connect(self.set_note)
         body.addWidget(self.panel)
         root.addLayout(body, 1)
         self.hint = label(tr("topo.hint"), "caption", wrap=True)
@@ -191,6 +213,8 @@ class TopologyView(QWidget):
             self.access.setValue(ed.access)
             self.group_size.setValue(ed.group_size or self.state.catalog.rules.topology_group_size)
             self.wan.setChecked(ed.show_wan)
+            self.odf.setChecked(ed.show_odf)
+            self.panels.setChecked(ed.show_panels)
         finally:
             self._loading = False
         self.canvas.set_diagram(self.build_diagram())
@@ -235,6 +259,10 @@ class TopologyView(QWidget):
                 ("modules", {}),
                 ("endpoints", {}),
                 ("media", {}),
+                ("odf_ports", {}),
+                ("odf_map", {}),
+                ("port_notes", {}),
+                ("panel_map", {}),
             ):
                 topo.setdefault(key, empty)
             fn(topo)
@@ -315,7 +343,20 @@ class TopologyView(QWidget):
 
     def reset(self) -> None:
         def fn(t: dict[str, Any]) -> None:
-            for key in ("positions", "labels", "kinds", "groups", "ports", "modules", "endpoints", "media"):
+            for key in (
+                "positions",
+                "labels",
+                "kinds",
+                "groups",
+                "ports",
+                "modules",
+                "endpoints",
+                "media",
+                "odf_ports",
+                "odf_map",
+                "port_notes",
+                "panel_map",
+            ):
                 t[key] = {}
             t["hidden"], t["links"] = [], []
 
@@ -382,6 +423,108 @@ class TopologyView(QWidget):
 
         self._edit(tr("topo.endpoints"), fn)
 
+    # ---- ODFs and copper patch panels ------------------------------------------------------------
+    def set_passive(self, node_id: str, values: dict[str, Any]) -> None:
+        """Name, duplex ports and cable of an ODF / the switch ports of a copper panel (``""`` = automatic);
+        ``{"reset": True}``: the ODF's ports automatic again."""
+        d = self.canvas.diagram
+        n = d.topo.node(node_id) if d is not None else None
+        if n is None:
+            return
+
+        def put(store: dict[str, Any], key: str, value: Any) -> None:
+            if value:
+                store[key] = value
+            else:
+                store.pop(key, None)
+
+        def fn(t: dict[str, Any]) -> None:
+            if values.get("reset"):
+                for key in [k for k in t["odf_map"] if k.endswith("@" + node_id)]:
+                    del t["odf_map"][key]
+                for lk in d.topo.links:
+                    if node_id in (lk.a, lk.b):
+                        t["ports"].pop(lk.end(node_id), None)
+                return
+            if "name" in values:
+                put(t["labels"], node_id, values["name"])
+            if "cable" in values:
+                put(t["labels"], node_id + "#cable", values["cable"])
+            if "ports" in values:
+                ports = int(values["ports"] or 0)
+                put(t["odf_ports"], node_id, ports if ports and ports != n.auto_ports else 0)
+            if "map" in values:
+                put(t["panel_map"], node_id, values["map"])
+
+        self._edit(tr("topo.odf") if n.kind == "odf" else tr("topo.panel"), fn)
+
+    def set_odf_port(self, odf_id: str, port: int, link: str) -> None:
+        """Put a link into a port of an ODF: the link that was there moves to the port it leaves (swap);
+        ``link == ""`` frees the port (its link goes to the first free one)."""
+        d = self.canvas.diagram
+        o = d.topo.node(odf_id) if d is not None else None
+        if d is None or o is None:
+            return
+        topo = d.topo
+
+        def where(lid: str) -> int:
+            return next((p for p, other in o.cells.items() if other == lid), 0)
+
+        def assign(t: dict[str, Any], lid: str, n: int) -> None:
+            lk = topo.link(lid)
+            if lk is None:
+                return
+            if odf_id in (lk.a, lk.b):
+                t["ports"][lk.end(odf_id)] = str(n)
+            else:
+                t["odf_map"][f"{lid}@{odf_id}"] = n
+
+        current = o.cells.get(port, "")
+        if link == current:
+            return
+
+        def fn(t: dict[str, Any]) -> None:
+            if link:
+                old = where(link)
+                assign(t, link, port)
+                if current and old:
+                    assign(t, current, old)  # the two swap
+                elif current:
+                    assign(t, current, self._free_port(o, {port}))
+            elif current:
+                assign(t, current, self._free_port(o, {port}))
+
+        self._edit(tr("topo.odf_port"), fn)
+
+    @staticmethod
+    def _free_port(o: Any, busy: set[int]) -> int:
+        n = 1
+        while n in o.cells or n in busy:
+            n += 1
+        return n
+
+    def set_note(self, node_id: str, port: int, text: str) -> None:
+        def fn(t: dict[str, Any]) -> None:
+            key = f"{node_id}#{port}"
+            if text:
+                t["port_notes"][key] = text
+            else:
+                t["port_notes"].pop(key, None)
+
+        self._edit(tr("topo.port_note"), fn)
+
+    def open_wizard(self) -> None:
+        """Ask about every ODF / link / patch panel in turn; the answers rebuild the drawing (one undo step)."""
+        from ..widgets.connection_wizard import ConnectionWizard
+
+        d = self.canvas.diagram
+        if d is None or self.scope.value() != "site":
+            return
+        dlg = ConnectionWizard(d.topo, self.edits, self.state.catalog, self)
+        if dlg.exec() and dlg.changes:
+            changes = dlg.changes
+            self._edit(tr("wiz.title"), lambda t: changes.apply(t))
+
     def edit_endpoints(self, node_id: str) -> None:
         d = self.canvas.diagram
         n = d.topo.node(node_id) if d is not None else None
@@ -391,12 +534,21 @@ class TopologyView(QWidget):
         if ok and text.strip() != n.endpoints:
             self.set_endpoints(node_id, text.strip())
 
+    def _focus_passive(self, node_id: str) -> None:
+        self.canvas.select("node", node_id)
+        self._sync_panel()
+        self.panel.pas_name.setFocus()
+
     def rename(self, kind: str, item_id: str) -> None:
         d = self.canvas.diagram
         if d is None:
             return
         if kind == "link":
             self.edit_connection(item_id)
+            return
+        n = d.topo.node(item_id) if kind == "node" else None
+        if n is not None and n.kind in ("odf", "panel"):
+            self._focus_passive(item_id)
             return
         topo = d.topo
         current = ""
@@ -447,6 +599,11 @@ class TopologyView(QWidget):
                 sub.addAction(a)
             if node is not None and node.kind in ("wifi_switch", "camera_switch", "access_switch"):
                 act(tr("topo.endpoints") + "…", lambda: self.edit_endpoints(item_id), "ethernet-port")
+            if node is not None and node.kind == "odf":
+                act(tr("topo.odf_setup"), lambda: self._focus_passive(item_id), "sliders-horizontal")
+                act(tr("topo.odf_auto"), lambda: self.set_passive(item_id, {"reset": True}), "refresh-ccw")
+            if node is not None and node.kind == "panel":
+                act(tr("topo.panel_setup"), lambda: self._focus_passive(item_id), "sliders-horizontal")
             if any((n := topo.node(i)) is not None and n.manual for i in nodes):
                 act(tr("topo.auto_place"), lambda: self.reset_positions(nodes), "refresh-ccw")
         elif kind == "link":

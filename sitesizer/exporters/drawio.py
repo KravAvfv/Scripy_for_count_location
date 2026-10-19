@@ -3,7 +3,9 @@
 Writes an uncompressed ``.drawio`` file: every device is a shape, every stack (column) a container
 holding its switches (move the container — the switches follow), every link an edge glued to its two
 devices, with the same corners as in the app. Colours, names, models and link labels match the
-in-app picture, so the file opens looking the same and stays fully editable.
+in-app picture, so the file opens looking the same and stays fully editable. An ODF is a box with a
+numbered cell per duplex port (the links run through them), a copper patch panel a small box beside its
+switch.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from ..core.topology import Rect, TopoLinkResult, Topology, TopoNode
+from ..core.topology import ODF_CAP_W, Rect, TopoLinkResult, Topology, TopoNode
 from .device_icons import ICON_H, ICON_W, drawio_image
 from .topology import LIGHT, TopoColors
 
@@ -179,15 +181,88 @@ def topology_drawio(topo: Topology, colors: TopoColors = LIGHT, name: str = "Top
         cell = _sub(root, "mxCell", id=_cell_id(n.id), value=value, style=style, vertex="1", parent=parent)
         geometry(cell, n.rect, prect)
 
-    for n in topo.nodes:
-        node_cell(n)
+    def passive_cell(n: TopoNode) -> None:
+        fill, edge, text = colors.node(n.kind)
+        if n.kind == "panel":
+            value = f"<b>{_esc(n.label)}</b><br>{_esc(n.caption)}"
+            style = _style(
+                rounded=1,
+                arcSize=10,
+                whiteSpace="wrap",
+                html=1,
+                fillColor=fill,
+                strokeColor=edge,
+                fontColor=text,
+                fontFamily=FONT,
+                fontSize=9,
+            )
+            cell = _sub(root, "mxCell", id=_cell_id(n.id), value=value, style=style, vertex="1", parent="1")
+            geometry(cell, n.rect)
+            return
+        lines = [f"<b>{_esc(n.label)}</b>", _esc(n.caption)] + ([_esc(n.cable)] if n.cable else [])
+        style = _style(
+            rounded=1,
+            arcSize=8,
+            whiteSpace="wrap",
+            html=1,
+            container=1,
+            collapsible=0,
+            fillColor=fill,
+            strokeColor=edge,
+            fontColor=text,
+            fontFamily=FONT,
+            fontSize=9,
+            align="left",
+            verticalAlign="middle",
+            spacingLeft=6,
+            spacingRight=round(n.rect.w - ODF_CAP_W + 4),
+        )
+        oid = _cell_id(n.id)
+        cell = _sub(root, "mxCell", id=oid, value="<br>".join(lines), style=style, vertex="1", parent="1")
+        geometry(cell, n.rect)
+        by_link = {lk.id: lk for lk in topo.links}
+        for port in range(1, n.shown_ports + 1):
+            c = n.cell_rect(port)
+            lk = by_link.get(n.cells.get(port, ""))
+            stroke = colors.bad if port > n.ports else colors.link(lk.kind, lk.room) if lk else colors.free_cell
+            note = n.notes.get(port, "")
+            port_cell = _sub(
+                root,
+                "mxCell",
+                id=_cell_id(f"{n.id}#{port}"),
+                value=str(port),
+                tooltip=note,
+                style=_style(
+                    rounded=1,
+                    arcSize=20,
+                    html=1,
+                    fillColor="#FFFFFF",
+                    strokeColor=stroke,
+                    strokeWidth=2 if lk else 1,
+                    dashed=0 if lk else 1,
+                    fontColor=stroke if lk else "#5E6B77",
+                    fontFamily=FONT,
+                    fontSize=8,
+                    fontStyle=1,
+                    movable=0,
+                    resizable=0,
+                ),
+                vertex="1",
+                parent=oid,
+            )
+            geometry(port_cell, Rect(c.x + 1.5, c.y, c.w - 3, c.h), n.rect)
 
     nodes = {n.id: n for n in topo.nodes}
-    for lk in topo.links:
+    for lk in topo.links:  # the links first: the ODFs' cells lie over the lines running through them
         a, b = nodes.get(lk.a), nodes.get(lk.b)
         if a is None or b is None:
             continue
         _edge(root, lk, a, b, colors, sx, sy)
+    for n in topo.nodes:
+        if n.kind in ("odf", "panel"):
+            passive_cell(n)
+        else:
+            node_cell(n)
 
     ET.indent(mxfile)
     return ET.tostring(mxfile, encoding="unicode", xml_declaration=False)
@@ -229,7 +304,7 @@ def _edge(
         root,
         "mxCell",
         id=_cell_id("l-" + lk.id),
-        value=lk.label,
+        value="" if lk.via and not lk.typed_label else lk.label,
         style=_style(**style),
         edge="1",
         parent="1",
@@ -244,8 +319,8 @@ def _edge(
         for x, y in corners:
             _sub(arr, "mxPoint", x=f"{x + sx:.1f}", y=f"{y + sy:.1f}")
     # port (and module) at each end: labels of the edge, so they move with it
-    for end, port, module in ((-0.9, lk.port_a, lk.module_a), (0.9, lk.port_b, lk.module_b)):
-        if not (port or module):
+    for end, port, module, node in ((-0.9, lk.port_a, lk.module_a, a), (0.9, lk.port_b, lk.module_b, b)):
+        if not (port or module) or node.kind in ("odf", "panel"):
             continue
         value = "<br>".join(x for x in (f"<b>{_esc(port)}</b>" if port else "", _esc(module)) if x)
         label = _sub(

@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from sitesizer.core.catalog import Catalog
 from sitesizer.core.models import TopologyEdits
 from sitesizer.core.sizing import size_site
-from sitesizer.core.topology import build_topology
+from sitesizer.core.topology import build_topology, link_parts
 from sitesizer.exporters.drawio import export_drawio, topology_drawio
 from sitesizer.exporters.topology import TopologyDiagram
 
@@ -113,11 +113,15 @@ def test_drawio_file(tmp_path: Path, catalog: Catalog) -> None:
     cells = root.findall(".//mxCell")
     edge_ids = {c.get("id") for c in cells if c.get("edge") == "1"}
     port_labels = [c for c in cells if c.get("vertex") == "1" and c.get("parent") in edge_ids]
-    vertices = [c for c in cells if c.get("vertex") == "1" and c not in port_labels]
+    odf_ids = {"c-" + "".join(ch if ch.isalnum() else "_" for ch in n.id) for n in topo.nodes if n.kind == "odf"}
+    odf_ports = [c for c in cells if c.get("parent") in odf_ids]
+    vertices = [c for c in cells if c.get("vertex") == "1" and c not in port_labels and c not in odf_ports]
     edges = [c for c in cells if c.get("edge") == "1"]
     assert len(vertices) == len(topo.nodes) + len(topo.groups) + len(topo.cabinets)  # cabinet frames too
+    assert len(odf_ports) == sum(n.shown_ports for n in topo.nodes if n.kind == "odf") > 0
     # every port (and module) is a label of its edge
     ends = sum(bool(p or m) for lk in topo.links for p, m in ((lk.port_a, lk.module_a), (lk.port_b, lk.module_b)))
+    ends -= sum(1 for lk in topo.links for nid in (lk.a, lk.b) if topo.node(nid).kind in ("odf", "panel"))
     assert len(port_labels) == ends > 0
     assert len(edges) == len(topo.links)
     ids = {c.get("id") for c in cells}
@@ -310,3 +314,139 @@ def test_modules_clear_the_band(catalog: Catalog) -> None:
         y for lk in topo.links if lk.kind == "fortilink" for (_x, y) in lk.points[1:-1]
     )  # the highest level run towards the cores
     assert band_top >= max(c.rect.bottom for c in cores) + 16 + module
+
+
+# ---- ODFs and copper patch panels ------------------------------------------------------------------
+ROOMS = dict(
+    tier=1,
+    aggregation="yes",
+    location_code="BO72",
+    rooms=[{"sockets": 120, "cameras": 20}, {"sockets": 96, "cameras": 10}],
+)
+
+
+def test_fibre_links_run_through_the_odfs(catalog: Catalog) -> None:
+    r = size_site(make_site(**ROOMS), catalog)
+    topo = build_topology(r, catalog)
+    odfs = {n.id: n for n in topo.nodes if n.kind == "odf"}
+    assert odfs and all(o.ports >= 1 and o.caption.startswith("→") for o in odfs.values())
+    isp = [o for o in odfs.values() if o.peer == "isp"]
+    assert len(isp) == 1 and isp[0].head
+    # every ODF of a cable knows the one at its other end
+    for o in odfs.values():
+        if o.peer != "isp":
+            assert odfs[o.peer].peer == o.id and odfs[o.peer].cabinet != o.cabinet
+    fibre = [lk for lk in topo.links if lk.medium == "fiber" and lk.kind != "wan"]
+    assert fibre and all(lk.via for lk in fibre)
+    for lk in fibre:
+        # one cable: the near ODF in the switch's cabinet, the far one in the core's, the same duplex
+        (near, p1), (far, p2) = lk.via
+        assert odfs[near].cabinet == topo.node(lk.a).cabinet and odfs[far].cabinet == topo.node(lk.b).cabinet
+        assert p1 == p2 and odfs[near].cells[p1] == lk.id and odfs[far].cells[p2] == lk.id
+        # the route goes through the middle of both ports
+        xs = {round(x, 1) for x, _y in lk.points}
+        assert round(odfs[near].cell_rect(p1).cx, 1) in xs and round(odfs[far].cell_rect(p2).cx, 1) in xs
+        # still starts and ends on its devices, with its ports and modules for the installers
+        assert lk.port_a and lk.module_a and lk.port_b and lk.module_b
+    wan = [lk for lk in topo.links if lk.kind == "wan"]
+    assert wan and all(lk.via and lk.via[0][0] == isp[0].id for lk in wan)
+    for o in odfs.values():
+        assert len(set(o.cells.values())) == len(o.cells)  # one link per port
+    assert not topo.problems
+    # switched off: the old drawing, the same parts in the specification
+    off = build_topology(r, catalog, edits=TopologyEdits(show_odf=False))
+    assert not any(n.kind == "odf" for n in off.nodes) and not any(lk.via for lk in off.links)
+    assert link_parts(off, catalog) == link_parts(topo, catalog)
+
+
+def test_odf_ports_are_the_users(catalog: Catalog) -> None:
+    r = size_site(make_site(**ROOMS), catalog)
+    topo = build_topology(r, catalog)
+    odf = next(n for n in topo.nodes if n.kind == "odf" and not n.head and len(n.cells) >= 2)
+    first, second = odf.cells[1], odf.cells[2]
+    # the user swaps two links and writes a note; the far end of the cable follows
+    ed = TopologyEdits(
+        odf_map={f"{first}@{odf.id}": 2, f"{second}@{odf.id}": 1},
+        port_notes={f"{odf.id}#5": "резерв"},
+        labels={odf.id: "FOB 1B", odf.id + "#cable": "ВОК OS2 8 вол."},
+    )
+    topo2 = build_topology(r, catalog, edits=ed)
+    o2 = topo2.node(odf.id)
+    assert o2.cells[1] == second and o2.cells[2] == first and o2.notes == {5: "резерв"}
+    assert o2.label == "FOB 1B" and o2.cable == "ВОК OS2 8 вол."
+    far = topo2.node(o2.peer)
+    assert far.cells[2] == first and far.cells[1] == second
+    # fewer duplexes than links: a finding, the extra port drawn
+    ed3 = TopologyEdits(odf_ports={odf.id: 1})
+    topo3 = build_topology(r, catalog, edits=ed3)
+    o3 = topo3.node(odf.id)
+    assert o3.ports == 1 and o3.shown_ports == 2 and any("FOB" in p or o3.label in p for p in topo3.problems)
+    # two links in one port: a finding, the second one moves
+    ed4 = TopologyEdits(odf_map={f"{first}@{odf.id}": 3, f"{second}@{odf.id}": 3})
+    topo4 = build_topology(r, catalog, edits=ed4)
+    o4 = topo4.node(odf.id)
+    assert o4.cells[3] == first and second in o4.cells.values() and topo4.problems
+
+
+def test_link_drawn_to_an_odf_ends_on_its_port(catalog: Catalog) -> None:
+    r = size_site(make_site(**ROOMS), catalog)
+    topo = build_topology(r, catalog)
+    odf = next(n for n in topo.nodes if n.kind == "odf" and not n.head)
+    sw = next(n for n in topo.nodes if n.kind == "access_switch" and n.cabinet == odf.cabinet)
+    ed = TopologyEdits(links=[{"id": "u-1", "a": sw.id, "b": odf.id}], ports={f"u-1@{odf.id}": "6"})
+    lk = build_topology(r, catalog, edits=ed).link("u-1")
+    assert lk is not None and lk.medium == "fiber" and lk.port_b == "6" and not lk.module_b and lk.module_a
+    c = build_topology(r, catalog, edits=ed).node(odf.id).cell_rect(6)
+    assert abs(lk.points[-1][0] - c.cx) < 0.5
+
+
+def test_copper_patch_panels(catalog: Catalog) -> None:
+    r = size_site(make_site(**ROOMS), catalog)
+    topo = build_topology(r, catalog, edits=TopologyEdits(show_panels=True))
+    panels = [n for n in topo.nodes if n.kind == "panel"]
+    assert panels
+    sw = topo.node(panels[0].switch)
+    assert sw is not None and panels[0].rect.right <= sw.rect.x
+    mine = [p for p in panels if p.switch == sw.id]
+    assert mine[0].caption == "1–24 → 1–24"
+    if len(mine) > 1:
+        assert mine[1].caption.endswith("25–48")
+    patch = [lk for lk in topo.links if lk.kind == "patch"]
+    assert len(patch) == len(panels) and all(len(lk.points) == 2 for lk in patch)
+    assert link_parts(topo, catalog) == link_parts(build_topology(r, catalog), catalog)
+    ed = TopologyEdits(show_panels=True, panel_map={mine[0].id: "1,3,5-9"})
+    typed = build_topology(r, catalog, edits=ed).node(mine[0].id)
+    assert typed.caption == "1–7 → 1, 3, 5–9"
+    assert not any(n.kind == "panel" for n in build_topology(r, catalog).nodes)  # off by default
+
+
+def test_odfs_on_the_way_through_another_floor(catalog: Catalog) -> None:
+    from sitesizer.core.location import size_location
+    from sitesizer.core.models import SiteInput
+
+    def floor(n: int, **kw) -> SiteInput:
+        return SiteInput.model_validate({"floor": n, "location_code": "BO1", "tier": 1, "aggregation": "yes", **kw})
+
+    loc = size_location(
+        [("f1", floor(1, sockets=96), True), ("f2", floor(2, rooms=[{"sockets": 48}, {"sockets": 48}]), False)],
+        catalog,
+    )
+    r = loc.combined
+    topo = build_topology(r, catalog)
+    lk = next(lk for lk in topo.links if lk.a.startswith("2B0/") and lk.kind == "fortilink")
+    cabs = [topo.node(o).cabinet for o, _p in lk.via]
+    assert cabs == ["2B0", "2A0", "2A0", "1A0"]  # patched in the cabinet on the way
+    assert not topo.problems
+
+
+def test_drawio_has_the_odf_ports(catalog: Catalog) -> None:
+    r = size_site(make_site(**ROOMS), catalog)
+    topo = build_topology(r, catalog, edits=TopologyEdits(show_panels=True))
+    root = ET.fromstring(topology_drawio(topo))
+    ids = {c.get("id") for c in root.iter("mxCell")}
+    odf = next(n for n in topo.nodes if n.kind == "odf")
+    assert all(any(f"{p}" in (i or "") and "odf" in (i or "") for i in ids) for p in range(1, odf.shown_ports + 1))
+    values = [c.get("value") or "" for c in root.iter("mxCell")]
+    assert any("1–24 → 1–24" in v for v in values)
+    d = TopologyDiagram(r, catalog, edits=TopologyEdits(show_panels=True))
+    assert d.size().width() > 0

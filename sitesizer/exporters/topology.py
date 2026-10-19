@@ -17,7 +17,7 @@ from PySide6.QtSvg import QSvgRenderer
 
 from ..core.catalog import Catalog
 from ..core.models import SiteResult, TopologyEdits
-from ..core.topology import Rect, TopoLinkResult, Topology, TopoNode, build_topology
+from ..core.topology import ODF_CAP_W, Rect, TopoLinkResult, Topology, TopoNode, build_topology
 from ..i18n import Translator
 from .device_icons import ICON_H, ICON_W, icon_svg
 from .diagram import EXPORT_STYLE, DiagramStyle, _font, ensure_gui_app
@@ -33,6 +33,11 @@ class TopoColors:
     camera_switch: tuple[str, str, str] = ("#FFF3E0", "#B26A00", "#7A4800")
     access_switch: tuple[str, str, str] = ("#E7F3F1", "#2B8C7E", "#1B5C52")
     wan: tuple[str, str, str] = ("#FFFFFF", "#7C8894", "#4A5560")
+    odf: tuple[str, str, str] = ("#FAFAF7", "#4E5A66", "#26313B")
+    panel: tuple[str, str, str] = ("#F6F1EC", "#8D6E63", "#4E342E")
+    free_cell: str = "#C3CBD3"
+    bad: str = "#C62828"
+    note: str = "#B26A00"
     links: tuple[tuple[str, str], ...] = (
         ("ha", "#C62828"),
         ("isl", "#1F4E78"),
@@ -41,6 +46,7 @@ class TopoColors:
         ("stack", "#2B8C7E"),
         ("wan", "#7C8894"),
         ("custom", "#8E6BBF"),
+        ("patch", "#8D6E63"),
     )
     rooms: tuple[str, ...] = ("#2B8C7E", "#7B3FA8", "#C2570C", "#1565C0", "#B0245E", "#4E7D14", "#00838F", "#6D4C41")
     """Links of telecom room 0, 1, 2…: each room its own colour."""
@@ -67,6 +73,11 @@ DARK = TopoColors(
     camera_switch=("#33281A", "#E0A657", "#FBE7CB"),
     access_switch=("#18302D", "#5FC1B2", "#D2F1EC"),
     wan=("#20262C", "#98A4AF", "#D5DCE2"),
+    odf=("#1E2329", "#9AA7B4", "#E3E8ED"),
+    panel=("#2A231F", "#C2A091", "#F0E2DA"),
+    free_cell="#4A5560",
+    bad="#EF7B7B",
+    note="#E0A657",
     links=(
         ("ha", "#EF7B7B"),
         ("isl", "#7FB0E3"),
@@ -75,6 +86,7 @@ DARK = TopoColors(
         ("stack", "#5FC1B2"),
         ("wan", "#98A4AF"),
         ("custom", "#B79BE0"),
+        ("patch", "#C2A091"),
     ),
     rooms=("#5FC1B2", "#B88BE0", "#F0A05C", "#7FB0E3", "#E57FA8", "#9CCB5E", "#5CC8D4", "#C2A091"),
 )
@@ -114,6 +126,9 @@ class TopologyDiagram:
         self.f_port = _font(10, QFont.Weight.DemiBold)
         self.f_module = _font(9)
         self.f_endpoints = _font(10)
+        self.f_odf_name = _font(10, QFont.Weight.DemiBold)
+        self.f_odf = _font(9)
+        self.f_cell = _font(8.5, QFont.Weight.DemiBold)
         self.f_group = _font(11, QFont.Weight.DemiBold, spacing=0.3)
         self.f_caption = _font(12, italic=True)
         self.f_title = _font(18, QFont.Weight.DemiBold)
@@ -252,6 +267,8 @@ class TopologyDiagram:
     def _paint_link_label(self, p: QPainter, lk: TopoLinkResult) -> None:
         if not lk.label or len(lk.points) < 2:
             return
+        if lk.via and not lk.typed_label:
+            return  # through ODFs: the cable is written at the ODF, the ports in its cells
         fm = QFontMetricsF(self.f_link)
         cx, cy = lk.point_at(lk.label_t)
         if lk.kind in ("ha", "isl"):
@@ -281,6 +298,8 @@ class TopologyDiagram:
             (lk.points[-1], lk.points[-2], lk.port_b, lk.module_b, self.topo.node(lk.b)),
         )
         for (x0, y0), (x1, y1), port, module, node in ends:
+            if node is not None and node.kind in ("odf", "panel"):
+                continue  # the ODF's cell carries the port number
             vertical = abs(x1 - x0) < 0.5
             if node is not None:  # leaves the device through its top or bottom edge
                 upright = abs(y0 - node.rect.y) < 1 or abs(y0 - node.rect.bottom) < 1
@@ -355,7 +374,98 @@ class TopologyDiagram:
             self._icons[kind] = renderer
         return renderer
 
+    def _paint_odf(self, p: QPainter, n: TopoNode) -> None:
+        """An optical patch panel: its name, where its cable goes and the cable; then its duplex ports,
+        numbered, each in the colour of the link through it (free ports grey, a note: a dot)."""
+        fill, edge, text = self.c.node("odf")
+        r = QRectF(n.rect.x, n.rect.y, n.rect.w, n.rect.h)
+        if n.id in self.selected:
+            halo = QColor(edge)
+            halo.setAlphaF(0.3)
+            p.setPen(QPen(halo, 6))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(r, 6, 6)
+        p.setPen(QPen(QColor(edge), 1.4))
+        p.setBrush(QColor(fill))
+        p.drawRoundedRect(r, 5, 5)
+        cap = QRectF(r.x() + 6, r.y() + 3, ODF_CAP_W - 10, r.height() - 6)
+        rows = [(n.label, self.f_odf_name, QColor(text)), (n.caption, self.f_odf, QColor(text))]
+        if n.cable:
+            muted = QColor(text)
+            muted.setAlphaF(0.7)
+            rows.append((n.cable, self.f_odf, muted))
+        row_h = cap.height() / len(rows)
+        for i, (line, font, color) in enumerate(rows):
+            p.setFont(font)
+            p.setPen(color)
+            fm = QFontMetricsF(font)
+            p.drawText(
+                QRectF(cap.x(), cap.y() + i * row_h, cap.width(), row_h),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                fm.elidedText(line, Qt.TextElideMode.ElideRight, cap.width()),
+            )
+        links = {lk.id: lk for lk in self.topo.links}
+        bg = QColor(self.s.bg)
+        p.setFont(self.f_cell)
+        for port in range(1, n.shown_ports + 1):
+            c = n.cell_rect(port)
+            box = QRectF(c.x + 1.5, c.y, c.w - 3, c.h)
+            lk = links.get(n.cells.get(port, ""))
+            over = port > n.ports
+            if lk is not None:
+                color = QColor(self.c.bad if over else self.c.link(lk.kind, lk.room))
+                p.setPen(QPen(color, 1.6))
+                p.setBrush(bg)
+            else:
+                color = QColor(self.c.bad if over else self.c.free_cell)
+                p.setPen(QPen(color, 1.0, Qt.PenStyle.DashLine if not over else Qt.PenStyle.SolidLine))
+                p.setBrush(QColor(fill))
+            p.drawRoundedRect(box, 3, 3)
+            p.setPen(color if lk is not None or over else QColor(self.s.muted))
+            p.drawText(box, Qt.AlignmentFlag.AlignCenter, str(port))
+            if port in n.notes:
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(self.c.note))
+                p.drawEllipse(QPointF(box.right() - 2, box.top() + 2), 2.4, 2.4)
+
+    def _paint_panel(self, p: QPainter, n: TopoNode) -> None:
+        """A copper patch panel: its name and which switch ports its ports go to."""
+        fill, edge, text = self.c.node("panel")
+        r = QRectF(n.rect.x, n.rect.y, n.rect.w, n.rect.h)
+        if n.id in self.selected:
+            halo = QColor(edge)
+            halo.setAlphaF(0.3)
+            p.setPen(QPen(halo, 6))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(r, 6, 6)
+        p.setPen(QPen(QColor(edge), 1.2))
+        p.setBrush(QColor(fill))
+        p.drawRoundedRect(r, 4, 4)
+        body = r.adjusted(6, 1, -6, -1)
+        two = r.height() >= 26
+        p.setPen(QColor(text))
+        p.setFont(self.f_odf_name)
+        fm = QFontMetricsF(self.f_odf_name)
+        if two:
+            half = QRectF(body.x(), body.y(), body.width(), body.height() / 2)
+            p.drawText(
+                half, Qt.AlignmentFlag.AlignCenter, fm.elidedText(n.label, Qt.TextElideMode.ElideRight, body.width())
+            )
+            p.setFont(self.f_odf)
+            p.drawText(half.translated(0, half.height()), Qt.AlignmentFlag.AlignCenter, n.caption)
+        else:
+            line = f"{n.label} · {n.caption}"
+            p.drawText(
+                body, Qt.AlignmentFlag.AlignCenter, fm.elidedText(line, Qt.TextElideMode.ElideRight, body.width())
+            )
+
     def _paint_node(self, p: QPainter, n: TopoNode) -> None:
+        if n.kind == "odf":
+            self._paint_odf(p, n)
+            return
+        if n.kind == "panel":
+            self._paint_panel(p, n)
+            return
         fill, edge, text = self.c.node(n.kind)
         r = QRectF(n.rect.x, n.rect.y, n.rect.w, n.rect.h)
         if n.id in self.selected:

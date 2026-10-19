@@ -1021,3 +1021,95 @@ def test_room_cabinets_and_device_ids(app: QApplication, window) -> None:
     st.recompute()
     pump(app)
     assert [d.id for d in st.site.rooms[1].devices] == ids[1:]
+
+
+def test_topology_odf_panel_and_wizard(app: QApplication, window) -> None:
+    st = window.state
+    st.edit(
+        "t",
+        lambda d: d.update(
+            tier=1,
+            aggregation="yes",
+            location_code="BO72",
+            rooms=[{"sockets": 120, "cameras": 20}, {"sockets": 96, "cameras": 10}],
+        ),
+    )
+    st.recompute()
+    window.navigate("topology")
+    pump(app)
+    view = window.topology
+    panel = view.panel
+    assert view.odf.isChecked() and not view.panels.isChecked()
+    topo = view.canvas.diagram.topo
+    odf = next(n for n in topo.nodes if n.kind == "odf" and not n.head and len(n.cells) >= 2)
+    # a click on the ODF: its ports in the side panel, a row per duplex with the link in it
+    view.canvas.select("node", odf.id)
+    pump(app)
+    assert not panel.pas_box.isHidden() and panel.link_box.isHidden()
+    assert panel.table.rowCount() == odf.ports
+    assert panel.table.cellWidget(0, 1).currentData() == odf.cells[1]
+    # put the second link into port 1: the two swap (the far end of the cable follows)
+    first, second = odf.cells[1], odf.cells[2]
+    combo = panel.table.cellWidget(0, 1)
+    combo.setCurrentIndex(combo.findData(second))
+    combo.activated.emit(combo.currentIndex())
+    st.recompute()
+    pump(app)
+    o = view.canvas.diagram.topo.node(odf.id)
+    assert o.cells[1] == second and o.cells[2] == first
+    assert view.canvas.diagram.topo.node(o.peer).cells[1] == second
+    # a note on a port, the duplexes and the cable
+    view.canvas.select("node", odf.id)
+    pump(app)
+    panel.table.item(4, 2).setText("резерв: КПП")
+    panel.pas_ports.setValue(4)
+    panel.pas_cable.setText("ВОК OS2 8 вол.")
+    panel._emit_passive()
+    st.recompute()
+    pump(app)
+    o = view.canvas.diagram.topo.node(odf.id)
+    assert o.notes == {5: "резерв: КПП"} and o.ports == 4 and o.cable == "ВОК OS2 8 вол."
+    assert st.site.topology.odf_ports == {odf.id: 4}
+    # the ODF's ports automatic again
+    view.set_passive(odf.id, {"reset": True})
+    st.recompute()
+    pump(app)
+    assert not st.site.topology.odf_map
+    # copper patch panels on: a click shows the switch ports of the panel's ports
+    view.panels.setChecked(True)
+    st.recompute()
+    pump(app)
+    pp = next(n for n in view.canvas.diagram.topo.nodes if n.kind == "panel")
+    view.canvas.select("node", pp.id)
+    pump(app)
+    assert not panel.pas_box.isHidden() and panel.table.rowCount() == pp.ports
+    assert panel.table.item(0, 1).text() == "1"
+    # the wizard: answers on an ODF page and a link page become one undoable edit
+    from sitesizer.gui.widgets.connection_wizard import ConnectionWizard
+
+    topo = view.canvas.diagram.topo
+    dlg = ConnectionWizard(topo, view.edits, st.catalog, view)
+    assert dlg.scopes["odf"][0].isChecked() and dlg.scopes["fibre"][0].isChecked()
+    dlg._go(1)  # the first ODF
+    item = dlg.items[dlg.at]
+    assert item.kind == "odf"
+    dlg._fields["name"].setText("ODF провайдера")
+    dlg._go(1)
+    while dlg.items[dlg.at].kind != "link":
+        dlg._skip()
+    lk = topo.link(dlg.items[dlg.at].id)
+    dlg._fields["cable"].setText("LC-LC OS2 3 м")
+    end_a = lk.end(lk.a)
+    dlg._fields["ends"][end_a][0].setText("sfp+3")
+    dlg._finish()
+    assert dlg.result() and dlg.changes
+    before = st.site.topology.model_copy(deep=True)
+    view._edit("wizard", lambda t: dlg.changes.apply(t))
+    st.recompute()
+    pump(app)
+    topo = view.canvas.diagram.topo
+    assert topo.node(item.id).label == "ODF провайдера"
+    assert topo.link(lk.id).label == "LC-LC OS2 3 м" and topo.link(lk.id).port_a == "sfp+3"
+    st.undo.undo()
+    pump(app)
+    assert st.site.topology == before

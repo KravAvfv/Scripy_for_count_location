@@ -273,6 +273,18 @@ class TopologyEdits(BaseModel):
     """Switch node id -> what its ports serve, as typed by the user (``1–38 Камери · 48 СКУД``)."""
     media: dict[str, TopoMedium] = Field(default_factory=dict)
     """Link id -> how it is made: ``dac``, ``fiber`` (modules + fibre cord) or ``copper``."""
+    show_odf: bool = True
+    """Optical patch panels (ODF) of the cabinets on the drawing; fibre links run through their ports."""
+    show_panels: bool = False
+    """Copper patch panels beside their switches (which panel ports go to which switch ports)."""
+    odf_ports: dict[str, int] = Field(default_factory=dict)
+    """ODF node id -> its duplex ports, as set by the user (default: the fibres of its cable / 2)."""
+    odf_map: dict[str, int] = Field(default_factory=dict)
+    """``<link id>@<ODF node id>`` -> the duplex port of that ODF the link goes through."""
+    port_notes: dict[str, str] = Field(default_factory=dict)
+    """``<ODF / panel node id>#<port>`` -> what is plugged in there (a patch cord, a device, «резерв»)."""
+    panel_map: dict[str, str] = Field(default_factory=dict)
+    """Copper patch panel node id -> the switch ports its ports go to (``1-24``, ``1,3,5``)."""
 
     @property
     def is_empty(self) -> bool:
@@ -287,6 +299,10 @@ class TopologyEdits(BaseModel):
             or self.modules
             or self.endpoints
             or self.media
+            or self.odf_ports
+            or self.odf_map
+            or self.port_notes
+            or self.panel_map
         )
 
 
