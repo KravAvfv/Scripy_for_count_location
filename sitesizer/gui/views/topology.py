@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QPoint, Signal
 from PySide6.QtGui import QAction
@@ -32,6 +32,9 @@ from ..theme import theme_manager, tokens
 from ..widgets.connection_panel import ConnectionPanel
 from ..widgets.controls import SegmentedControl, SpinBox, ToggleSwitch, button, icon_button, label, px, vline
 from ..widgets.topology_canvas import TopologyCanvas
+
+if TYPE_CHECKING:
+    from ..widgets.connection_wizard import WizardChanges
 
 
 class TopologyView(QWidget):
@@ -483,25 +486,28 @@ class TopologyView(QWidget):
                 return eid, plans, r.rack.fiber_pairs, key, peer
         return None
 
-    def _sync_uplinks(self, node_id: str) -> None:
-        """Where the selected ODF's cable may go (only from the cabinet whose cable it is)."""
+    def uplink_options(self, node_id: str) -> tuple[list[tuple[str, str]], str, str]:
+        """Where an ODF's cable may go: (cabinet key, text) options (``""`` = automatic), the current
+        choice, and why it is read-only when there are no options (it is changed from the cabinet
+        whose cable it is; the provider's fibre and the backbone between floors not at all)."""
         found = self._odf_floor(node_id)
         if found is None:
-            self.panel.set_uplinks([], "", tr("topo.odf_goes_fixed"))
-            return
+            return [], "", tr("topo.odf_goes_fixed")
         eid, plans, pairs, key, peer = found
         tags = {p.key: p.tag for p in plans}
         if peer not in tags or (key, peer) not in pairs:
             tip = tr("topo.odf_goes_parent", tag=tags[peer]) if peer in tags else tr("topo.odf_goes_fixed")
-            self.panel.set_uplinks([], "", tip)
-            return
+            return [], "", tip
         entry = self.state.project.site(eid)
         chosen = entry.input.layout.uplinks.get(key, "") if entry is not None else ""
         auto = tr("topo.auto") if chosen else tr("topo.odf_goes_auto", tag=tags[peer])
         options = [("", auto)] + [(k, "→ " + tags[k]) for k in uplink_choices(pairs, list(tags), key) if k in tags]
-        self.panel.set_uplinks(options, chosen)
+        return options, chosen, ""
 
-    def set_uplink(self, node_id: str, to: str) -> None:
+    def _sync_uplinks(self, node_id: str) -> None:
+        self.panel.set_uplinks(*self.uplink_options(node_id))
+
+    def set_uplink(self, node_id: str, to: str, select: bool = True) -> None:
         """Send the cable of the ODF's cabinet to another cabinet (``""``: the automatic one).
 
         The cabinets are the source of truth: the choice is stored in the floor's cabinet layout,
@@ -522,7 +528,7 @@ class TopologyView(QWidget):
                 ups.pop(key, None)
 
         tag = next(p.tag for p in plans if p.key == key)
-        if to:
+        if to and select:
             self._reselect = f"{tag}/odf:{key}:{to}"
         self.state.edit_floor(eid, tr("topo.odf_goes"), fn)
 
@@ -588,10 +594,20 @@ class TopologyView(QWidget):
         d = self.canvas.diagram
         if d is None or self.scope.value() != "site":
             return
-        dlg = ConnectionWizard(d.topo, self.edits, self.state.catalog, self)
+        dlg = ConnectionWizard(d.topo, self.edits, self.state.catalog, self, uplinks=self.uplink_options)
         if dlg.exec() and dlg.changes:
-            changes = dlg.changes
-            self._edit(tr("wiz.title"), lambda t: changes.apply(t))
+            self.apply_wizard(dlg.changes)
+
+    def apply_wizard(self, changes: WizardChanges) -> None:
+        """One undo step: the drawing's answers and where the ODFs go (kept in the cabinets)."""
+        self.state.undo.beginMacro(tr("wiz.title"))
+        try:
+            if changes.drawing:
+                self._edit(tr("wiz.title"), lambda t: changes.apply(t))
+            for odf_id, to in changes.uplinks.items():
+                self.set_uplink(odf_id, to, select=False)
+        finally:
+            self.state.undo.endMacro()
 
     def edit_endpoints(self, node_id: str) -> None:
         d = self.canvas.diagram

@@ -1140,3 +1140,34 @@ def test_topology_odf_panel_and_wizard(app: QApplication, window) -> None:
     st.undo.undo()
     pump(app)
     assert st.site.topology == before
+    # "goes to" in the wizard: the remote room's cabinet into another cabinet, with a name, one undo step
+    st.recompute()
+    pump(app)
+    topo = view.canvas.diagram.topo
+    far = "1B0/odf:idf1-1:mdf-1"
+    dlg = ConnectionWizard(topo, view.edits, st.catalog, view, uplinks=view.uplink_options)
+    dlg._go(1)
+    while dlg.items[dlg.at].id != far:
+        dlg._skip()
+    goes = dlg._fields["goes"]
+    assert goes.isEnabled() and goes.findData("mdf-2") > 0
+    goes.setCurrentIndex(goes.findData("mdf-2"))
+    dlg._fields["name"].setText("ODF 1B0 → 1A1")
+    dlg._finish()
+    assert dlg.changes.uplinks == {far: "mdf-2"}
+    # its other end is read-only in the wizard too
+    dlg2 = ConnectionWizard(topo, view.edits, st.catalog, view, uplinks=view.uplink_options)
+    dlg2._go(1)
+    while dlg2.items[dlg2.at].id != "1A0/odf:mdf-1:idf1-1":
+        dlg2._skip()
+    assert not dlg2._fields["goes"].isEnabled()
+    before_layout = st.site.layout.model_copy(deep=True)
+    view.apply_wizard(dlg.changes)
+    st.recompute()
+    pump(app)
+    assert st.site.layout.uplinks == {"idf1-1": "mdf-2"}
+    assert view.canvas.diagram.topo.node("1B0/odf:idf1-1:mdf-2") is not None
+    st.undo.undo()
+    st.recompute()
+    pump(app)
+    assert st.site.layout == before_layout and st.site.topology == before

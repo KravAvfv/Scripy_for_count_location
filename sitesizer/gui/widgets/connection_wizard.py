@@ -10,6 +10,7 @@ so far as one undoable edit and the drawing is rebuilt from them.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -49,8 +50,12 @@ class WizardChanges:
     panel_map: dict[str, str] = field(default_factory=dict)
     user_links: dict[str, str] = field(default_factory=dict)
     """User-drawn link id -> its cable label (kept on the link itself)."""
+    uplinks: dict[str, str] = field(default_factory=dict)
+    """ODF -> cabinet key its cable goes to (``""`` = automatic); kept in the cabinets, not by :meth:`apply`."""
 
-    def __bool__(self) -> bool:
+    @property
+    def drawing(self) -> bool:
+        """Answers about the drawing itself (everything but :attr:`uplinks`)."""
         return any(
             (
                 self.labels,
@@ -63,6 +68,9 @@ class WizardChanges:
                 self.user_links,
             )
         )
+
+    def __bool__(self) -> bool:
+        return self.drawing or bool(self.uplinks)
 
     def apply(self, t: dict[str, Any]) -> None:
         def put(store: dict[str, Any], key: str, value: Any) -> None:
@@ -88,9 +96,18 @@ class _Item:
 
 
 class ConnectionWizard(QDialog):
-    def __init__(self, topo: Topology, edits: TopologyEdits, catalog: Catalog, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        topo: Topology,
+        edits: TopologyEdits,
+        catalog: Catalog,
+        parent: QWidget | None = None,
+        uplinks: Callable[[str], tuple[list[tuple[str, str]], str, str]] | None = None,
+    ) -> None:
+        """``uplinks(odf)``: where the ODF's cable may go (see ``TopologyView.uplink_options``)."""
         super().__init__(parent)
         self.topo = topo
+        self.uplinks = uplinks
         self.edits = edits
         self.changes = WizardChanges()
         self.items: list[_Item] = []
@@ -282,8 +299,22 @@ class ConnectionWizard(QDialog):
             self._pending("labels", key, self._typed(key, ed.labels, n.cable)), n.cable, tr("topo.odf_cable_tip")
         )
         form.addRow(tr("topo.odf_cable"), cable)
+        goes: QComboBox | None = None
+        if self.uplinks is not None:
+            options, chosen, tip = self.uplinks(n.id)
+            goes = QComboBox()
+            for key_, text in options:
+                goes.addItem(text, key_)
+            if not options:
+                goes.addItem(n.caption.removeprefix("→ ").strip() or "—", None)
+            current = self.changes.uplinks.get(n.id, chosen)
+            goes.setCurrentIndex(max(0, goes.findData(current)) if options else 0)
+            goes.setEnabled(bool(options))
+            goes.setToolTip(tip or tr("topo.odf_goes_tip"))
+            goes.setProperty("was", chosen)
+            form.addRow(tr("topo.odf_goes"), goes)
         self.page_lay.addLayout(form)
-        self._fields = {"name": name, "ports": ports, "cable": cable, "links": {}}
+        self._fields = {"name": name, "ports": ports, "cable": cable, "goes": goes, "links": {}}
         through = self.topo.links_through(n.id)
         self.page_lay.addWidget(hline())
         if not through:
@@ -395,6 +426,13 @@ class ConnectionWizard(QDialog):
                 cable = f["cable"].text().strip()
                 if cable != self._typed(key, self.edits.labels, node.cable):
                     c.labels[key] = cable
+            goes = f.get("goes")
+            if goes is not None and goes.isEnabled():
+                to = goes.currentData()
+                if to is not None and to != goes.property("was"):
+                    c.uplinks[item.id] = to
+                else:
+                    c.uplinks.pop(item.id, None)
             for lid, (spin, was) in f["links"].items():
                 if spin.value() != was:
                     lk = self.topo.link(lid)
