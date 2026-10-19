@@ -1075,6 +1075,33 @@ def test_topology_odf_panel_and_wizard(app: QApplication, window) -> None:
     st.recompute()
     pump(app)
     assert not st.site.topology.odf_map
+    # where the ODF goes: from the remote room's cabinet straight to another cabinet of the main room
+    st.edit("t", lambda d: d["rooms"][0].update(cabinets=2))
+    st.recompute()
+    pump(app)
+    topo = view.canvas.diagram.topo
+    far = next(n for n in topo.nodes if n.kind == "odf" and n.id.startswith("1B0/odf:idf1-1:"))
+    view.canvas.select("node", far.id)
+    pump(app)
+    assert not panel.pas_goes.isHidden() and panel.pas_goes.isEnabled()
+    i = panel.pas_goes.findData("mdf-2")
+    assert i > 0
+    panel.pas_goes.setCurrentIndex(i)
+    panel.pas_goes.activated.emit(i)
+    st.recompute()
+    pump(app)
+    assert st.site.layout.uplinks == {"idf1-1": "mdf-2"}
+    topo = view.canvas.diagram.topo
+    assert topo.node("1B0/odf:idf1-1:mdf-2") is not None and topo.node(far.id) is None
+    assert view.canvas.selected_ids("node") == ["1B0/odf:idf1-1:mdf-2"]
+    # the other end of that cable is read-only (it is changed from 1B0)
+    view.canvas.select("node", "1A1/odf:mdf-2:idf1-1")
+    pump(app)
+    assert not panel.pas_goes.isEnabled() and "1B0" in panel.pas_goes.toolTip()
+    st.undo.undo()
+    st.recompute()
+    pump(app)
+    assert not st.site.layout.uplinks
     # copper patch panels on: a click shows the switch ports of the panel's ports
     view.panels.setChecked(True)
     st.recompute()

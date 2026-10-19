@@ -19,7 +19,8 @@ from PySide6.QtCore import QPoint, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QInputDialog, QMenu, QVBoxLayout, QWidget
 
-from ...core.models import TopologyEdits
+from ...core.models import RackPlan, TopologyEdits
+from ...core.passive import uplink_choices
 from ...core.topology import LINK_KINDS
 from ...exporters.diagram import Diagram, ProjectDiagram, style_from_tokens
 from ...exporters.topology import TopologyDiagram
@@ -40,6 +41,7 @@ class TopologyView(QWidget):
         super().__init__(parent)
         self.state = state
         self._loading = False
+        self._reselect = ""
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(px(10))
@@ -146,6 +148,7 @@ class TopologyView(QWidget):
         self.panel.passiveChanged.connect(self.set_passive)
         self.panel.odfPortChanged.connect(self.set_odf_port)
         self.panel.noteChanged.connect(self.set_note)
+        self.panel.uplinkChanged.connect(self.set_uplink)
         body.addWidget(self.panel)
         root.addLayout(body, 1)
         self.hint = label(tr("topo.hint"), "caption", wrap=True)
@@ -218,6 +221,10 @@ class TopologyView(QWidget):
         finally:
             self._loading = False
         self.canvas.set_diagram(self.build_diagram())
+        d = self.canvas.diagram
+        if self._reselect and isinstance(d, TopologyDiagram) and d.topo.node(self._reselect) is not None:
+            self.canvas.select("node", self._reselect)
+        self._reselect = ""
         self._sync_buttons()
         self._sync_panel()
 
@@ -234,6 +241,8 @@ class TopologyView(QWidget):
             self.panel.show_item(d.topo, "link", links[0], self.edits)
         elif len(nodes) == 1 and not links:
             self.panel.show_item(d.topo, "node", nodes[0], self.edits)
+            if self.panel.passive_kind == "odf":
+                self._sync_uplinks(nodes[0])
         else:
             self.panel.show_item(None, "", "", None)
 
@@ -457,6 +466,65 @@ class TopologyView(QWidget):
                 put(t["panel_map"], node_id, values["map"])
 
         self._edit(tr("topo.odf") if n.kind == "odf" else tr("topo.panel"), fn)
+
+    def _odf_floor(self, node_id: str) -> tuple[str, list[RackPlan], list[tuple[str, str]], str, str] | None:
+        """(floor entry, its cabinets, its fibre links, cabinet, peer) of an automatic ODF."""
+        tag, _s, item = node_id.partition("/")
+        if not item.startswith("odf:"):
+            return None
+        _o, key, peer = item.split(":", 2)
+        loc = self.state.location
+        floors = loc.floors if loc is not None and loc.floors else []
+        if not floors and self.state.result is not None:
+            floors = [(self.state.current_id, self.state.result)]
+        for eid, r in floors:
+            plans = r.rack.plans
+            if any(p.tag == tag and p.key == key for p in plans):
+                return eid, plans, r.rack.fiber_pairs, key, peer
+        return None
+
+    def _sync_uplinks(self, node_id: str) -> None:
+        """Where the selected ODF's cable may go (only from the cabinet whose cable it is)."""
+        found = self._odf_floor(node_id)
+        if found is None:
+            self.panel.set_uplinks([], "", tr("topo.odf_goes_fixed"))
+            return
+        eid, plans, pairs, key, peer = found
+        tags = {p.key: p.tag for p in plans}
+        if peer not in tags or (key, peer) not in pairs:
+            tip = tr("topo.odf_goes_parent", tag=tags[peer]) if peer in tags else tr("topo.odf_goes_fixed")
+            self.panel.set_uplinks([], "", tip)
+            return
+        entry = self.state.project.site(eid)
+        chosen = entry.input.layout.uplinks.get(key, "") if entry is not None else ""
+        auto = tr("topo.auto") if chosen else tr("topo.odf_goes_auto", tag=tags[peer])
+        options = [("", auto)] + [(k, "→ " + tags[k]) for k in uplink_choices(pairs, list(tags), key) if k in tags]
+        self.panel.set_uplinks(options, chosen)
+
+    def set_uplink(self, node_id: str, to: str) -> None:
+        """Send the cable of the ODF's cabinet to another cabinet (``""``: the automatic one).
+
+        The cabinets are the source of truth: the choice is stored in the floor's cabinet layout,
+        so the ODFs, organizers, fibre cables and the specification follow it.
+        """
+        found = self._odf_floor(node_id)
+        if found is None:
+            return
+        eid, plans, _pairs, key, peer = found
+        if to == peer:
+            return
+
+        def fn(d: dict[str, Any]) -> None:
+            ups = d.setdefault("layout", {}).setdefault("uplinks", {})
+            if to:
+                ups[key] = to
+            else:
+                ups.pop(key, None)
+
+        tag = next(p.tag for p in plans if p.key == key)
+        if to:
+            self._reselect = f"{tag}/odf:{key}:{to}"
+        self.state.edit_floor(eid, tr("topo.odf_goes"), fn)
 
     def set_odf_port(self, odf_id: str, port: int, link: str) -> None:
         """Put a link into a port of an ODF: the link that was there moves to the port it leaves (swap);

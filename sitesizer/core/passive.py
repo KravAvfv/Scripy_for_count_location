@@ -332,7 +332,7 @@ def plan_passive(
         for gi, sws in enumerate(groups)
     ]
     if odf_model:
-        peers = cabinet_links(structure, fctx)
+        peers = cabinet_links(structure, fctx, ctx.site.layout.uplinks)
         fw_closet = next((c for c, _g, _s in layouts if any(u.group == "firewall" for u in c.head)), None)
         if fw_closet is not None:
             # the provider's fibre comes into the firewall's cabinet
@@ -436,6 +436,7 @@ def plan_passive(
             rack_fibers=rack_fibers,
         )
         rs.layout_problems += problems
+        rs.fiber_pairs = links
     if not ctx.site.layout.is_empty:
         rs.layout_problems += top_up_pdus(plans, feeds, pr.pdu_outlets, pr.pdu, set(ctx.site.layout.hidden), t)
     name_items(plans, ctx.site.layout, ctx.site.location_code, t, pr.panel_ports)
@@ -645,16 +646,19 @@ def floor_run(floor: int, other: int, per_floor_m: int) -> int:
     return max(1, abs(floor - other)) * per_floor_m
 
 
-def cabinet_links(cabinets: list[tuple[str, int, bool]], fctx: FloorContext | None) -> dict[str, list[str]]:
+def cabinet_links(
+    cabinets: list[tuple[str, int, bool]], fctx: FloorContext | None, uplinks: dict[str, str] | None = None
+) -> dict[str, list[str]]:
     """Fibre links of every cabinet: ``key -> peers`` (a peer is a cabinet key, ``fw`` or ``floor<N>``).
 
     ``cabinets`` are (key, room, has active equipment) in display order. A further cabinet of a
     room links to the room's first cabinet; the first cabinet of a remote room links to the main
     one; the main cabinet of a floor without the firewall links to the firewall floor, and the
-    firewall floor's main cabinet gets one link per other floor.
+    firewall floor's main cabinet gets one link per other floor. ``uplinks`` (cabinet -> cabinet)
+    are the user's: the fibre of a cabinet goes there instead.
     """
     out: dict[str, list[str]] = {k: [] for k, _r, _a in cabinets}
-    pairs = cabinet_link_pairs(cabinets, fctx)
+    pairs = cabinet_link_pairs(cabinets, fctx, uplinks)
     for a, b in pairs:
         out[a].append(b)
         if b in out:
@@ -662,7 +666,9 @@ def cabinet_links(cabinets: list[tuple[str, int, bool]], fctx: FloorContext | No
     return out
 
 
-def cabinet_link_pairs(cabinets: list[tuple[str, int, bool]], fctx: FloorContext | None) -> list[tuple[str, str]]:
+def cabinet_link_pairs(
+    cabinets: list[tuple[str, int, bool]], fctx: FloorContext | None, uplinks: dict[str, str] | None = None
+) -> list[tuple[str, str]]:
     """(child, parent) fibre links; see :func:`cabinet_links`."""
     heads: dict[int, str] = {}
     room_active: dict[int, bool] = {}
@@ -680,12 +686,48 @@ def cabinet_link_pairs(cabinets: list[tuple[str, int, bool]], fctx: FloorContext
     for key, room, active in cabinets:
         if key != heads[room] and active:
             pairs.append((key, heads[room]))
+    if uplinks:
+        pairs = rehome(pairs, uplinks, main)
     if fctx is not None:
         if not fctx.has_firewall and any(room_active.values()):
             pairs.append((main, "fw"))
         if fctx.has_firewall:
             pairs += [(main, f"floor{n}") for n, _tag in fctx.remote]
     return pairs
+
+
+def rehome(pairs: list[tuple[str, str]], uplinks: dict[str, str], main: str) -> list[tuple[str, str]]:
+    """The cabinet links with the user's ``child -> parent`` choices applied.
+
+    A choice is skipped when the cabinet or its new parent is not on the floor, for the main
+    cabinet (the root of the tree), or when it would close a loop (the parent hangs below the child).
+    """
+    parent = dict(pairs)
+    keys = {main} | set(parent)
+    for child, to in uplinks.items():
+        if child == main or child not in parent or to not in keys or to == child:
+            continue
+        node: str | None = to
+        while node is not None and node != child:
+            node = parent.get(node)
+        if node is None:
+            parent[child] = to
+    return [(child, parent[child]) for child, _p in pairs]
+
+
+def uplink_choices(pairs: list[tuple[str, str]], cabinets: list[str], child: str) -> list[str]:
+    """Cabinets the fibre of ``child`` may go to: any other one that does not hang below it."""
+    parent = dict(pairs)
+    if child not in parent:
+        return []
+    out: list[str] = []
+    for key in cabinets:
+        node: str | None = key
+        while node is not None and node != child:
+            node = parent.get(node)
+        if node is None:
+            out.append(key)
+    return out
 
 
 def link_cabinets(
@@ -710,7 +752,7 @@ def link_cabinets(
     problems: list[str] = []
     # every cabinet has an optical patch panel with an organizer, an empty one too
     cabinets = [(p.key, p.room, True) for p in plans]
-    pairs = cabinet_link_pairs(cabinets, fctx)
+    pairs = cabinet_link_pairs(cabinets, fctx, layout.uplinks)
     by_key = {p.key: p for p in plans}
     fw_racks = {p.key for p in plans if any(it.group == "firewall" for it in p.items)}
     fibers = {

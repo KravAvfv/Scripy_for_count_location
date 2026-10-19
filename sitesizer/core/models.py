@@ -203,6 +203,8 @@ class RackLayout(BaseModel):
     """Room index -> name given by the user."""
     models: dict[str, str] = Field(default_factory=dict)
     """Item id -> model chosen by the user (the item keeps its name and its place)."""
+    uplinks: dict[str, str] = Field(default_factory=dict)
+    """Cabinet key -> cabinet its fibre goes to, chosen by the user (instead of the room's first one)."""
 
     @property
     def is_empty(self) -> bool:
@@ -216,6 +218,7 @@ class RackLayout(BaseModel):
             or self.labels
             or self.room_names
             or self.models
+            or self.uplinks
         )
 
 
@@ -688,6 +691,8 @@ class RackSummary:
     passive: PassiveSummary = field(default_factory=PassiveSummary)
     layout_problems: list[str] = field(default_factory=list)
     """Conflicts of the manual layout (overlaps, items that did not fit)."""
+    fiber_pairs: list[tuple[str, str]] = field(default_factory=list)
+    """(child, parent) fibre links between the cabinets of the floor (a parent may be ``fw``/``floor<N>``)."""
 
 
 @dataclass

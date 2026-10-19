@@ -439,6 +439,36 @@ def test_odfs_on_the_way_through_another_floor(catalog: Catalog) -> None:
     assert not topo.problems
 
 
+def test_odf_goes_where_the_user_says(catalog: Catalog) -> None:
+    from sitesizer.core.passive import rehome, uplink_choices
+
+    rooms = dict(ROOMS, rooms=[{"sockets": 120, "cameras": 20, "cabinets": 3}, {"sockets": 96, "cabinets": 2}])
+    r = size_site(make_site(**rooms), catalog)
+    pairs = r.rack.fiber_pairs
+    assert ("mdf-3", "mdf-1") in pairs and ("idf1-2", "idf1-1") in pairs
+    # 1A2 into 1A1 (not the room's first cabinet), 1B1 straight to the main one
+    site = make_site(**rooms, layout={"uplinks": {"mdf-3": "mdf-2", "idf1-2": "mdf-1"}})
+    r2 = size_site(site, catalog)
+    assert ("mdf-3", "mdf-2") in r2.rack.fiber_pairs and ("idf1-2", "mdf-1") in r2.rack.fiber_pairs
+    odfs = {it.id for p in r2.rack.plans for it in p.items if it.id.startswith("odf:")}
+    assert {"odf:mdf-3:mdf-2", "odf:mdf-2:mdf-3", "odf:idf1-2:mdf-1", "odf:mdf-1:idf1-2"} <= odfs
+    assert not odfs & {"odf:mdf-3:mdf-1", "odf:mdf-1:mdf-3", "odf:idf1-1:idf1-2"}
+    assert r2.rack.passive.fiber_links == r.rack.passive.fiber_links
+    # the topology follows: 1A2's stack is patched through 1A1 on its way to the core
+    topo = build_topology(r2, catalog)
+    lk = next(lk for lk in topo.links if lk.a.startswith("1A2/") and lk.via)
+    assert [topo.node(o).cabinet for o, _p in lk.via] == ["1A2", "1A1", "1A1", "1A0"]
+    assert not topo.problems
+    # no loops, no re-homing the main cabinet, unknown cabinets ignored
+    assert rehome(pairs, {"mdf-2": "mdf-3", "mdf-3": "mdf-2"}, "mdf-1") == [
+        (c, "mdf-3" if c == "mdf-2" else p) for c, p in pairs
+    ]
+    assert rehome(pairs, {"mdf-1": "mdf-2", "mdf-3": "gone"}, "mdf-1") == pairs
+    keys = [p.key for p in r.rack.plans]
+    assert "idf1-2" not in uplink_choices(pairs, keys, "idf1-1") and "mdf-1" in uplink_choices(pairs, keys, "idf1-1")
+    assert uplink_choices(pairs, keys, "mdf-1") == []
+
+
 def test_drawio_has_the_odf_ports(catalog: Catalog) -> None:
     r = size_site(make_site(**ROOMS), catalog)
     topo = build_topology(r, catalog, edits=TopologyEdits(show_panels=True))

@@ -269,6 +269,28 @@ class AppState(QObject):
     def replace_site(self, new_input: SiteInput, text: str) -> None:
         self.edit(text, lambda d: (d.clear(), d.update(new_input.model_dump(mode="json"))))
 
+    def edit_floor(self, site_id: str, text: str, mutate: Callable[[dict[str, Any]], None]) -> None:
+        """Like :meth:`edit`, for another floor of the location (the current floor stays open)."""
+        if site_id == self.current_id:
+            self.edit(text, mutate)
+            return
+        entry = self.project.site(site_id)
+        if entry is None:
+            return
+        before = entry.input.model_dump(mode="json")
+        data = copy.deepcopy(before)
+        mutate(data)
+        try:
+            after = SiteInput.model_validate(data).model_dump(mode="json")
+        except ValueError as err:
+            log.info("Rejected edit '%s': %s", text, err)
+            self.message.emit("error", str(err).splitlines()[0])
+            return
+        if after == before:
+            return
+        cur = self.site.model_dump(mode="json")
+        self.undo.push(SiteEditCommand(self, self.current_id, cur, cur, text, None, {site_id: (before, after)}))
+
     def _apply_site_data(self, site_id: str, data: dict[str, Any], quiet: bool = False) -> None:
         entry = self.project.site(site_id)
         if entry is None:

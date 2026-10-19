@@ -53,6 +53,8 @@ class ConnectionPanel(QFrame):
     odfPortChanged = Signal(str, int, str)
     """(ODF node id, port, link id put into it; ``""`` = the port is freed)"""
     noteChanged = Signal(str, int, str)
+    """(ODF, cabinet key its cable goes to; ``""`` = automatic)"""
+    uplinkChanged = Signal(str, str)
     """(ODF / panel node id, port, note)"""
 
     def __init__(self, catalog: Catalog, parent: QWidget | None = None) -> None:
@@ -193,6 +195,12 @@ class ConnectionPanel(QFrame):
         self.pas_map.setToolTip(tr("topo.panel_map_tip"))
         self.pas_map.editingFinished.connect(self._emit_passive)
         grid.addWidget(self.pas_map, 3, 1)
+        self.goes_label = label(tr("topo.odf_goes"), "caption")
+        grid.addWidget(self.goes_label, 4, 0)
+        self.pas_goes = QComboBox()
+        self.pas_goes.setToolTip(tr("topo.odf_goes_tip"))
+        self.pas_goes.activated.connect(self._emit_uplink)
+        grid.addWidget(self.pas_goes, 4, 1)
         grid.setColumnStretch(1, 1)
         pb.addLayout(grid)
         self.table_hint = label(tr("topo.odf_table_hint"), "faint", wrap=True)
@@ -264,6 +272,8 @@ class ConnectionPanel(QFrame):
             w.setVisible(odf)
         self.map_label.setVisible(not odf)
         self.pas_map.setVisible(not odf)
+        self.goes_label.setVisible(False)  # shown by set_uplinks()
+        self.pas_goes.setVisible(False)
         if not self.pas_name.hasFocus():
             self.pas_name.setText(n.label if n.id in edits.labels else "")
             self.pas_name.setPlaceholderText(n.label)
@@ -320,6 +330,35 @@ class ConnectionPanel(QFrame):
                 self.table.setItem(row, 2, note)
         finally:
             self.table.blockSignals(False)
+
+    def set_uplinks(self, options: list[tuple[str, str]], current: str, tip: str = "") -> None:
+        """Where the selected ODF's cable may go: (cabinet key, text); ``""`` = automatic.
+
+        No options: the row is read-only (the cable is changed at its other end, or it is the
+        provider's / another floor's) and ``tip`` says why.
+        """
+        odf = self.passive_kind == "odf"
+        self.goes_label.setVisible(odf)
+        self.pas_goes.setVisible(odf)
+        self.pas_goes.blockSignals(True)
+        try:
+            self.pas_goes.clear()
+            for key, text in options:
+                self.pas_goes.addItem(text, key)
+            if not options:
+                caption = self.pas_where.text().split("\n")[-1]
+                self.pas_goes.addItem(caption.removeprefix("→ ").strip() or "—", None)
+            i = self.pas_goes.findData(current) if options else 0
+            self.pas_goes.setCurrentIndex(max(0, i))
+            self.pas_goes.setEnabled(bool(options))
+            self.pas_goes.setToolTip(tip or tr("topo.odf_goes_tip"))
+        finally:
+            self.pas_goes.blockSignals(False)
+
+    def _emit_uplink(self, _index: int) -> None:
+        key = self.pas_goes.currentData()
+        if not self._loading and self.passive_id and key is not None:
+            self.uplinkChanged.emit(self.passive_id, key)
 
     def _emit_passive(self) -> None:
         if self._loading or not self.passive_id:
