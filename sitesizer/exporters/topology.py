@@ -17,7 +17,17 @@ from PySide6.QtSvg import QSvgRenderer
 
 from ..core.catalog import Catalog
 from ..core.models import SiteResult, TopologyEdits
-from ..core.topology import ODF_CAP_W, Rect, TopoLinkResult, Topology, TopoNode, build_topology
+from ..core.topology import (
+    ODF_CAP_W,
+    ROOM_KINDS,
+    LegendEntry,
+    Rect,
+    TopoLinkResult,
+    Topology,
+    TopoNode,
+    build_topology,
+    legend,
+)
 from ..i18n import Translator
 from .device_icons import ICON_H, ICON_W, icon_svg
 from .diagram import EXPORT_STYLE, DiagramStyle, _font, ensure_gui_app
@@ -61,8 +71,10 @@ class TopoColors:
         return dict(self.links).get(kind, "#7C8894")
 
 
-ROOM_KINDS = ("fortilink", "stack", "custom")
-"""Link kinds coloured by the telecom room of their switch."""
+LINK_WIDTH = {"isl": 2.6, "ha": 2.2, "uplink": 1.8, "wan": 1.3}
+LEGEND_PAD = 36.0
+LEGEND_ROW = 22.0
+LEGEND_SAMPLE = 34.0
 
 
 LIGHT = TopoColors()
@@ -132,8 +144,11 @@ class TopologyDiagram:
         self.f_group = _font(11, QFont.Weight.DemiBold, spacing=0.3)
         self.f_caption = _font(12, italic=True)
         self.f_title = _font(18, QFont.Weight.DemiBold)
+        self.f_legend = _font(11)
+        self.f_legend_head = _font(11, QFont.Weight.DemiBold)
         self.title_h = 40.0 if title else 0.0
         self._icons: dict[str, QSvgRenderer] = {}
+        self._legend: tuple[float, list[tuple[LegendEntry, float, float]], float] | None = None
 
     # ---- geometry ---------------------------------------------------------------------------
     @property
@@ -145,7 +160,31 @@ class TopologyDiagram:
     def size(self) -> QSizeF:
         if self.topo.empty:
             return QSizeF(420, 120)
-        return QSizeF(self.topo.width, self.topo.height + self.title_h)
+        return QSizeF(self.topo.width, self.topo.height + self.title_h + self.legend_layout()[2])
+
+    def legend_layout(self) -> tuple[float, list[tuple[LegendEntry, float, float]], float]:
+        """(width of the heading, [(entry, x, y)] from the legend's top-left, height) for the drawing's width."""
+        width = self.topo.width
+        if self._legend is not None and self._legend[0] == width:
+            return self._legend
+        entries = legend(self.topo, self.t) if not self.topo.empty else []
+        fm = QFontMetricsF(self.f_legend)
+        head = QFontMetricsF(self.f_legend_head).horizontalAdvance(self.t.t("legend.title")) + 18
+        x, y, out = head, 0.0, []
+        room = max(width - 2 * LEGEND_PAD, 320.0)
+        for e in entries:
+            w = LEGEND_SAMPLE + 8 + fm.horizontalAdvance(self._legend_text(e)) + 26
+            if x > head and x + w > room:
+                x, y = head, y + LEGEND_ROW
+            out.append((e, x, y))
+            x += w
+        height = (y + LEGEND_ROW + 14) if entries else 0.0
+        self._legend = (width, out, height)
+        return self._legend
+
+    @staticmethod
+    def _legend_text(e: LegendEntry) -> str:
+        return f"{e.title}  —  {e.cables}" if e.cables else e.title
 
     def to_topo(self, pos: QPointF) -> QPointF:
         return pos - self.offset
@@ -213,7 +252,59 @@ class TopologyDiagram:
         p.setPen(QColor(s.muted))
         mode = self.t.t("topo.mode_ring" if self.topo.access == "ring" else "topo.mode_dual")
         text = "   •   ".join([mode, *self.topo.problems])
-        p.drawText(QRectF(0, size.height() - 34, size.width(), 20), Qt.AlignmentFlag.AlignCenter, text)
+        base = self.topo.height + self.title_h
+        p.drawText(QRectF(0, base - 34, size.width(), 20), Qt.AlignmentFlag.AlignCenter, text)
+        self._paint_legend(p, base)
+
+    def _paint_legend(self, p: QPainter, top: float) -> None:
+        """Under the drawing: the colour of every kind of link and its cables, the ODF's cells."""
+        _w, items, _h = self.legend_layout()
+        if not items:
+            return
+        s = self.s
+        p.setPen(QPen(QColor(s.light_edge), 1.0))
+        p.drawLine(QPointF(LEGEND_PAD, top - 6), QPointF(self.topo.width - LEGEND_PAD, top - 6))
+        p.setPen(QColor(s.light_text))
+        p.setFont(self.f_legend_head)
+        p.drawText(
+            QRectF(LEGEND_PAD, top, 200, LEGEND_ROW),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            self.t.t("legend.title"),
+        )
+        fm = QFontMetricsF(self.f_legend)
+        for e, x, y in items:
+            x0, cy = LEGEND_PAD + x, top + y + LEGEND_ROW / 2
+            if e.kind == "odf":
+                c = self.c.odf
+                for i in range(3):
+                    cell = QRectF(x0 + i * 11, cy - 6, 10, 12)
+                    free = i == 2
+                    p.setPen(
+                        QPen(
+                            QColor(self.c.free_cell if free else c[1]),
+                            1.0,
+                            Qt.PenStyle.DashLine if free else Qt.PenStyle.SolidLine,
+                        )
+                    )
+                    p.setBrush(QColor(c[0]))
+                    p.drawRect(cell)
+            else:
+                color = QColor(self.c.link(e.kind, e.room))
+                pen = QPen(color, LINK_WIDTH.get(e.kind, 1.6), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+                if e.kind == "wan":
+                    pen.setStyle(Qt.PenStyle.DashLine)
+                p.setPen(pen)
+                p.drawLine(QPointF(x0, cy), QPointF(x0 + LEGEND_SAMPLE, cy))
+                if e.kind == "isl":
+                    p.drawLine(QPointF(x0, cy + 4), QPointF(x0 + LEGEND_SAMPLE, cy + 4))
+            p.setPen(QColor(s.light_text))
+            p.setFont(self.f_legend)
+            text = self._legend_text(e)
+            p.drawText(
+                QRectF(x0 + LEGEND_SAMPLE + 8, top + y, fm.horizontalAdvance(text) + 4, LEGEND_ROW),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                text,
+            )
 
     def _paint_cabinet(self, p: QPainter, r: Rect, title: str) -> None:
         """The cabinet the stacks stand in (its PoE and ASW stacks are in one frame)."""
@@ -247,7 +338,7 @@ class TopologyDiagram:
         if len(lk.points) < 2:
             return
         color = QColor(self.c.link(lk.kind, lk.room))
-        width = {"isl": 2.6, "ha": 2.2, "uplink": 1.8, "wan": 1.3}.get(lk.kind, 1.6)
+        width = LINK_WIDTH.get(lk.kind, 1.6)
         if lk.id in self.selected:
             halo = QColor(color)
             halo.setAlphaF(0.25)

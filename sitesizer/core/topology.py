@@ -35,10 +35,11 @@ from __future__ import annotations
 
 import itertools
 import math
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from .catalog import Catalog
+from .catalog import Catalog, FirewallSpec
 from .models import RackItem, RackPlan, SiteResult, TopologyEdits
 
 if TYPE_CHECKING:
@@ -246,6 +247,12 @@ class Topology:
     origin: tuple[float, float] = (0.0, 0.0)
     fiber_module: str = ""
     """The location's fibre transceiver (put at both ends of a fibre link)."""
+    fiber: str = ""
+    """The location's fibre (``OM4``, ``OS2``) for the cables' names."""
+    lang: str = "uk"
+    """Language of the drawing's texts (the legend of an export)."""
+    room_names: dict[int, str] = field(default_factory=dict)
+    """Telecom room number on the drawing (the colour of its links) -> its short name (``1A``)."""
     """Top-left corner of the drawing in node coordinates (negative when nodes were dragged up/left)."""
 
     def node(self, node_id: str) -> TopoNode | None:
@@ -330,6 +337,9 @@ def port_choices(model: str, catalog: Catalog) -> list[tuple[str, str]]:
     if dev is None:
         return []
     if dev.firewall is not None:
+        names = fw_ports(dev.firewall)
+        if names:
+            return [(n, "sfp" if n.startswith(("x", "sfp")) else "rj45") for n in names]
         copper = dev.ports.count if dev.ports is not None else FW_COPPER_PORTS
         return [(f"x{i}", "sfp") for i in range(1, dev.firewall.ports_10g + 1)] + [
             (f"port{i}", "rj45") for i in range(copper, 0, -1)
@@ -356,6 +366,27 @@ def _end_priority(lk: TopoLinkResult, node_id: str) -> int:
     return {"uplink": 3, "fortilink": 4}.get(lk.kind, 5)
 
 
+FW_1G_PORTS = ("a", "b", "internal1", "internal2", "internal3", "internal4", "internal5", "internal6")
+"""A FortiGate without SFP+ (FG-80F): FortiLink ports a, b, then the internal ones (no port8, no x1)."""
+FW_1G_HA = ("internal6", "internal5")
+
+
+def fw_ports(fw: FirewallSpec) -> list[str]:
+    """The FortiGate's data ports links take, in order (empty: ``x1…`` + ``port8…``)."""
+    if fw.port_names:
+        return list(fw.port_names)
+    return list(FW_1G_PORTS) if fw.ports_10g == 0 else []
+
+
+def ha_ports(fw: FirewallSpec | None) -> tuple[str, str]:
+    """Heartbeat ports (ha1-link, ha2-link) of a FortiGate: dedicated ``ha1/ha2`` or two data ports."""
+    if fw is not None and len(fw.ha_ports) >= 2:
+        return fw.ha_ports[0], fw.ha_ports[1]
+    if fw is not None and not fw.ha_ports and not fw.port_names and fw.ports_10g == 0:
+        return FW_1G_HA
+    return "ha1", "ha2"
+
+
 MEDIA = ("dac", "fiber", "copper")
 HA2 = "#2"
 """Suffix of the second HA link's id."""
@@ -376,8 +407,12 @@ def auto_medium(lk: TopoLinkResult, a: TopoNode, b: TopoNode) -> str:
     return "dac" if lk.speed >= 10 else "copper"  # a 1G link in one cabinet: a patch cord
 
 
-def provider_module(catalog: Catalog) -> str:
-    """The module of a FortiGate's port towards the provider's ODF (single-mode when the catalog has it)."""
+def provider_module(catalog: Catalog, fw_model: str = "") -> str:
+    """The module of a FortiGate's port towards the provider's ODF (single-mode when the catalog has it);
+    a FortiGate without SFP+ (FG-80F) takes a 1G one in its wan/sfp shared port."""
+    dev = catalog.models.get(fw_model) if fw_model else None
+    if dev is not None and dev.firewall is not None and dev.firewall.ports_10g == 0:
+        return catalog.rules.provider_module_1g
     spec = catalog.passive.fiber.get("os2") or next(iter(catalog.passive.fiber.values()), None)
     return spec.transceiver if spec else ""
 
@@ -399,7 +434,7 @@ def cable_label(lk: TopoLinkResult, a: TopoNode, b: TopoNode, fiber: str, catalo
     return f"{sp} DAC {t.t('topo.metres', n=metres)}"
 
 
-def assign_ports(topo: Topology, catalog: Catalog, ed: TopologyEdits) -> None:
+def assign_ports(topo: Topology, catalog: Catalog, ed: TopologyEdits, t: Translator | None = None) -> None:
     """Port and module at both ends of every link; the user's ports / modules win (and are kept free).
 
     DAC and fibre take SFP ports (the ISL the QSFP ones), copper the RJ45 ones — from the end, as
@@ -422,7 +457,17 @@ def assign_ports(topo: Topology, catalog: Catalog, ed: TopologyEdits) -> None:
         if nid in nodes and lk.kind != "patch" and nodes[nid].kind not in PASSIVE_KINDS
     ]
     ends.sort(key=lambda e: _end_priority(e[0], e[1]))  # stable: link order within a priority
-    provider = provider_module(catalog)
+    fw_spec = {
+        nid: dev.firewall
+        for nid, n in nodes.items()
+        if n.kind == "firewall" and (dev := catalog.models.get(n.model)) is not None and dev.firewall is not None
+    }
+    # heartbeat ports that are data ports (FG-80F) are not taken by the other links
+    for lk in topo.links:
+        if lk.kind == "ha":
+            for nid in (lk.a, lk.b):
+                if nid in fw_spec and nid in used:
+                    used[nid].update(p for p in ha_ports(fw_spec[nid]) if p != "ha1" and p != "ha2")
 
     def take(nid: str, want: str, count: int) -> str:
         picked: list[str] = []
@@ -446,6 +491,8 @@ def assign_ports(topo: Topology, catalog: Catalog, ed: TopologyEdits) -> None:
             and other.kind == "firewall"
         )
 
+    no_sfp: dict[str, list[tuple[str, str]]] = {}
+    """FortiGate -> (RJ45 port, device) of the fibre links that cannot go into it."""
     for lk, nid in ends:
         node = nodes[nid]
         typed = ed.ports.get(lk.end(nid))
@@ -456,7 +503,8 @@ def assign_ports(topo: Topology, catalog: Catalog, ed: TopologyEdits) -> None:
         elif lk.kind == "wan":
             port = f"wan{wan_no.get(lk.b if nid == lk.a else lk.a, 1)}"
         elif lk.kind == "ha":
-            port = "ha2" if lk.id.endswith(HA2) else "ha1"
+            hb = ha_ports(fw_spec.get(nid))
+            port = hb[1] if lk.id.endswith(HA2) else hb[0]
         elif lk.kind == "isl" and lk.medium != "copper":
             port = take(nid, "qsfp", 2)
         elif to_copper_fw(lk, nid):
@@ -465,14 +513,30 @@ def assign_ports(topo: Topology, catalog: Catalog, ed: TopologyEdits) -> None:
             port = take(nid, "rj45" if lk.medium == "copper" else "sfp", 1)
         auto = ""
         if lk.medium == "fiber" and node.kind != "wan":
-            auto = provider if lk.kind == "wan" else topo.fiber_module
+            auto = provider_module(catalog, node.model) if lk.kind == "wan" else topo.fiber_module
         elif to_copper_fw(lk, nid) and port and dict(choices[nid]).get(port) == "sfp":
             auto = catalog.rules.copper_module
+        if (
+            lk.medium == "fiber"
+            and lk.kind != "wan"
+            and node.kind == "firewall"
+            and port
+            and dict(choices[nid]).get(port) == "rj45"
+        ):
+            auto = ""  # an RJ45 port takes no module (FG-80F: its SFPs are the WAN ones)
+            if lk.end(nid) not in ed.modules:
+                other = nodes.get(lk.b if nid == lk.a else lk.a)
+                no_sfp.setdefault(nid, []).append((port, other.label if other else "?"))
         module = ed.modules.get(lk.end(nid), auto)
         if nid == lk.a:
             lk.port_a, lk.module_a = port, module
         else:
             lk.port_b, lk.module_b = port, module
+    if t is not None:
+        for nid, found in no_sfp.items():
+            ports = ", ".join(p for p, _o in found)
+            others = ", ".join(dict.fromkeys(o for _p, o in found))
+            topo.problems.append(t.t("topo.fw_no_sfp", name=nodes[nid].label, port=ports, other=others))
 
 
 def dac_model(lk: TopoLinkResult, a: TopoNode, b: TopoNode, catalog: Catalog) -> str:
@@ -512,6 +576,61 @@ def link_parts(topo: Topology, catalog: Catalog) -> dict[str, dict[str, tuple[in
             if node.kind not in ("wan", *PASSIVE_KINDS) and module.strip():
                 add(node.cabinet, module.strip(), "module")
     return out
+
+
+ROOM_KINDS = ("fortilink", "stack", "custom")
+"""Link kinds coloured by the telecom room of their switch."""
+LEGEND_ORDER = ("wan", "ha", "uplink", "isl", "room", "fortilink", "stack", "custom", "patch", "odf")
+
+
+@dataclass
+class LegendEntry:
+    """One line of the legend: a colour (a link kind, or the links of a telecom room) and its cables."""
+
+    kind: str
+    room: int
+    title: str
+    cables: str
+    count: int
+
+
+def cable_kind(lk: TopoLinkResult, fiber: str, t: Translator) -> str:
+    """The kind of cable of a link, without its length: ``10G DAC``, ``10G OM4``, ``1G Cat6A``."""
+    sp = f"{lk.speed:g}G"
+    if lk.kind == "isl" and lk.medium == "dac":
+        return f"{sp} DAC QSFP28"
+    if lk.medium == "copper":
+        return "Cat6A" if lk.kind in ("ha", "patch") else f"{sp} Cat6A"
+    if lk.medium == "fiber":
+        return t.t("legend.provider") if lk.kind == "wan" else f"{sp} {fiber}".strip()
+    return f"{sp} DAC"
+
+
+def legend(topo: Topology, t: Translator) -> list[LegendEntry]:
+    """What every colour of the drawing means and which cables its links are (one line per colour)."""
+    found: dict[tuple[str, int], LegendEntry] = {}
+    cables: dict[tuple[str, int], list[str]] = {}
+    for lk in topo.links:
+        room = lk.room if lk.kind in ROOM_KINDS and lk.room >= 0 else -1
+        key = ("room" if room >= 0 else lk.kind, room)
+        if key not in found:
+            if room >= 0:
+                title = t.t("legend.room", room=topo.room_names.get(room, str(room + 1)))
+            else:
+                title = t.t(f"legend.{lk.kind}")
+            found[key] = LegendEntry(lk.kind, room, title, "", 0)
+            cables[key] = []
+        found[key].count += 1
+        kind = cable_kind(lk, topo.fiber, t)
+        if kind not in cables[key]:
+            cables[key].append(kind)
+    for key, entry in found.items():
+        entry.cables = " · ".join(cables[key])
+    odfs = sum(1 for n in topo.nodes if n.kind == "odf")
+    if odfs:
+        found[("odf", -1)] = LegendEntry("odf", -1, t.t("legend.odf"), "", odfs)
+    order = {k: i for i, k in enumerate(LEGEND_ORDER)}
+    return sorted(found.values(), key=lambda e: (order.get("room" if e.room >= 0 else e.kind, 99), e.room))
 
 
 def odf_width(ports: int) -> float:
@@ -789,7 +908,7 @@ def build_topology(
     t = Translator(lang)
     ed = edits if edits is not None else result.input.topology
     size = ed.group_size or catalog.rules.topology_group_size
-    topo = Topology(access=ed.access, group_size=size, title=result.input.name)
+    topo = Topology(access=ed.access, group_size=size, title=result.input.name, lang=lang)
     tier = catalog.tier(result.tier_id)
 
     # ---- nodes from the cabinets ---------------------------------------------------------
@@ -807,6 +926,7 @@ def build_topology(
     for plan in result.rack.plans:
         # the switches of a cabinet form its stack(s) in the order they stand in it, top-down
         room = rooms.setdefault((plan.floor, plan.room), len(rooms))
+        topo.room_names.setdefault(room, re.sub(r"\d+$", "", plan.tag) or plan.tag)
         members: list[TopoNode] = []
         for it in _plan_switches(plan):
             node = TopoNode(
@@ -1105,6 +1225,7 @@ def build_topology(
     # the medium (DAC / modules + fibre / copper) decides the ports, modules and the cable's label
     topo.fiber_module = fspec.transceiver if fspec else ""
     fiber = result.rack.passive.fiber_type.upper()
+    topo.fiber = fiber
     for lk in out:
         a, b = nodes_by_id[lk.a], nodes_by_id[lk.b]
         sw = next((n for n in (a, b) if n.kind in SWITCH_KINDS), None)
@@ -1114,7 +1235,7 @@ def build_topology(
         lk.typed_label = bool(typed)
         lk.label = typed if typed is not None else cable_label(lk, a, b, fiber, catalog, t)
     topo.links = out
-    assign_ports(topo, catalog, ed)
+    assign_ports(topo, catalog, ed, t)
     through_odfs(topo, ed, t)
 
     # ---- ports ---------------------------------------------------------------------------------
@@ -1123,11 +1244,14 @@ def build_topology(
         if dev is None:
             continue
         cap = 0
+        skip = {"wan"}
         if dev.firewall is not None:
-            cap = dev.firewall.ports_10g
+            cap = len(fw_ports(dev.firewall)) or dev.firewall.ports_10g
+            if ha_ports(dev.firewall) == ("ha1", "ha2"):
+                skip.add("ha")  # dedicated heartbeat ports
         elif dev.ports is not None:
             cap = dev.ports.count + (dev.uplinks.count if dev.uplinks else 0)
-        used = sum((2 if lk.kind == "isl" else 1) for lk in out if n.id in (lk.a, lk.b) and lk.kind != "wan")
+        used = sum((2 if lk.kind == "isl" else 1) for lk in out if n.id in (lk.a, lk.b) and lk.kind not in skip)
         if cap and used > cap:
             topo.problems.append(t.t("topo.ports_short", name=n.label, used=used, cap=cap))
 

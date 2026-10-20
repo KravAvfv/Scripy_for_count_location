@@ -195,7 +195,9 @@
       "firewall": {
         "max_switches": 24, "max_aps": 96, "max_aps_tunnel": 48, "ports_10g": 0,
         "throughput_gbps": {"firewall": 10, "ipsec": 6.5, "ips": 1.4, "ngfw": 1.0, "threat": 0.9, "ssl": 0.715},
-        "sessions_m": 1.5, "form_factor": "desktop", "sku_code": "0080F"
+        "sessions_m": 1.5, "form_factor": "desktop", "sku_code": "0080F",
+        "port_names": ["a", "b", "internal1", "internal2", "internal3", "internal4", "internal5", "internal6"],
+        "ha_ports": ["internal6", "internal5"]
       },
       "psu": {"count": 1, "hot_swap": false, "redundant": false},
       "power_base_w": 15.5, "power_max_w": 15.5, "rack_units": 1,

@@ -14,9 +14,10 @@ from datetime import datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from ..core.topology import ODF_CAP_W, Rect, TopoLinkResult, Topology, TopoNode
+from ..core.topology import ODF_CAP_W, LegendEntry, Rect, TopoLinkResult, Topology, TopoNode, legend
+from ..i18n import Translator
 from .device_icons import ICON_H, ICON_W, drawio_image
-from .topology import LIGHT, TopoColors
+from .topology import LIGHT, LINK_WIDTH, TopoColors
 
 FONT = "Inter,Segoe UI,Helvetica,Arial,sans-serif"
 
@@ -45,6 +46,9 @@ def topology_drawio(topo: Topology, colors: TopoColors = LIGHT, name: str = "Top
     """The ``.drawio`` XML text."""
     ox, oy = topo.origin
     sx, sy = -ox, -oy  # shift so that nothing has negative coordinates
+    t = Translator(topo.lang)
+    entries = legend(topo, t) if not topo.empty else []
+    legend_h = LEGEND_HEAD + len(entries) * LEGEND_ROW + 10 if entries else 0.0
 
     mxfile = ET.Element(
         "mxfile",
@@ -70,7 +74,7 @@ def topology_drawio(topo: Topology, colors: TopoColors = LIGHT, name: str = "Top
         page="1",
         pageScale="1",
         pageWidth=str(int(topo.width + 40)),
-        pageHeight=str(int(topo.height + 40)),
+        pageHeight=str(int(topo.height + legend_h + 60)),
         math="0",
         shadow="0",
     )
@@ -263,6 +267,8 @@ def topology_drawio(topo: Topology, colors: TopoColors = LIGHT, name: str = "Top
             passive_cell(n)
         else:
             node_cell(n)
+    if entries:
+        _legend(root, entries, colors, t, topo.height + 10, legend_h)
 
     ET.indent(mxfile)
     return ET.tostring(mxfile, encoding="unicode", xml_declaration=False)
@@ -346,6 +352,125 @@ def _edge(
         )
         lg = _sub(label, "mxGeometry", x=f"{end:.2f}", relative="1", **{"as": "geometry"})
         _sub(lg, "mxPoint", x="6", y="0", **{"as": "offset"})
+
+
+LEGEND_HEAD = 30.0
+LEGEND_ROW = 24.0
+LEGEND_SAMPLE = 44.0
+
+
+def _legend(
+    root: ET.Element, entries: list[LegendEntry], colors: TopoColors, t: Translator, top: float, height: float
+) -> None:
+    """A movable "Legend" box under the drawing: a sample line of every colour and its cables."""
+    texts = [f"<b>{_esc(e.title)}</b>" + (f" — {_esc(e.cables)}" if e.cables else "") for e in entries]
+    width = 40 + LEGEND_SAMPLE + max(len(e.title) + len(e.cables) + 3 for e in entries) * 6.6
+    box = _sub(
+        root,
+        "mxCell",
+        id="c-legend",
+        value=_esc(t.t("legend.title")),
+        style=_style(
+            rounded=1,
+            arcSize=4,
+            whiteSpace="wrap",
+            html=1,
+            container=1,
+            collapsible=0,
+            fillColor="#FFFFFF",
+            strokeColor="#B7C4D1",
+            fontColor="#1F2D3A",
+            fontFamily=FONT,
+            fontSize=12,
+            fontStyle=1,
+            align="left",
+            verticalAlign="top",
+            spacingLeft=10,
+            spacingTop=4,
+        ),
+        vertex="1",
+        parent="1",
+    )
+    _sub(box, "mxGeometry", x="36", y=f"{top:.1f}", width=f"{width:.0f}", height=f"{height:.0f}", **{"as": "geometry"})
+    for i, (e, text) in enumerate(zip(entries, texts, strict=True)):
+        cy = LEGEND_HEAD + i * LEGEND_ROW + LEGEND_ROW / 2
+        if e.kind == "odf":
+            c = colors.odf
+            for k in range(3):
+                free = k == 2
+                cell = _sub(
+                    root,
+                    "mxCell",
+                    id=f"c-legend-odf{k}",
+                    value=str(k + 1) if not free else "",
+                    style=_style(
+                        html=1,
+                        fillColor=c[0],
+                        strokeColor=colors.free_cell if free else c[1],
+                        dashed=1 if free else 0,
+                        fontColor=c[2],
+                        fontFamily=FONT,
+                        fontSize=8,
+                    ),
+                    vertex="1",
+                    parent="c-legend",
+                )
+                _sub(
+                    cell,
+                    "mxGeometry",
+                    x=f"{12 + k * 14}",
+                    y=f"{cy - 7:.1f}",
+                    width="13",
+                    height="14",
+                    **{"as": "geometry"},
+                )
+        else:
+            color = colors.link(e.kind, e.room)
+            style: dict[str, object] = {
+                "endArrow": "none",
+                "startArrow": "none",
+                "html": 1,
+                "strokeColor": color,
+                "strokeWidth": LINK_WIDTH.get(e.kind, 1.6),
+            }
+            if e.kind == "wan":
+                style["dashed"] = 1
+            if e.kind == "isl":
+                style["shape"] = "link"
+                style["width"] = 4
+            edge = _sub(
+                root, "mxCell", id=f"c-legend-l{i}", value="", style=_style(**style), edge="1", parent="c-legend"
+            )
+            geo = _sub(edge, "mxGeometry", relative="1", **{"as": "geometry"})
+            _sub(geo, "mxPoint", x="12", y=f"{cy:.1f}", **{"as": "sourcePoint"})
+            _sub(geo, "mxPoint", x=f"{12 + LEGEND_SAMPLE:.0f}", y=f"{cy:.1f}", **{"as": "targetPoint"})
+        label = _sub(
+            root,
+            "mxCell",
+            id=f"c-legend-t{i}",
+            value=text,
+            style=_style(
+                text=1,
+                html=1,
+                align="left",
+                verticalAlign="middle",
+                whiteSpace="nowrap",
+                fontColor="#1F2D3A",
+                fontFamily=FONT,
+                fontSize=11,
+            ),
+            vertex="1",
+            parent="c-legend",
+        )
+        _sub(
+            label,
+            "mxGeometry",
+            x=f"{20 + LEGEND_SAMPLE:.0f}",
+            y=f"{cy - LEGEND_ROW / 2:.1f}",
+            width=f"{width - LEGEND_SAMPLE - 30:.0f}",
+            height=f"{LEGEND_ROW:.0f}",
+            **{"as": "geometry"},
+        )
 
 
 def export_drawio(topo: Topology, path: str | Path, name: str = "") -> Path:

@@ -110,7 +110,7 @@ def test_drawio_file(tmp_path: Path, catalog: Catalog) -> None:
     path = export_drawio(topo, tmp_path / "t.drawio")
     root = ET.parse(path).getroot()
     assert root.tag == "mxfile"
-    cells = root.findall(".//mxCell")
+    cells = [c for c in root.findall(".//mxCell") if not (c.get("id") or "").startswith("c-legend")]
     edge_ids = {c.get("id") for c in cells if c.get("edge") == "1"}
     port_labels = [c for c in cells if c.get("vertex") == "1" and c.get("parent") in edge_ids]
     odf_ids = {"c-" + "".join(ch if ch.isalnum() else "_" for ch in n.id) for n in topo.nodes if n.kind == "odf"}
@@ -240,8 +240,10 @@ def test_link_medium_decides_ports_modules_and_cable(catalog: Catalog) -> None:
     r = size_site(make_site(sockets=200, tier=2, redundant_psu=False, location_code="BO1"), catalog)
     topo = build_topology(r, catalog)
     wan = next(lk for lk in topo.links if lk.kind == "wan")
-    # towards the provider's ODF: a single-mode module in the FortiGate's WAN port
-    assert wan.medium == "fiber" and wan.port_a == "wan1" and wan.module_a == catalog.passive.fiber["os2"].transceiver
+    # towards the provider's ODF: a single-mode module in the FortiGate's WAN port (1G on one without SFP+)
+    fw = catalog.models[topo.node(wan.a).model].firewall
+    want = catalog.rules.provider_module_1g if fw.ports_10g == 0 else catalog.passive.fiber["os2"].transceiver
+    assert wan.medium == "fiber" and wan.port_a == "wan1" and wan.module_a == want
     assert not wan.port_b and not wan.module_b
     stack = next(lk for lk in topo.links if lk.kind == "stack")
     assert stack.medium == "dac" and "DAC" in stack.label and not (stack.module_a or stack.module_b)
@@ -480,3 +482,56 @@ def test_drawio_has_the_odf_ports(catalog: Catalog) -> None:
     assert any("1–24 → 1–24" in v for v in values)
     d = TopologyDiagram(r, catalog, edits=TopologyEdits(show_panels=True))
     assert d.size().width() > 0
+
+
+def test_fg80f_ports_are_its_own(catalog: Catalog) -> None:
+    """FG-80F: FortiLink into a/b, HA over two internal ports, WAN with a 1G module — no port8, no x1."""
+    r = size_site(make_site(sockets=40, tier=1), catalog)
+    assert r.firewall.model == "FG-80F" and r.firewall.count == 2
+    topo = build_topology(r, catalog)
+    fw_ports: list[str] = []
+    for lk in topo.links:
+        for nid, port, module in ((lk.a, lk.port_a, lk.module_a), (lk.b, lk.port_b, lk.module_b)):
+            node = topo.node(nid)
+            if node is None or node.kind != "firewall":
+                continue
+            fw_ports.append(port)
+            if lk.kind == "wan":
+                assert port in ("wan1", "wan2") and module == "FN-TRAN-LX"
+            elif lk.kind == "ha":
+                assert port in ("internal5", "internal6") and not module
+            else:
+                assert port in ("a", "b") and not module
+    assert fw_ports and not any(p.startswith(("port", "x", "ha")) for p in fw_ports)
+    assert not topo.problems
+    # fibre straight into an RJ45 port of the FG-80F: no module there, and a warning
+    lk = next(lk for lk in topo.links if lk.kind == "fortilink")
+    t2 = build_topology(r, catalog, edits=TopologyEdits(media={lk.id: "fiber"}))
+    lk2 = t2.link(lk.id)
+    assert lk2.module_b == "" and any("RJ45" in p for p in t2.problems)
+
+
+def test_legend_on_the_drawing_and_in_drawio(catalog: Catalog) -> None:
+    from sitesizer.core.topology import legend
+    from sitesizer.i18n import Translator
+
+    r = size_site(make_site(**ROOMS), catalog)
+    topo = build_topology(r, catalog)
+    entries = legend(topo, Translator("uk"))
+    kinds = [("room" if e.room >= 0 else e.kind) for e in entries]
+    assert kinds[:4] == ["wan", "ha", "uplink", "isl"] and kinds.count("room") == 2 and kinds[-1] == "odf"
+    rooms = [e for e in entries if e.room >= 0]
+    assert all("Комутаційна 1" in e.title and "DAC" in e.cables for e in rooms)
+    assert sum(e.count for e in entries if e.kind != "odf") == len(topo.links)
+    # the drawing grows by the legend; draw.io gets a box with a sample line of every colour
+    d = TopologyDiagram(r, catalog)
+    assert d.size().height() > topo.height
+    root = ET.fromstring(topology_drawio(topo))
+    cells = {c.get("id"): c for c in root.iter("mxCell")}
+    assert cells["c-legend"].get("value") == "Легенда"
+    samples = [c for c in cells.values() if c.get("parent") == "c-legend" and c.get("edge") == "1"]
+    assert len(samples) == len(entries) - 1  # the ODF's sample is three cells
+    colors = {s.get("style", "").split("strokeColor=")[1].split(";")[0] for s in samples}
+    assert len(colors) == len(samples)  # one colour per line
+    texts = [c.get("value") or "" for c in cells.values() if (c.get("id") or "").startswith("c-legend-t")]
+    assert any("HA" in x and "Cat6A" in x for x in texts)

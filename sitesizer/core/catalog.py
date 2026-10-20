@@ -77,6 +77,11 @@ class FirewallSpec(_Strict):
     sessions_m: float = Field(default=0, ge=0)
     form_factor: Literal["desktop", "rack"] = "rack"
     sku_code: str = ""
+    port_names: list[str] = Field(default_factory=list)
+    """Data ports links take, in this order (FG-80F: ``a, b, internal1…``); empty: ``x1…`` (10G SFP+)
+    then ``port8…port1``, or the FG-80F set for a FortiGate without SFP+."""
+    ha_ports: list[str] = Field(default_factory=list)
+    """Heartbeat ports of the HA pair; empty: dedicated ``ha1``, ``ha2`` (FG-80F: two internal ports)."""
 
     def switch_limit(self, fortios_version: str | None) -> int:
         """FortiLink switch limit for a given FortiOS version (highest matching override)."""
@@ -234,6 +239,8 @@ class Rules(_Strict):
     """A DAC between two devices of one cabinet at most this many units apart is 1 m long, else 3 m."""
     copper_module: str = "FN-TRAN-GC"
     """1G copper SFP in a switch's uplink port towards a FortiGate without SFP+ (FG-80F)."""
+    provider_module_1g: str = "FN-TRAN-LX"
+    """1G single-mode SFP towards the provider on a FortiGate without SFP+ (FG-80F: wan1/sfp1)."""
     dac_isl_model: str = "FN-CABLE-QSFP28-1"
     """DAC of the core pair's ISL (100G QSFP28), one per ISL port."""
     dac_short_per_switches: int = Field(default=2, ge=1)

@@ -553,9 +553,10 @@ def test_fibre_backbone_to_idf(catalog: Catalog) -> None:
     assert fibre[om4.cable_for(24)] == ps.fiber_m and fibre[om4.cord] == ps.fiber_links * 2 + 1
     assert fibre[om4.housing_24] == ps.fiber_links * 2 + 1 and om4.housing_12 not in fibre
     assert ps.splices == ps.fiber_links * 2 * 24
-    # a module at each end of every fibre link of the topology (a ring: both ends of each remote stack)
+    # a module at the switch's end of every fibre link of the topology (a ring: both ends of each remote
+    # stack); the FG-80F has no SFP for them (its RJ45 ports take no module) — the topology warns
     sr = next(line for line in r.bom if line.model == om4.transceiver)
-    assert sr.qty == 2 * 2 * 2
+    assert r.firewall.model == "FG-80F" and sr.qty == 2 * 2
 
 
 def test_fibre_between_cabinets_is_12_or_6(catalog: Catalog) -> None:
