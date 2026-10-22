@@ -667,6 +667,25 @@ def compact_range(ports: list[int]) -> str:
     return ", ".join(out)
 
 
+def odf_fibres(model: str, catalog: Catalog, fspec: object = None) -> int:
+    """Fibres of an optical patch panel model: the fibre type's housings, else from its catalog name
+    (``24xLC Duplex`` / ``24 порти`` -> 48, ``12 волокон`` / ``12 fibres`` -> 12); 12 when unknown."""
+    if fspec is not None and model and model == getattr(fspec, "housing_24", ""):
+        return 24
+    if fspec is not None and model and model == getattr(fspec, "housing_12", ""):
+        return 12
+    dev = catalog.models.get(model)
+    if dev is not None:
+        for text in (dev.spec_name, *dev.name.values()):
+            m = re.search(r"(\d+)\s*(?:волок|fibre|fiber)", text, re.I)
+            if m:
+                return int(m.group(1))
+            m = re.search(r"(\d+)\s*(?:[x×]\s*LC[\s-]*Dupl|порт|ports?\b)", text, re.I)
+            if m:
+                return 2 * int(m.group(1))
+    return 12
+
+
 def _odf_nodes(
     plans: list[RackPlan],
     fspec: object,
@@ -674,13 +693,15 @@ def _odf_nodes(
     ed: TopologyEdits,
     t: Translator,
     rooms: dict[tuple[int, int], int],
+    catalog: Catalog,
+    cables: dict[str, int],
+    names: dict[str, str],
 ) -> list[TopoNode]:
     """An ODF node for every optical patch panel of the cabinets, joined to the one at the other end of its cable.
 
     ``odf:<cabinet>:<peer>`` stands in cabinet ``<cabinet>``; the peer is a cabinet of the same floor,
     ``fw`` (the firewall floor's ``floor<N>``), ``floor<N>`` or ``isp`` (the provider's fibre).
     """
-    housing_24 = getattr(fspec, "housing_24", "")
     found: dict[tuple[int, str, str], TopoNode] = {}
     tags: dict[tuple[int, str], str] = {}
     out: list[TopoNode] = []
@@ -690,14 +711,13 @@ def _odf_nodes(
             if it.group != "fiber":
                 continue
             nid = f"{plan.tag}/{it.id}"
-            fibres = (
-                24 if housing_24 and it.model == housing_24 and housing_24 != getattr(fspec, "housing_12", "") else 12
-            )
+            # the model and the name in the cabinet are the user's (the racks page) unless the topology renamed it
+            fibres = odf_fibres(it.model, catalog, fspec)
             ports = min(ODF_MAX_PORTS, max(1, ed.odf_ports.get(nid, fibres // 2)))
             node = TopoNode(
                 nid,
                 "odf",
-                ed.labels.get(nid, f"ODF {plan.tag}"),
+                ed.labels.get(nid) or names.get(it.id) or f"ODF {plan.tag}",
                 it.model,
                 plan.tag,
                 u=it.u,
@@ -706,7 +726,8 @@ def _odf_nodes(
                 rect=Rect(0, 0, odf_width(ports), ODF_H),
                 auto_ports=fibres // 2,
             )
-            node.cable = ed.labels.get(nid + "#cable", f"{fiber} · {t.t('topo.fibres', n=fibres)}".strip(" ·"))
+            cable = cables.get(it.id, min(fibres, 12))
+            node.cable = ed.labels.get(nid + "#cable", f"{fiber} · {t.t('topo.fibres', n=cable)}".strip(" ·"))
             node.caption = it.label  # hand-added: its own name
             if it.id.startswith("odf:"):
                 _o, key, peer = it.id.split(":", 2)
@@ -979,7 +1000,13 @@ def build_topology(
     # ---- passive parts: ODFs, copper patch panels -------------------------------------------
     fspec = catalog.passive.fiber.get(result.rack.passive.fiber_type)
     fiber = result.rack.passive.fiber_type.upper() if result.rack.passive.fiber_type else ""
-    odfs = _odf_nodes(result.rack.plans, fspec, fiber, ed, t, rooms) if ed.show_odf else []
+    odfs = (
+        _odf_nodes(
+            result.rack.plans, fspec, fiber, ed, t, rooms, catalog, result.rack.odf_fibers, result.input.layout.labels
+        )
+        if ed.show_odf
+        else []
+    )
     panels = _panel_nodes(result.rack.plans, switches, catalog, ed) if ed.show_panels else []
     for n in panels:
         n.group = switches[n.switch].group

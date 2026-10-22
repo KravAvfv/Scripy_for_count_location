@@ -390,6 +390,22 @@ def test_odf_ports_are_the_users(catalog: Catalog) -> None:
     assert o4.cells[3] == first and second in o4.cells.values() and topo4.problems
 
 
+def test_odf_model_and_name_from_the_cabinet(catalog: Catalog) -> None:
+    """A model / name the user gave an ODF on the racks page: kept in the cabinet and drawn on the topology."""
+    site = make_site(**ROOMS)
+    topo = build_topology(size_site(site, catalog), catalog)
+    odf = next(n for n in topo.nodes if n.kind == "odf" and not n.head)
+    item_id = odf.id.split("/", 1)[1]
+    site.layout.models[item_id] = "LAN1-48AE-PGTL-B"  # 24× LC duplex
+    site.layout.labels[item_id] = "FOB 1B"
+    r = size_site(site, catalog)
+    it = next(i for p in r.rack.plans for i in p.items if i.id == item_id)
+    assert it.model == "LAN1-48AE-PGTL-B" and r.rack.passive.housing_models.get("LAN1-48AE-PGTL-B") == 1
+    o = build_topology(r, catalog).node(odf.id)
+    assert o.model == "LAN1-48AE-PGTL-B" and o.ports == 24 and o.label == "FOB 1B"
+    assert o.cable == odf.cable  # the cable at its back stays
+
+
 def test_link_drawn_to_an_odf_ends_on_its_port(catalog: Catalog) -> None:
     r = size_site(make_site(**ROOMS), catalog)
     topo = build_topology(r, catalog)

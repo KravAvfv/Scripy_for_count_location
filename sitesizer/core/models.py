@@ -693,6 +693,8 @@ class RackSummary:
     """Conflicts of the manual layout (overlaps, items that did not fit)."""
     fiber_pairs: list[tuple[str, str]] = field(default_factory=list)
     """(child, parent) fibre links between the cabinets of the floor (a parent may be ``fw``/``floor<N>``)."""
+    odf_fibers: dict[str, int] = field(default_factory=dict)
+    """Automatic ODF id (``odf:<cabinet>:<peer>``) -> fibres of the cable at its back."""
 
 
 @dataclass

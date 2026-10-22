@@ -437,6 +437,10 @@ def plan_passive(
         )
         rs.layout_problems += problems
         rs.fiber_pairs = links
+        change_models(plans, ctx.site.layout, cat)  # the ODFs were set to the automatic model: the user's height
+        rs.odf_fibers = {f"odf:{a}:{b}": n for (a, b), n in fibers.items()} | {
+            f"odf:{b}:{a}": n for (a, b), n in fibers.items()
+        }
     if not ctx.site.layout.is_empty:
         rs.layout_problems += top_up_pdus(plans, feeds, pr.pdu_outlets, pr.pdu, set(ctx.site.layout.hidden), t)
     name_items(plans, ctx.site.layout, ctx.site.location_code, t, pr.panel_ports)
@@ -794,7 +798,7 @@ def link_cabinets(
             to = tags.get(peer, peer)
         odf_id, org_id = f"odf:{key}:{peer}", f"org:odf:{key}:{peer}"
         label = t.t("rack.odf", to=to)
-        model = housing(end_fibers[(key, peer)])
+        model = layout.models.get(odf_id) or housing(end_fibers[(key, peer)])  # the user's model stays
         for it in (it for p in plans for it in p.items if it.id == odf_id):
             it.label = label
             it.model = model
