@@ -36,8 +36,8 @@ def test_optical_panel_towards_the_firewall_floor(catalog: Catalog) -> None:
     assert f7 is not None and f5 is not None
     odf5 = [it for it in f5.rack.plans[0].items if it.group == "fiber"]
     odf7 = [it for it in f7.rack.plans[0].items if it.group == "fiber"]
-    # the firewall's cabinet also takes the provider's fibre
-    assert [it.label for it in odf5] == ["ODF 7A0"] and [it.label for it in odf7] == ["ODF до провайдера", "ODF 5A0"]
+    # the firewall's cabinet: one shared ODF for the provider's fibre and the other floor's cable
+    assert [it.label for it in odf5] == ["ODF 7A0"] and [it.label for it in odf7] == ["ODF до провайдера, 5A0"]
     # each optical panel has its organizer right under it
     items = f5.rack.plans[0].items
     i = items.index(odf5[0])
@@ -45,8 +45,8 @@ def test_optical_panel_towards_the_firewall_floor(catalog: Catalog) -> None:
     combined = loc.combined
     assert combined is not None
     om = catalog.passive.fiber[combined.rack.passive.fiber_type]
-    # the link to the firewall floor is a 24-fibre cable with a 24-fibre panel at each end (+ the provider's)
-    assert qty(combined, om.housing_24) == 3
+    # the link to the firewall floor is a 24-fibre cable: a 24-fibre panel on the 5th, the shared one on the 7th
+    assert qty(combined, om.housing_24) == 1 and qty(combined, catalog.passive.fw_odf) == 1
     # modules come from the topology: the 5th floor's switch has a fibre link to the firewall; the
     # FG-80F's end is an RJ45 port (its SFPs are the WAN ones), so only the switch's end takes one
     assert combined.firewall.model == "FG-80F"
@@ -60,9 +60,10 @@ def test_second_cabinet_in_a_room_is_linked_by_fibre(catalog: Catalog) -> None:
     r = size_site(floor(1, sockets=48 * 8, rack_size_u=24), catalog)
     assert len(r.rack.plans) > 1 and all(p.room == 0 for p in r.rack.plans)
     first = r.rack.plans[0]
+    hub = next(it for it in first.items if it.id == f"odf:{first.key}:hub")  # the firewall's cabinet
     for plan in r.rack.plans[1:]:
         assert any(it.id == f"odf:{plan.key}:{first.key}" for it in plan.items)
-        assert any(it.id == f"odf:{first.key}:{plan.key}" for it in first.items)
+        assert any(peer == plan.key for peer, _first in hub.ends)
 
 
 def test_single_floor_project_is_a_standalone_location(catalog: Catalog) -> None:

@@ -573,6 +573,13 @@ class RackItem:
     endpoints: list[tuple[str, int]] = field(default_factory=list)
     """What the switch's copper ports serve: (``sockets`` / ``aps`` / ``cameras`` / ``other`` / ``ajax`` /
     ``skud``, number), as the endpoints of its telecom room are spread over its switches."""
+    renamed: bool = False
+    """The user gave it its name (``label``)."""
+    fibers: int = 0
+    """Automatic ODF: fibres spliced in it (of the cable at its back; of all of them in a shared one)."""
+    ends: list[tuple[str, int]] = field(default_factory=list)
+    """Shared ODF of the firewall's cabinet: (peer, its duplex ports before that cable's) of every cable
+    in it, the provider's fibre (``isp``) too."""
 
     @property
     def top(self) -> int:
@@ -693,8 +700,6 @@ class RackSummary:
     """Conflicts of the manual layout (overlaps, items that did not fit)."""
     fiber_pairs: list[tuple[str, str]] = field(default_factory=list)
     """(child, parent) fibre links between the cabinets of the floor (a parent may be ``fw``/``floor<N>``)."""
-    odf_fibers: dict[str, int] = field(default_factory=dict)
-    """Automatic ODF id (``odf:<cabinet>:<peer>``) -> fibres of the cable at its back."""
 
 
 @dataclass

@@ -506,7 +506,9 @@ def test_manual_layout_racks_and_extras(catalog: Catalog) -> None:
         f"odf:user-1:{key}",
         f"org:odf:user-1:{key}",
     }
-    assert any(it.id == f"odf:{key}:user-1" for it in r.rack.plans[0].items)
+    # the firewall's cabinet: one shared ODF for the provider's fibre and the cable from user-1
+    hub = next(it for it in r.rack.plans[0].items if it.id == f"odf:{key}:hub")
+    assert hub.model == catalog.passive.fw_odf and [peer for peer, _first in hub.ends] == ["isp", "user-1"]
     assert not any(it.group == "pdu" for it in r.rack.plans[0].items)  # the deleted PDU stays deleted
     assert any(line.model == "UA-MGSE2466MB" for line in r.lines("rack"))
     # removing the automatic cabinet moves its devices into the remaining one
@@ -551,7 +553,9 @@ def test_fibre_backbone_to_idf(catalog: Catalog) -> None:
     # both remote rooms link to the firewall's cabinet: 24-fibre cables and 24-fibre panels
     # + the provider's ODF in the firewall's cabinet (a cord and a transceiver, no splices of ours)
     assert fibre[om4.cable_for(24)] == ps.fiber_m and fibre[om4.cord] == ps.fiber_links * 2 + 1
-    assert fibre[om4.housing_24] == ps.fiber_links * 2 + 1 and om4.housing_12 not in fibre
+    # the firewall's cabinet: one shared 96-fibre ODF for both cables and the provider's fibre
+    assert fibre[om4.housing_24] == ps.fiber_links and fibre[catalog.passive.fw_odf] == 1
+    assert om4.housing_12 not in fibre
     assert ps.splices == ps.fiber_links * 2 * 24
     # a module at the switch's end of every fibre link of the topology (a ring: both ends of each remote
     # stack); the FG-80F has no SFP for them (its RJ45 ports take no module) — the topology warns

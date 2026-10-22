@@ -161,6 +161,10 @@ class TopoNode:
     """ODF: the cable at its back (``OM4 · 12 вол.``), as typed by the user or automatic."""
     auto_ports: int = 0
     """ODF: its duplex ports without the user's number (half the fibres of its cable)."""
+    peers: list[str] = field(default_factory=list)
+    """Shared ODF of the firewall's cabinet: the ODFs at the other ends of its cables (``isp`` too)."""
+    offsets: dict[str, int] = field(default_factory=dict)
+    """Shared ODF: peer (ODF node id / ``isp``) -> its duplex ports before that cable's."""
 
     def cell_rect(self, port: int) -> Rect:
         """Box of an ODF's duplex port ``port`` (1-based)."""
@@ -694,13 +698,12 @@ def _odf_nodes(
     t: Translator,
     rooms: dict[tuple[int, int], int],
     catalog: Catalog,
-    cables: dict[str, int],
-    names: dict[str, str],
 ) -> list[TopoNode]:
     """An ODF node for every optical patch panel of the cabinets, joined to the one at the other end of its cable.
 
     ``odf:<cabinet>:<peer>`` stands in cabinet ``<cabinet>``; the peer is a cabinet of the same floor,
-    ``fw`` (the firewall floor's ``floor<N>``), ``floor<N>`` or ``isp`` (the provider's fibre).
+    ``fw`` (the firewall floor's ``floor<N>``), ``floor<N>`` or ``isp`` (the provider's fibre). The shared
+    ODF of the firewall's cabinet (``odf:<cabinet>:hub``) takes several cables, each in its own block of ports.
     """
     found: dict[tuple[int, str, str], TopoNode] = {}
     tags: dict[tuple[int, str], str] = {}
@@ -717,7 +720,7 @@ def _odf_nodes(
             node = TopoNode(
                 nid,
                 "odf",
-                ed.labels.get(nid) or names.get(it.id) or f"ODF {plan.tag}",
+                ed.labels.get(nid) or (it.label if it.renamed else f"ODF {plan.tag}"),
                 it.model,
                 plan.tag,
                 u=it.u,
@@ -726,16 +729,31 @@ def _odf_nodes(
                 rect=Rect(0, 0, odf_width(ports), ODF_H),
                 auto_ports=fibres // 2,
             )
-            cable = cables.get(it.id, min(fibres, 12))
+            cable = it.fibers or min(fibres, 12)
             node.cable = ed.labels.get(nid + "#cable", f"{fiber} · {t.t('topo.fibres', n=cable)}".strip(" ·"))
             node.caption = it.label  # hand-added: its own name
-            if it.id.startswith("odf:"):
+            if it.ends:
+                n = sum(1 for peer, _first in it.ends if peer != "isp")
+                each = t.t("topo.fibres", n=it.fibers // n) if n and it.fibers % n == 0 else ""
+                many = f"{n} × {each}" if each else t.t("topo.fibres", n=it.fibers)
+                node.cable = ed.labels.get(nid + "#cable", f"{fiber} · {many}".strip(" ·"))
+                node.caption = ""
+                key = it.id.split(":", 2)[1]
+                for peer, first in it.ends:
+                    found[(plan.floor, key, peer)] = node
+                    node.offsets[peer] = first
+            elif it.id.startswith("odf:"):
                 _o, key, peer = it.id.split(":", 2)
                 found[(plan.floor, key, peer)] = node
             out.append(node)
     for (floor, key, peer), node in found.items():
         target: TopoNode | None = None
+        shared = bool(node.offsets)
         if peer == "isp":
+            if shared:
+                node.peers.append("isp")
+                node.caption = _add_to(node.caption, t.t("topo.odf_isp"))
+                continue
             node.peer = "isp"
             node.caption = "→ " + t.t("topo.odf_isp")
             node.cable = ed.labels.get(node.id + "#cable", "")
@@ -746,12 +764,24 @@ def _odf_nodes(
             target = next((n for (_f, _k, pp), n in found.items() if pp == f"floor{floor}"), None)
         elif peer.startswith("floor") and peer[5:].lstrip("-").isdigit():
             target = next((n for (f, _k, pp), n in found.items() if f == int(peer[5:]) and pp == "fw"), None)
-        if target is not None:
+        if shared:
+            if target is not None:
+                node.peers.append(target.id)
+                node.offsets[target.id] = node.offsets[peer]
+            node.caption = _add_to(
+                node.caption, target.cabinet if target is not None else tags.get((floor, peer), peer)
+            )
+        elif target is not None:
             node.peer = target.id
             node.caption = "→ " + target.cabinet
         else:
             node.caption = "→ " + tags.get((floor, peer), peer)
     return out
+
+
+def _add_to(caption: str, to: str) -> str:
+    """``→ 1A1`` + ``1A2`` -> ``→ 1A1, 1A2`` (where the cables of a shared ODF go)."""
+    return f"{caption}, {to}" if caption else "→ " + to
 
 
 def _panel_nodes(
@@ -836,10 +866,11 @@ def through_odfs(topo: Topology, ed: TopologyEdits, t: Translator) -> None:
     isp: dict[str, TopoNode] = {}
     for o in odfs:
         o.cells = {}
-        if o.peer == "isp":
-            isp.setdefault(o.cabinet, o)
-        elif o.peer in nodes:
-            adj.setdefault(o.cabinet, []).append((o, nodes[o.peer]))
+        for peer in o.peers or [o.peer]:
+            if peer == "isp":
+                isp.setdefault(o.cabinet, o)
+            elif peer in nodes:
+                adj.setdefault(o.cabinet, []).append((o, nodes[peer]))
     routes: dict[tuple[str, str], list[tuple[TopoNode, TopoNode]]] = {}
     plan: list[tuple[TopoLinkResult, list[list[TopoNode]]]] = []
     """Per link: its hops — a cable (two ODFs) or the provider's ODF / an ODF the link ends on (one)."""
@@ -871,6 +902,15 @@ def through_odfs(topo: Topology, ed: TopologyEdits, t: Translator) -> None:
         n = ed.odf_map.get(f"{lk.id}@{o.id}")
         return n if n is not None and n > 0 else None
 
+    def first(lk: TopoLinkResult, o: TopoNode, hop: list[TopoNode]) -> int:
+        """A shared ODF: its ports before the block of the link's cable (the provider's for a WAN link)."""
+        if not o.offsets:
+            return 0
+        other = next((n for n in hop if n is not o), None)
+        if other is not None:
+            return o.offsets.get(other.id, 0)
+        return o.offsets.get("isp", 0) if lk.kind == "wan" else 0
+
     clash: set[str] = set()
     for lk, hops in plan:  # the user's ports first
         for hop in hops:
@@ -888,16 +928,17 @@ def through_odfs(topo: Topology, ed: TopologyEdits, t: Translator) -> None:
             mine = {o.id: n for o in hop if (n := typed(lk, o)) is not None and taken[o.id].get(n) == lk.id}
             free = [o for o in hop if o.id not in mine]
             if free:
-                want = next(iter(mine.values()), None)
-                if want is not None and all(want not in taken[o.id] for o in free):
+                # the same port in the cable's block at both ends
+                want = next((n - first(lk, o, hop) for o in hop if (n := mine.get(o.id)) is not None), None)
+                if want is not None and want > 0 and all(want + first(lk, o, hop) not in taken[o.id] for o in free):
                     n = want
                 else:
                     n = 1
-                    while any(n in taken[o.id] for o in free):
+                    while any(n + first(lk, o, hop) in taken[o.id] for o in free):
                         n += 1
                 for o in free:
-                    taken[o.id][n] = lk.id
-                    mine[o.id] = n
+                    taken[o.id][n + first(lk, o, hop)] = lk.id
+                    mine[o.id] = n + first(lk, o, hop)
             via += [(o.id, mine[o.id]) for o in hop]
         ends = {oid for oid, _n in via if oid in (lk.a, lk.b)}
         for oid, n in via:
@@ -1000,13 +1041,7 @@ def build_topology(
     # ---- passive parts: ODFs, copper patch panels -------------------------------------------
     fspec = catalog.passive.fiber.get(result.rack.passive.fiber_type)
     fiber = result.rack.passive.fiber_type.upper() if result.rack.passive.fiber_type else ""
-    odfs = (
-        _odf_nodes(
-            result.rack.plans, fspec, fiber, ed, t, rooms, catalog, result.rack.odf_fibers, result.input.layout.labels
-        )
-        if ed.show_odf
-        else []
-    )
+    odfs = _odf_nodes(result.rack.plans, fspec, fiber, ed, t, rooms, catalog) if ed.show_odf else []
     panels = _panel_nodes(result.rack.plans, switches, catalog, ed) if ed.show_panels else []
     for n in panels:
         n.group = switches[n.switch].group

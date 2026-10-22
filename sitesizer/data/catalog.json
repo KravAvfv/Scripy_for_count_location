@@ -533,6 +533,7 @@
       "os2": {"label": {"uk": "OS2 (одномод)", "en": "OS2 (single-mode)"}, "cable": "012EEU-13122A2G", "cable_fibers": 12, "cables": {"6": "006EEU-13122A2G", "12": "012EEU-13122A2G", "24": "024EEU-13122A2G"}, "housing_12": "LAN1-12AE-PGTL-B", "housing_24": "LAN1-24AE-PGTL-B", "cord": "040402G5120002M", "transceiver": "FN-TRAN-SFP+LR", "max_10g_m": 10000}
     },
     "fiber_spare_ratio": 1.0, "fiber_slack_m": 20, "fiber_fw_fibers": 24, "fiber_rack_fibers": 12,
+    "fw_odf": "LAN1-96AE-PGTL-B", "fw_odf_fibers": 96,
     "splice_protector": "HSP-45S100-1",
     "mount_kit": "SM6.50", "mount_kit_active": 8, "mount_kit_other": 4,
     "pdu": "PDU-8-C13", "pdu_outlets": 8

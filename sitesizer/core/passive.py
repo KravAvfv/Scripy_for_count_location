@@ -72,6 +72,11 @@ VIDEO_GAP_U = 5
 """Free units kept under the video switches (VSW) at the bottom of a cabinet, when there is room."""
 ISP = "isp"
 """Peer of the ODF where the provider's fibre comes in (the firewall's cabinet)."""
+ISP_FIBERS = 8
+"""Fibres of the provider kept in the shared ODF of the firewall's cabinet (four duplex ports: WAN 1 / 2 of
+each FortiGate)."""
+HUB = "hub"
+"""Peer of the shared ODF of the firewall's cabinet (``odf:<cabinet>:hub``, ``…:hub2`` when one is full)."""
 
 
 def _is_video(item_id: str) -> bool:
@@ -434,13 +439,12 @@ def plan_passive(
             t,
             fw_fibers=fw_fibers,
             rack_fibers=rack_fibers,
+            hub_model=pr.fw_odf,
+            hub_fibers=pr.fw_odf_fibers,
         )
         rs.layout_problems += problems
         rs.fiber_pairs = links
         change_models(plans, ctx.site.layout, cat)  # the ODFs were set to the automatic model: the user's height
-        rs.odf_fibers = {f"odf:{a}:{b}": n for (a, b), n in fibers.items()} | {
-            f"odf:{b}:{a}": n for (a, b), n in fibers.items()
-        }
     if not ctx.site.layout.is_empty:
         rs.layout_problems += top_up_pdus(plans, feeds, pr.pdu_outlets, pr.pdu, set(ctx.site.layout.hidden), t)
     name_items(plans, ctx.site.layout, ctx.site.location_code, t, pr.panel_ports)
@@ -490,17 +494,16 @@ def plan_passive(
             ps.fiber_m += length + pr.fiber_slack_m
             ps.cable_models[cable] = ps.cable_models.get(cable, 0) + length + pr.fiber_slack_m
             ps.cable_links[cable] = ps.cable_links.get(cable, 0) + 1
-        housings = ps.housings_12 + ps.housings_24
-        ps.fiber_ends = housings
-        # every fibre of a cable is spliced at each of its ends (a hand-added ODF: a 12-fibre one)
-        ends = {f"odf:{a}:{b}": n for (a, b), n in fibers.items()} | {f"odf:{b}:{a}": n for (a, b), n in fibers.items()}
+        # every fibre of a cable is spliced at each of its ends (a hand-added ODF: a 12-fibre one); the
+        # shared ODF of the firewall's cabinet takes all its cables (a cord for each, the provider's too)
+        odfs = [it for p in plans for it in p.items if it.group == "fiber" and it.model]
+        ps.fiber_ends = sum(len(it.ends) or 1 for it in odfs)
         ps.splices = sum(
-            ends.get(it.id, fspec.cable_fibers)
-            for p in plans
-            for it in p.items
-            if it.group == "fiber" and it.model and not it.id.endswith(f":{ISP}")  # the provider splices its own
+            it.fibers or fspec.cable_fibers
+            for it in odfs
+            if not it.id.endswith(f":{ISP}")  # the provider splices its own
         )
-        ps.fiber_cords = housings
+        ps.fiber_cords = ps.fiber_ends
 
     # ---- copper -------------------------------------------------------------------------
     counts = ctx.counts
@@ -744,13 +747,18 @@ def link_cabinets(
     t: Translator,
     fw_fibers: int = 24,
     rack_fibers: int = 12,
+    hub_model: str = "",
+    hub_fibers: int = 96,
 ) -> tuple[list[tuple[str, str]], list[str], dict[tuple[str, str], int]]:
     """Put an ODF (+ organizer) at both ends of every fibre link of the final cabinets.
 
     A link that ends at the firewall's cabinet (or goes to the firewall floor) is a
     ``fw_fibers`` cable, any other one a ``rack_fibers`` cable; ``housing(fibres)`` gives the
-    ODF for it. Automatic ODFs whose link no longer exists (a cabinet was removed or emptied)
-    are dropped; missing ones go to the highest free units. ODFs the user deleted stay deleted.
+    ODF for it. With ``hub_model`` the firewall's cabinet has one shared ODF of ``hub_fibers`` fibres
+    (``odf:<cabinet>:hub``) for all its cables and the provider's fibre, another one when it is full.
+    Automatic ODFs whose link no longer exists (a cabinet was removed or emptied) are dropped;
+    missing ones go to the highest free units. ODFs the user deleted stay deleted.
+    Every automatic ODF gets the fibres spliced in it, a shared one also its cables (``RackItem.ends``).
     Returns the (child, parent) links, the placement problems and the fibres of every link.
     """
     problems: list[str] = []
@@ -775,7 +783,20 @@ def link_cabinets(
         # the provider's fibre (not a cable of ours): its ODF stands in the firewall's cabinet
         ends.insert(0, (key, ISP))
         end_fibers[(key, ISP)] = fw_fibers
-    want_ids = {f"odf:{k}:{peer}" for k, peer in ends} | {f"org:odf:{k}:{peer}" for k, peer in ends}
+    hubs: dict[tuple[str, str], tuple[str, int]] = {}
+    if hub_model:
+        for key in sorted(fw_racks):
+            if all(peer == ISP for k, peer in ends if k == key):
+                continue  # the provider's fibre alone: its own ODF
+            n, used = 1, 0
+            for k, peer in (e for e in ends if e[0] == key):
+                size = ISP_FIBERS if peer == ISP else end_fibers[(k, peer)]
+                if used and used + size > hub_fibers:
+                    n, used = n + 1, 0
+                hubs[(k, peer)] = (f"odf:{key}:{HUB}" + (str(n) if n > 1 else ""), used // 2)
+                used += size
+    odf_ids = {hubs[e][0] if e in hubs else f"odf:{e[0]}:{e[1]}" for e in ends}
+    want_ids = odf_ids | {"org:" + i for i in odf_ids}
     for plan in plans:
         plan.items = [
             it
@@ -786,8 +807,9 @@ def link_cabinets(
     hidden = set(layout.hidden)
     tags = {p.key: p.tag for p in plans}
     remote = dict(fctx.remote) if fctx else {}
+    slots: dict[str, tuple[str, list[str], str, list[tuple[str, int]]]] = {}
+    """ODF id -> (its cabinet, where its cables go, its automatic model, its cables when shared)."""
     for key, peer in ends:
-        plan = by_key[key]
         if peer == ISP:
             to = t.t("rack.odf_isp")
         elif peer == "fw":
@@ -796,9 +818,21 @@ def link_cabinets(
             to = remote.get(int(peer[5:]), peer[5:])
         else:
             to = tags.get(peer, peer)
-        odf_id, org_id = f"odf:{key}:{peer}", f"org:odf:{key}:{peer}"
-        label = t.t("rack.odf", to=to)
-        model = layout.models.get(odf_id) or housing(end_fibers[(key, peer)])  # the user's model stays
+        hub = hubs.get((key, peer))
+        odf_id = hub[0] if hub else f"odf:{key}:{peer}"
+        entry = slots.setdefault(odf_id, (key, [], hub_model if hub else housing(end_fibers[(key, peer)]), []))
+        entry[1].append(to)
+        if hub:
+            entry[3].append((peer, hub[1]))
+    for odf_id, (key, tos, auto_model, shared) in slots.items():
+        plan = by_key[key]
+        org_id = "org:" + odf_id
+        label = t.t("rack.odf", to=", ".join(tos))
+        model = layout.models.get(odf_id) or auto_model  # the user's model stays
+        if shared:
+            spliced = sum(end_fibers[(key, peer)] for peer, _first in shared if peer != ISP)
+        else:
+            spliced = end_fibers[(key, odf_id.split(":", 2)[2])]
         for it in (it for p in plans for it in p.items if it.id == odf_id):
             it.label = label
             it.model = model
@@ -813,6 +847,8 @@ def link_cabinets(
                 problems.append(t.t("check.rack_no_space", item=lab or t.t("rack.manager")))
                 continue
             plan.items.append(RackItem(u=slot, height=h, label=lab, group=group, model=m, id=item_id))
+        for it in (it for it in plan.items if it.id == odf_id):
+            it.fibers, it.ends = spliced, shared
     for plan in plans:
         odfs_on_top(plan)
     return pairs, problems, fibers
@@ -1275,6 +1311,7 @@ def name_items(plans: list[RackPlan], layout: RackLayout, code: str, t: Translat
         for it in plan.items:
             if layout.labels.get(it.id) and (not it.extra or it.group in ROLE_CODES):
                 it.label = layout.labels[it.id]
+                it.renamed = True
 
 
 def drop_room(layout: dict[str, Any], room: int, cabinets: set[str]) -> None:

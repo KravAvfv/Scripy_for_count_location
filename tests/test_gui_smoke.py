@@ -1057,7 +1057,8 @@ def test_topology_odf_panel_and_wizard(app: QApplication, window) -> None:
     pump(app)
     o = view.canvas.diagram.topo.node(odf.id)
     assert o.cells[1] == second and o.cells[2] == first
-    assert view.canvas.diagram.topo.node(o.peer).cells[1] == second
+    far = view.canvas.diagram.topo.node(o.peer)
+    assert far.cells[1 + far.offsets.get(o.id, 0)] == second  # in the cable's block of a shared ODF
     # a note on a port, the duplexes and the cable
     view.canvas.select("node", odf.id)
     pump(app)
@@ -1158,7 +1159,7 @@ def test_topology_odf_panel_and_wizard(app: QApplication, window) -> None:
     # its other end is read-only in the wizard too
     dlg2 = ConnectionWizard(topo, view.edits, st.catalog, view, uplinks=view.uplink_options)
     dlg2._go(1)
-    while dlg2.items[dlg2.at].id != "1A0/odf:mdf-1:idf1-1":
+    while dlg2.items[dlg2.at].id != "1A0/odf:mdf-1:hub":  # the shared ODF of the firewall's cabinet
         dlg2._skip()
     assert not dlg2._fields["goes"].isEnabled()
     before_layout = st.site.layout.model_copy(deep=True)

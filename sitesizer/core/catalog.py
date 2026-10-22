@@ -344,6 +344,10 @@ class PassiveRules(_Strict):
     """Fibres of a cable that ends at the firewall cabinet."""
     fiber_rack_fibers: int = Field(default=12, gt=0)
     """Fibres of a cable between two other cabinets (12 or 6)."""
+    fw_odf: str = ""
+    """One ODF in the firewall's cabinet for all its cables and the provider's fibre ("" = one ODF per cable)."""
+    fw_odf_fibers: int = Field(default=96, gt=0)
+    """Fibres of ``fw_odf``; when its cables have more, another one stands next to it."""
     splice_protector: str = "HSP-45S100-1"
     mount_kit: str = "SM6.50"
     """Mounting set M6 (screw, washer, cage nut) for everything in a cabinet."""
@@ -410,6 +414,8 @@ class Catalog(_Strict):
             for role in ("cable", "housing_12", "housing_24", "cord", "transceiver"):
                 if getattr(spec, role) not in self.models:
                     problems.append(f"passive.fiber.{key}.{role}: unknown model '{getattr(spec, role)}'")
+        if self.passive.fw_odf and self.passive.fw_odf not in self.models:
+            problems.append(f"passive.fw_odf: unknown model '{self.passive.fw_odf}'")
         if problems:
             raise ValueError("; ".join(problems))
         return self

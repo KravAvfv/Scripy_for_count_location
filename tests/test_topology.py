@@ -332,19 +332,24 @@ def test_fibre_links_run_through_the_odfs(catalog: Catalog) -> None:
     topo = build_topology(r, catalog)
     odfs = {n.id: n for n in topo.nodes if n.kind == "odf"}
     assert odfs and all(o.ports >= 1 and o.caption.startswith("→") for o in odfs.values())
-    isp = [o for o in odfs.values() if o.peer == "isp"]
-    assert len(isp) == 1 and isp[0].head
+    # the firewall's cabinet: one shared ODF for the provider's fibre and every cable, each in its own block
+    isp = [o for o in odfs.values() if "isp" in o.peers]
+    assert len(isp) == 1 and isp[0].head and isp[0].model == catalog.passive.fw_odf and isp[0].ports == 48
+    assert isp[0].cable.endswith("× 24 вол.") and isp[0].caption.startswith("→ провайдер, ")
     # every ODF of a cable knows the one at its other end
     for o in odfs.values():
-        if o.peer != "isp":
-            assert odfs[o.peer].peer == o.id and odfs[o.peer].cabinet != o.cabinet
+        for peer in o.peers or [o.peer]:
+            if peer != "isp":
+                back = odfs[peer]
+                assert o.id in (back.peers or [back.peer]) and back.cabinet != o.cabinet
     fibre = [lk for lk in topo.links if lk.medium == "fiber" and lk.kind != "wan"]
     assert fibre and all(lk.via for lk in fibre)
     for lk in fibre:
         # one cable: the near ODF in the switch's cabinet, the far one in the core's, the same duplex
         (near, p1), (far, p2) = lk.via
         assert odfs[near].cabinet == topo.node(lk.a).cabinet and odfs[far].cabinet == topo.node(lk.b).cabinet
-        assert p1 == p2 and odfs[near].cells[p1] == lk.id and odfs[far].cells[p2] == lk.id
+        assert p2 - odfs[far].offsets.get(near, 0) == p1  # the same duplex in the cable's block
+        assert odfs[near].cells[p1] == lk.id and odfs[far].cells[p2] == lk.id
         # the route goes through the middle of both ports
         xs = {round(x, 1) for x, _y in lk.points}
         assert round(odfs[near].cell_rect(p1).cx, 1) in xs and round(odfs[far].cell_rect(p2).cx, 1) in xs
@@ -377,7 +382,8 @@ def test_odf_ports_are_the_users(catalog: Catalog) -> None:
     assert o2.cells[1] == second and o2.cells[2] == first and o2.notes == {5: "резерв"}
     assert o2.label == "FOB 1B" and o2.cable == "ВОК OS2 8 вол."
     far = topo2.node(o2.peer)
-    assert far.cells[2] == first and far.cells[1] == second
+    off = far.offsets.get(o2.id, 0)  # the shared ODF of the firewall's cabinet: the cable's block
+    assert far.cells[2 + off] == first and far.cells[1 + off] == second
     # fewer duplexes than links: a finding, the extra port drawn
     ed3 = TopologyEdits(odf_ports={odf.id: 1})
     topo3 = build_topology(r, catalog, edits=ed3)
@@ -400,7 +406,9 @@ def test_odf_model_and_name_from_the_cabinet(catalog: Catalog) -> None:
     site.layout.labels[item_id] = "FOB 1B"
     r = size_site(site, catalog)
     it = next(i for p in r.rack.plans for i in p.items if i.id == item_id)
-    assert it.model == "LAN1-96AE-PGTL-B" and r.rack.passive.housing_models.get("LAN1-96AE-PGTL-B") == 1
+    assert (
+        it.model == "LAN1-96AE-PGTL-B" and r.rack.passive.housing_models.get("LAN1-96AE-PGTL-B") == 2
+    )  # + the shared one
     o = build_topology(r, catalog).node(odf.id)
     assert o.model == "LAN1-96AE-PGTL-B" and o.ports == 48 and o.label == "FOB 1B"
     assert o.cable == odf.cable  # the cable at its back stays
@@ -469,8 +477,11 @@ def test_odf_goes_where_the_user_says(catalog: Catalog) -> None:
     r2 = size_site(site, catalog)
     assert ("mdf-3", "mdf-2") in r2.rack.fiber_pairs and ("idf1-2", "mdf-1") in r2.rack.fiber_pairs
     odfs = {it.id for p in r2.rack.plans for it in p.items if it.id.startswith("odf:")}
-    assert {"odf:mdf-3:mdf-2", "odf:mdf-2:mdf-3", "odf:idf1-2:mdf-1", "odf:mdf-1:idf1-2"} <= odfs
-    assert not odfs & {"odf:mdf-3:mdf-1", "odf:mdf-1:mdf-3", "odf:idf1-1:idf1-2"}
+    assert {"odf:mdf-3:mdf-2", "odf:mdf-2:mdf-3", "odf:idf1-2:mdf-1"} <= odfs
+    assert not odfs & {"odf:mdf-3:mdf-1", "odf:idf1-1:idf1-2"}
+    hub = next(it for it in r2.rack.plans[0].items if it.id == "odf:mdf-1:hub")
+    peers = [peer for peer, _first in hub.ends]
+    assert "idf1-2" in peers and "mdf-3" not in peers
     assert r2.rack.passive.fiber_links == r.rack.passive.fiber_links
     # the topology follows: 1A2's stack is patched through 1A1 on its way to the core
     topo = build_topology(r2, catalog)

@@ -187,7 +187,8 @@ def test_every_cabinet_has_an_optical_panel_with_an_organizer(catalog: Catalog) 
             assert items[i + 1].group == "manager" and items[i + 1].u == items[i].u - 1
         assert p.used_u <= p.size_u
     fw_cab = next(p for p in r.rack.plans if any(it.group == "firewall" for it in p.items))
-    assert any(it.id.endswith(":isp") for it in fw_cab.items)
+    hub = next(it for it in fw_cab.items if it.id.endswith(":hub"))  # the provider's fibre in the shared ODF
+    assert hub.ends[0] == ("isp", 0) and len(hub.ends) > 1
 
 
 def test_optical_panels_always_on_top(catalog: Catalog) -> None:
